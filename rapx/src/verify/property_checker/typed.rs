@@ -51,7 +51,7 @@ impl PropertyChecker {
                 }
             }
         }
-        let expected = property.ty_arg(1).or(Some(value_elem_ty));
+        let expected = property.try_type_arg_at(1).or(Some(value_elem_ty));
         if let Some(expected_ty) = expected {
             let expected_ty = vm_state.instantiate_callsite_ty(checkpoint, expected_ty);
 
@@ -259,7 +259,7 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
-        let Some(ty) = property.ty_arg(0) else {
+        let Some(ty) = property.try_type_arg_at(0) else {
             return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         // Resolve a generic `T` to the call-site concrete type (e.g. `Box<i32>`
@@ -288,7 +288,7 @@ impl PropertyChecker {
                 TyKind::Slice(_) | TyKind::Str | TyKind::Dynamic(..) => CheckResult::ProvedByRule,
                 _ => CheckResult::Unknown(UnknownReason::Unimplemented),
             },
-            Some(PropertyArg::Expr(ContractExpr::Const(c))) => {
+            Some(PropertyArg::Expr(ContractExpr::Const(c))) | Some(PropertyArg::ForEach(ContractExpr::Const(c))) => {
                 let ty = resolved_ty;
                 if self.is_generic_ty(ty) {
                     let Some(size) = vm_state.constraints.term_caches.sizes.get(&ty) else {
@@ -332,7 +332,7 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
-        let Some(ty) = property.ty_arg(0) else {
+        let Some(ty) = property.try_type_arg_at(0) else {
             return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         let ty = vm_state.instantiate_callsite_ty(checkpoint, ty);

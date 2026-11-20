@@ -74,7 +74,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 if atom.kind != PropertyKind::Alias {
                     return;
                 }
-                let Some(PropertyArg::Expr(ContractExpr::Place(cp))) = atom.args.first() else {
+                let Some(ContractExpr::Place(cp)) = atom.args.first().and_then(PropertyArg::expr) else {
                     return;
                 };
                 if let Some(alloc_id) = self.place_root_alloc(cp) {
@@ -193,15 +193,15 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     && let Some(val) = self.contract_target_value(property)
                 {
                     if let (Some(alloc_id), Some(ty)) =
-                        (val.provenance_alloc_id(), property.ty_arg(1))
+                        (val.provenance_alloc_id(), property.try_type_arg_at(1))
                         && let Some(span) = self.bounded_span(&val, ty)
                     {
                         self.alloc_mut(alloc_id).facts.bounded_spans.push(span);
                     }
                     self.set_in_bounds_for_value(property, val);
                 }
-                if let Some(fe_place) = property.for_each() {
-                    self.assert_in_bound_for_each(property, fe_place);
+                if let Some(fe_base) = property.for_each() {
+                    self.assert_in_bound_for_each(property, fe_base);
                 } else {
                     self.assert_in_bound_single(property);
                 }
@@ -210,7 +210,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // downstream `ptr.add(n)`/`ptr.sub(n)` can discharge `InBound`
                 // against the recorded byte range rather than the coarse
                 // `in_bounds` flag (which only covers `count == 1`).
-                if property.ty_arg(1).is_some() && property.for_each().is_none() {
+                if property.try_type_arg_at(1).is_some() && property.for_each().is_none() {
                     self.assert_allocated_fact(property);
                 }
             }
@@ -223,7 +223,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             PropertyKind::Typed => {
                 if let Some(val) = self.contract_target_value(property)
                     && let Some(expected_ty) =
-                        property.ty_arg(1).or_else(|| mir_utils::pointee_ty(val.ty))
+                        property.try_type_arg_at(1).or_else(|| mir_utils::pointee_ty(val.ty))
                 {
                     if let Some(alloc_id) = val.provenance_alloc_id() {
                         if property.for_each().is_none()
@@ -250,8 +250,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 // transmute re-interprets *that* allocation's bytes into the
                 // destination element type, so `check_split_transmute` finds the
                 // license through the receiver slice's provenance.
-                let src = property.ty_arg(0);
-                let dst = property.ty_arg(1);
+                let src = property.try_type_arg_at(0);
+                let dst = property.try_type_arg_at(1);
                 if let (Some(src), Some(dst)) = (src, dst) {
                     // `SplitTransmute([T], [U])` licenses re-interpretation into
                     // the *element* type `U` (the `[U]` slice wrapper unwraps).
@@ -358,7 +358,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let one = Int::from_u64(self.z3_ctx, 1);
         self.constraints.assertions.push(self.alloc(id).size.ge(&one));
         if let Some(n) = property.args().get(1).and_then(|a| match a {
-            PropertyArg::Expr(ContractExpr::Const(_)) => None,
+            PropertyArg::Expr(ContractExpr::Const(_)) | PropertyArg::ForEach(ContractExpr::Const(_)) => None,
             a => self.resolve_contract_count(a),
         }) {
             let one = Int::from_u64(self.z3_ctx, 1);
@@ -447,7 +447,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let Some(value) = self.contract_target_value(property) else {
             return;
         };
-        let (Some(alloc_id), Some(elem_ty)) = (value.provenance_alloc_id(), property.ty_arg(1))
+        let (Some(alloc_id), Some(elem_ty)) = (value.provenance_alloc_id(), property.try_type_arg_at(1))
         else {
             return;
         };
@@ -469,7 +469,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     }
 
     fn materialize_allocated_fact(&mut self, property: &Property<'tcx>) {
-        let elem_ty = property.ty_arg(1);
+        let elem_ty = property.try_type_arg_at(1);
         let count_term = property
             .args()
             .get(2)
@@ -611,8 +611,8 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Resolve the alloc_id for a contract property target, following
     /// field projections to locate the actual field value's provenance.
     fn contract_alloc_id_field_aware(&self, property: &Property<'tcx>) -> Option<AllocId> {
-        let cp = match property.args().first()? {
-            PropertyArg::Expr(ContractExpr::Place(cp)) => cp,
+        let cp = match property.args().first()?.expr()? {
+            ContractExpr::Place(cp) => cp,
             _ => return None,
         };
         cp.plain_field_path()?;
@@ -624,7 +624,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// the corresponding function parameter in the VM state.
     fn resolve_contract_count(&self, arg: &PropertyArg<'tcx>) -> Option<Int<'z3>> {
         match arg {
-            PropertyArg::Expr(expr) => self.eval_contract_expr_simple(expr),
+            PropertyArg::Expr(expr) | PropertyArg::ForEach(expr) => self.eval_contract_expr_simple(expr),
             _ => None,
         }
     }
@@ -666,12 +666,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     fn assert_in_bound_for_each(
         &mut self,
         property: &Property<'tcx>,
-        fe_place: &crate::verify::contract::ContractPlace,
+        fe_base: &PlaceBase,
     ) {
-        if matches!(fe_place.base, PlaceBase::Return) {
+        if matches!(fe_base, PlaceBase::Return) {
             return;
         }
-        let fe_local = fe_place.base.to_local();
+        let fe_local = fe_base.to_local();
         let fe_val = match self.local_value(fe_local).cloned() {
             Some(v) => v,
             None => return,
@@ -684,14 +684,14 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         if byte_vals.is_empty() {
             return;
         }
-        let slice_local = match property.args().first() {
-            Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, .. })) => {
+        let slice_local = match property.args().first().and_then(PropertyArg::expr) {
+            Some(ContractExpr::IndexAccess { slice, .. }) => {
                 match slice.as_ref() {
                     ContractExpr::Place(cp) if !matches!(cp.base, PlaceBase::Return) => Some(cp.base.to_local()),
                     _ => None,
                 }
             }
-            Some(PropertyArg::Expr(ContractExpr::Place(cp))) if !matches!(cp.base, PlaceBase::Return) => Some(cp.base.to_local()),
+            Some(ContractExpr::Place(cp)) if !matches!(cp.base, PlaceBase::Return) => Some(cp.base.to_local()),
             _ => None,
         };
         let slice_val = slice_local.and_then(|loc| self.local_value(loc));
@@ -720,8 +720,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// `in_bounds` flag. Range indices (`start..end`) are left to the checker's
     /// `extract_range_end` (`end <= len`).
     fn assert_in_bound_single(&mut self, property: &Property<'tcx>) {
-        let Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) =
-            property.args().first()
+        let Some(ContractExpr::IndexAccess { slice, index }) = property.args().first().and_then(PropertyArg::expr)
         else {
             return;
         };
@@ -937,7 +936,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         // content carries no validity invariant, so there is nothing to mark
         // initialized — the `Init ⇒ Typed` subsumption records the element type.
         let is_maybe_uninit = property
-            .ty_arg(1)
+            .try_type_arg_at(1)
             .map(crate::verify::api_classify::strips_to_maybe_uninit)
             .unwrap_or(false);
         if is_maybe_uninit {
@@ -980,7 +979,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// pointer is aligned to `align_of(T)`.  Anchored to the container
     /// allocation so a pointer loaded from it can discharge `Align(cur, T)`.
     fn record_for_each_align(&mut self, property: &Property<'tcx>) {
-        let Some(ty) = property.ty_arg(1) else {
+        let Some(ty) = property.try_type_arg_at(1) else {
             return;
         };
         let Some(alloc_id) = self.for_each_target_alloc(property) else {
@@ -992,7 +991,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// Record the `Allocated(container.iter(), T, n)` for_each fact: every
     /// element pointer backs `>= n` `T` elements (`n` may be symbolic).
     fn record_for_each_allocated(&mut self, property: &Property<'tcx>) {
-        let Some(ty) = property.ty_arg(1) else {
+        let Some(ty) = property.try_type_arg_at(1) else {
             return;
         };
         let count = property

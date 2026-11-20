@@ -247,7 +247,7 @@ fn resolve_arg_string<'tcx>(
             let arg = super::resolve::parse_target_arg(tcx, def_id, expr);
             // For a resolved field place, show the field name (e.g. `ptr` in
             // `self.ptr`) rather than the internal `arg1.0` form.
-            if let PropertyArg::Expr(ContractExpr::Place(place)) = &arg
+            if let Some(ContractExpr::Place(place)) = arg.expr()
                 && let Some(name) = super::place::field_name_from_place(tcx, def_id, place)
             {
                 return name;
@@ -482,7 +482,6 @@ pub(crate) fn subsumption_closure<'tcx>(atom: &AtomProperty<'tcx>) -> Vec<AtomPr
                     kind,
                     args: resolved,
                     contract_kind: ContractKind::Precond,
-                    for_each: None,
                     origin: None,
                 });
             }

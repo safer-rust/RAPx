@@ -50,7 +50,8 @@ impl PropertyChecker {
         property: &Property<'tcx>,
     ) -> bool {
         let cp = match property.args().first() {
-            Some(PropertyArg::Expr(crate::verify::contract::ContractExpr::Place(cp))) => cp,
+            Some(PropertyArg::Expr(crate::verify::contract::ContractExpr::Place(cp)))
+            | Some(PropertyArg::ForEach(crate::verify::contract::ContractExpr::Place(cp))) => cp,
             _ => return false,
         };
         let has_nullable_proj = cp.projections.iter().any(|p| {
@@ -189,13 +190,14 @@ impl PropertyChecker {
         arg: &PropertyArg<'tcx>,
     ) -> Option<Int<'z3>> {
         match arg {
-            PropertyArg::Expr(ContractExpr::Const(n)) if *n <= u64::MAX as u128 => {
+            PropertyArg::Expr(ContractExpr::Const(n)) | PropertyArg::ForEach(ContractExpr::Const(n))
+                if *n <= u64::MAX as u128 => {
                 Some(Int::from_u64(vm_state.z3_ctx, *n as u64))
             }
-            PropertyArg::Expr(ContractExpr::Place(cp)) => {
+            PropertyArg::Expr(ContractExpr::Place(cp)) | PropertyArg::ForEach(ContractExpr::Place(cp)) => {
                 vm_state.contract_place_term_at(checkpoint, cp)
             }
-            PropertyArg::Expr(expr) => self.eval_contract_expr(vm_state, Some(checkpoint), expr),
+            PropertyArg::Expr(expr) | PropertyArg::ForEach(expr) => self.eval_contract_expr(vm_state, Some(checkpoint), expr),
             _ => None,
         }
     }
@@ -228,7 +230,7 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         value: &VmValue<'z3, 'tcx>,
     ) -> Int<'z3> {
-        let required_ty = property.ty_arg(ty_arg);
+        let required_ty = property.try_type_arg_at(ty_arg);
         let count = property
             .args()
             .get(count_arg)
@@ -243,7 +245,7 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> bool {
-        let required_ty = property.ty_arg(1);
+        let required_ty = property.try_type_arg_at(1);
         self.is_zst_type(vm_state, checkpoint, required_ty)
     }
 

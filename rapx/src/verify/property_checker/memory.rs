@@ -65,7 +65,7 @@ impl PropertyChecker {
         if self.is_concrete_zst(vm_state, value.ty) {
             return CheckResult::ProvedByRule;
         }
-        let ty_arg = property.ty_arg(1);
+        let ty_arg = property.try_type_arg_at(1);
         let align = match ty_arg {
             Some(ty) => {
                 let mut resolved = vm_state.instantiate_callsite_ty(checkpoint, ty);
@@ -341,7 +341,7 @@ impl PropertyChecker {
         // making the guarded obligation vacuous; otherwise Failed, so the other
         // disjunct decides the outcome.
         let Some(place) = (match property.args().first() {
-            Some(PropertyArg::Expr(ContractExpr::Place(p))) => Some(p),
+            Some(PropertyArg::Expr(ContractExpr::Place(p))) | Some(PropertyArg::ForEach(ContractExpr::Place(p))) => Some(p),
             _ => None,
         }) else {
             return CheckResult::Unknown(UnknownReason::Unimplemented);
@@ -685,13 +685,13 @@ impl PropertyChecker {
         // `ty_is_maybe_uninit` fast-path in `check_typed`; this is what lets a
         // `&[MaybeUninit<T>]` slice satisfy `Init` without its contents being
         // initialized.
-        if let Some(required_ty) = property.ty_arg(1)
+        if let Some(required_ty) = property.try_type_arg_at(1)
             && Self::ty_is_maybe_uninit(required_ty) {
                 return CheckResult::ProvedByRule;
             }
 
         let access = self.access_bytes(vm_state, property, 1, 2, checkpoint, &value);
-        let requested_ty = property.ty_arg(1).and_then(|ty| {
+        let requested_ty = property.try_type_arg_at(1).and_then(|ty| {
             if !matches!(ty.kind(), TyKind::Param(_)) {
                 return Some(ty);
             }

@@ -256,16 +256,10 @@ impl<'tcx> Property<'tcx> {
                 {
                     return Self::new_simple(PropertyKind::Unknown);
                 }
-                let for_each = super::place::detect_array_for_each(tcx, def_id, second_expr);
-                let mut prop = Self::new_atom(
-                    PropertyKind::InBound,
-                    vec![PropertyArg::Expr(ContractExpr::IndexAccess {
-                        slice: Box::new(slice),
-                        index: Box::new(index),
-                    })],
-                );
-                if let Property::Atom(atom) = &mut prop { atom.for_each = for_each; }
-                prop
+                let for_each = super::place::is_array_for_each(tcx, def_id, second_expr);
+                let expr = ContractExpr::IndexAccess { slice: Box::new(slice), index: Box::new(index) };
+                let arg = if for_each { PropertyArg::ForEach(expr) } else { PropertyArg::Expr(expr) };
+                Self::new_atom(PropertyKind::InBound, vec![arg])
             }
             [target_expr] => {
                 let target = super::resolve::parse_target_arg(tcx, def_id, target_expr);
@@ -493,10 +487,11 @@ impl<'tcx> Property<'tcx> {
         };
         for prop in &mut props {
             if let Property::Atom(atom) = prop
-                && atom.for_each.is_none() {
+                && !atom.args.iter().any(|arg| matches!(arg, PropertyArg::ForEach(_))) {
                     for arg in &mut atom.args {
-                        atom.for_each = super::place::strip_for_each(arg);
-                        if atom.for_each.is_some() {
+                        if super::place::strip_for_each(arg)
+                            && let PropertyArg::Expr(expr) = arg {
+                            *arg = PropertyArg::ForEach(expr.clone());
                             break;
                         }
                     }

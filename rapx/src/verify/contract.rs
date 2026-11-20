@@ -50,7 +50,7 @@ pub(crate) fn is_static_lifetime_ident(name: &str) -> bool {
 
 /// The root of a contract place: a function's return value, an argument, or a
 /// raw MIR local.  `Return` ⇔ `Local(0)`; `Arg(n)` ⇔ `Local(n + 1)`.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum PlaceBase {
     /// The function's return value.
     Return,
@@ -249,12 +249,23 @@ pub(crate) enum PropertyArg<'tcx> {
     Ty(Ty<'tcx>),
     /// A value expression (e.g. `buf`, `n`).
     Expr(ContractExpr<'tcx>),
+    /// An expression checked for each element of its container.
+    ForEach(ContractExpr<'tcx>),
     /// An interval of comparisons, used by `ValidNum`.
     Predicates(Vec<NumericPredicate<'tcx>>),
     /// A name: lifetime, allocator, trait (e.g. `Copy`), or `sized`/`unsized`.
     Ident(String),
     /// Resolved lifetime region (e.g. `'a` in `Alive(p, 'a)`).
     Region(Region<'tcx>),
+}
+
+impl<'tcx> PropertyArg<'tcx> {
+    pub(crate) fn expr(&self) -> Option<&ContractExpr<'tcx>> {
+        match self {
+            Self::Expr(expr) | Self::ForEach(expr) => Some(expr),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -294,8 +305,6 @@ pub(crate) struct AtomProperty<'tcx> {
     pub kind: PropertyKind,
     pub args: Vec<PropertyArg<'tcx>>,
     pub contract_kind: ContractKind,
-    /// Container whose elements this atom quantifies over.
-    pub for_each: Option<ContractPlace>,
     /// Display metadata when this property was expanded from a compound property.
     pub origin: Option<ContractOrigin>,
 }
@@ -304,7 +313,6 @@ pub(crate) struct AtomProperty<'tcx> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct AndProperty<'tcx> {
     pub conjuncts: Vec<Property<'tcx>>,
-    pub contract_kind: ContractKind,
     /// Display metadata when this property was expanded from a compound property.
     pub origin: Option<ContractOrigin>,
 }
@@ -313,7 +321,6 @@ pub(crate) struct AndProperty<'tcx> {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct OrProperty<'tcx> {
     pub disjuncts: Vec<Property<'tcx>>,
-    pub contract_kind: ContractKind,
     /// Display metadata when this property was expanded from a compound property.
     pub origin: Option<ContractOrigin>,
 }
@@ -325,7 +332,6 @@ impl<'tcx> Property<'tcx> {
             kind,
             args,
             contract_kind: ContractKind::Precond,
-            for_each: None,
             origin: None,
         })
     }
@@ -334,7 +340,6 @@ impl<'tcx> Property<'tcx> {
     pub(crate) fn new_and(conjuncts: Vec<Property<'tcx>>) -> Self {
         Self::And(AndProperty {
             conjuncts,
-            contract_kind: ContractKind::Precond,
             origin: None,
         })
     }
@@ -343,7 +348,6 @@ impl<'tcx> Property<'tcx> {
     pub(crate) fn new_or(disjuncts: Vec<Property<'tcx>>) -> Self {
         Self::Or(OrProperty {
             disjuncts,
-            contract_kind: ContractKind::Precond,
             origin: None,
         })
     }
@@ -375,7 +379,7 @@ impl<'tcx> Property<'tcx> {
         }
     }
 
-    pub(crate) fn ty_arg(&self, index: usize) -> Option<Ty<'tcx>> {
+    pub(crate) fn try_type_arg_at(&self, index: usize) -> Option<Ty<'tcx>> {
         match self.args().get(index) {
             Some(PropertyArg::Ty(ty)) => Some(*ty),
             _ => None,
@@ -385,9 +389,9 @@ impl<'tcx> Property<'tcx> {
     /// The `ContractPlace` this atom's first argument refers to, when the
     /// first argument is a place (or an index access over one, e.g. `slice[i]`).
     pub(crate) fn target_place(&self) -> Option<&ContractPlace> {
-        match self.args().first()? {
-            PropertyArg::Expr(ContractExpr::Place(cp)) => Some(cp),
-            PropertyArg::Expr(ContractExpr::IndexAccess { slice, .. }) => match slice.as_ref() {
+        match self.args().first()?.expr()? {
+            ContractExpr::Place(cp) => Some(cp),
+            ContractExpr::IndexAccess { slice, .. } => match slice.as_ref() {
                 ContractExpr::Place(cp) => Some(cp),
                 _ => None,
             },
@@ -414,13 +418,19 @@ impl<'tcx> Property<'tcx> {
     pub(crate) fn contract_kind(&self) -> ContractKind {
         match self {
             Property::Atom(a) => a.contract_kind,
-            Property::And(a) => a.contract_kind,
-            Property::Or(o) => o.contract_kind,
+            Property::And(AndProperty { conjuncts: children, .. })
+            | Property::Or(OrProperty { disjuncts: children, .. }) => Self::shared_contract_kind(children),
         }
     }
 
-    /// Defer `ContractKind::Hazard` atoms to the use point, returning `None`
-    /// when only hazards remain.  A hazard (e.g. `Alias`) is *marked* in a
+    fn shared_contract_kind(children: &[Property<'tcx>]) -> ContractKind {
+        let mut kinds = children.iter().map(Property::contract_kind);
+        let Some(first) = kinds.next() else { return ContractKind::Precond };
+        if kinds.all(|kind| kind == first) { first } else { ContractKind::Precond }
+    }
+
+    /// Defer `ContractKind::Hazard` properties to the use point. A hazard
+    /// (e.g. `Alias`) is *marked* in a
     /// struct invariant to document the exclusive-ownership intent, but it is
     /// not a standing fact: it is enforced at the operation that consumes the
     /// pointer (whose `requires` names it), not verified at construction nor
@@ -443,7 +453,9 @@ impl<'tcx> Property<'tcx> {
                 }
             }
             Property::Or(or) => {
-                let disjuncts: Vec<Property<'tcx>> = or.disjuncts.iter().filter_map(Property::strip_hazards).collect();
+                // A removed disjunct is vacuously true, so the whole OR gives
+                // no usable entry fact.
+                let disjuncts: Vec<Property<'tcx>> = or.disjuncts.iter().map(Property::strip_hazards).collect::<Option<_>>()?;
                 match disjuncts.len() {
                     0 => None,
                     1 => disjuncts.into_iter().next(),
@@ -457,9 +469,16 @@ impl<'tcx> Property<'tcx> {
         }
     }
 
-    pub(crate) fn for_each(&self) -> Option<&ContractPlace> {
+    pub(crate) fn for_each(&self) -> Option<&PlaceBase> {
         match self {
-            Property::Atom(a) => a.for_each.as_ref(),
+            Property::Atom(a) => a.args.iter().find_map(|arg| match arg {
+                PropertyArg::ForEach(ContractExpr::Place(place)) => Some(&place.base),
+                PropertyArg::ForEach(ContractExpr::IndexAccess { index, .. }) => match index.as_ref() {
+                    ContractExpr::Place(place) => Some(&place.base),
+                    _ => None,
+                },
+                _ => None,
+            }),
             Property::And(_) | Property::Or(_) => None,
         }
     }
@@ -467,23 +486,18 @@ impl<'tcx> Property<'tcx> {
     /// Display metadata when this property was expanded from a compound property.
     pub(crate) fn origin(&self) -> Option<&ContractOrigin> {
         match self {
-            Property::Atom(a) => a.origin.as_ref(),
-            Property::And(a) => a.origin.as_ref(),
-            Property::Or(o) => o.origin.as_ref(),
+            Property::Atom(AtomProperty { origin, .. })
+            | Property::And(AndProperty { origin, .. })
+            | Property::Or(OrProperty { origin, .. }) => origin.as_ref(),
         }
     }
 
     /// Apply contract kind metadata from a JSON entry or attribute.
     pub(crate) fn apply_kind(&mut self, kind: Option<&str>) {
-        let target = match self {
-            Property::Atom(a) => &mut a.contract_kind,
-            Property::And(a) => &mut a.contract_kind,
-            Property::Or(o) => &mut o.contract_kind,
-        };
         match kind {
-            Some("hazard") => *target = ContractKind::Hazard,
-            Some("option") => *target = ContractKind::Option_,
-            Some("postcond") => *target = ContractKind::Postcond,
+            Some("hazard") => self.set_contract_kind(ContractKind::Hazard),
+            Some("option") => self.set_contract_kind(ContractKind::Option_),
+            Some("postcond") => self.set_contract_kind(ContractKind::Postcond),
             _ => {}
         }
     }
@@ -512,8 +526,10 @@ impl<'tcx> Property<'tcx> {
     pub(crate) fn set_contract_kind(&mut self, k: ContractKind) {
         match self {
             Property::Atom(a) => a.contract_kind = k,
-            Property::And(a) => a.contract_kind = k,
-            Property::Or(o) => o.contract_kind = k,
+            Property::And(AndProperty { conjuncts: children, .. })
+            | Property::Or(OrProperty { disjuncts: children, .. }) => {
+                children.iter_mut().for_each(|child| child.set_contract_kind(k));
+            }
         }
     }
 }

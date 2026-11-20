@@ -216,11 +216,6 @@ fn rebind_property_to_args<'tcx>(
                     ok = false;
                 }
             }
-            if let Some(place) = &mut atom.for_each
-                && !rebind_place(place, args, body)
-            {
-                ok = false;
-            }
             ok
         }
         Property::And(and) => {
@@ -258,6 +253,7 @@ fn rebind_property_arg<'tcx>(
 ) -> bool {
     match arg {
         PropertyArg::Expr(expr) => rebind_expr(expr, args, callee_args, body),
+        PropertyArg::ForEach(expr) => rebind_expr(expr, args, callee_args, body),
         PropertyArg::Predicates(preds) => {
             let mut ok = true;
             for p in preds {
@@ -346,13 +342,21 @@ fn rebind_place<'tcx>(
     args: &[rustc_middle::mir::Operand<'tcx>],
     body: &rustc_middle::mir::Body<'tcx>,
 ) -> bool {
+    rebind_base(&mut place.base, args, body)
+}
+
+fn rebind_base<'tcx>(
+    base: &mut PlaceBase,
+    args: &[rustc_middle::mir::Operand<'tcx>],
+    body: &rustc_middle::mir::Body<'tcx>,
+) -> bool {
     // A contract references the leaf callee's arguments either as a 0-based
     // `Arg(i)` (std JSON contracts) or as a MIR `Local(k)` (inline
     // `#[rapx::requires]`, where local 1..=arg_count are the parameters). Map
     // both onto the argument index, then trace that argument back to this
     // callee's parameter. `Local(0)`/`Return` name the return value and cannot
     // be restated as a precondition.
-    let arg_idx = match place.base {
+    let arg_idx = match *base {
         PlaceBase::Arg(i) => Some(i),
         PlaceBase::Local(k) if k >= 1 => Some(k - 1),
         _ => return false,
@@ -362,7 +366,7 @@ fn rebind_place<'tcx>(
         .and_then(|op| call_arg_to_outer_param(op, body))
     {
         Some(outer) => {
-            place.base = PlaceBase::Arg(outer);
+            *base = PlaceBase::Arg(outer);
             true
         }
         None => false,

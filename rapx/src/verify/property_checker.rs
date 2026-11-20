@@ -340,11 +340,11 @@ impl PropertyChecker {
                     )));
                 }
                 let target_arg = property.args().first().and_then(|arg| match arg {
-                    PropertyArg::Expr(ContractExpr::Place(place)) => match place.base {
+                    PropertyArg::Expr(ContractExpr::Place(place)) | PropertyArg::ForEach(ContractExpr::Place(place)) => match place.base {
                         PlaceBase::Arg(index) => Some(index),
                         _ => None,
                     },
-                    PropertyArg::Expr(ContractExpr::Const(index)) => usize::try_from(*index).ok(),
+                    PropertyArg::Expr(ContractExpr::Const(index)) | PropertyArg::ForEach(ContractExpr::Const(index)) => usize::try_from(*index).ok(),
                     _ => None,
                 });
                 let target_alloc_id = self

@@ -221,14 +221,11 @@ pub(crate) fn fmt_contract_expanded<'tcx>(
         format!("{tag}({})", wrapped.join(", "))
     } else if matches!(kind, PropertyKind::InBound)
         && matches!(
-            property.args().first(),
-            Some(crate::verify::contract::PropertyArg::Expr(
-                crate::verify::contract::ContractExpr::IndexAccess { .. }
-            ))
+            property.args().first().and_then(PropertyArg::expr),
+            Some(ContractExpr::IndexAccess { .. })
         )
     {
-        if let Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) =
-            property.args().first()
+        if let Some(ContractExpr::IndexAccess { slice, index }) = property.args().first().and_then(PropertyArg::expr)
         {
             let (s, i) = fmt_index_access(slice, index, tcx, struct_def_id, fn_def_id);
             format!("{tag}({s}, {i})")
@@ -258,12 +255,12 @@ pub(crate) fn fmt_contract_expanded<'tcx>(
     let meaning = match kind {
         PropertyKind::InBound => {
             let placeholder = format!("InBound({})", args.join(", "));
-            match property.args().first() {
-                Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) => {
+            match property.args().first().and_then(PropertyArg::expr) {
+                Some(ContractExpr::IndexAccess { slice, index }) => {
                     let (s, i) = fmt_index_access(slice, index, tcx, struct_def_id, fn_def_id);
                     format!("0 <= {i} < {s}.len()")
                 }
-                Some(PropertyArg::Expr(ContractExpr::Place(place))) => {
+                Some(ContractExpr::Place(place)) => {
                     let ptr = place.display_user_friendly(tcx, struct_def_id, fn_def_id);
                     let ty = property
                         .args()

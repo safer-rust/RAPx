@@ -20,8 +20,8 @@ impl PropertyChecker {
         _checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
-        let src = property.ty_arg(0);
-        let dst = property.ty_arg(1);
+        let src = property.try_type_arg_at(0);
+        let dst = property.try_type_arg_at(1);
         match (src, dst) {
             (Some(s), Some(d)) => {
                 let ss = vm_state.size_of_ty(s);
@@ -107,8 +107,8 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
-        let src = property.ty_arg(0);
-        let dst = property.ty_arg(1);
+        let src = property.try_type_arg_at(0);
+        let dst = property.try_type_arg_at(1);
         let src = src.map(|ty| vm_state.instantiate_callsite_ty(checkpoint, ty));
         let dst = dst.map(|ty| vm_state.instantiate_callsite_ty(checkpoint, ty));
         // A `SplitTransmute([T], [U])` contract declared by the caller licenses

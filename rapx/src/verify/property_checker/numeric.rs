@@ -117,7 +117,7 @@ impl PropertyChecker {
         let Some(value) = self.target_value(vm_state, checkpoint, property) else {
             return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
-        let ty = property.ty_arg(1);
+        let ty = property.try_type_arg_at(1);
         if let Some(ty) = ty {
             let size_bits = vm_state.size_of_ty(ty) * 8;
             if size_bits > 0 && size_bits < 128 {

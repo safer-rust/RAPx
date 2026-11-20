@@ -4,7 +4,7 @@ use crate::def_ids::type_ids;
 use crate::helpers::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{
-    ContractExpr, ContractPlace, ContractProjection, PlaceBase, Property, PropertyArg, place::projected_field_ty,
+    ContractExpr, ContractPlace, ContractProjection, PlaceBase, Property, place::projected_field_ty,
 };
 use rustc_middle::{
     mir::{Local, Operand},
@@ -146,17 +146,16 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         context: ContractTargetContext<'_, 'tcx>,
         property: &Property<'tcx>,
     ) -> Option<VmValue<'z3, 'tcx>> {
-        let cp = match property.args().first()? {
-            PropertyArg::Expr(ContractExpr::Const(n)) => {
+        let cp = match property.args().first()?.expr()? {
+            ContractExpr::Const(n) => {
                 let idx = usize::try_from(*n).ok()?;
                 crate::verify::contract::ContractPlace {
                     base: PlaceBase::Arg(idx),
                     projections: vec![],
                 }
             }
-            PropertyArg::Predicates(_) | PropertyArg::Ty(_) | PropertyArg::Ident(_) => return None,
-            PropertyArg::Expr(ContractExpr::Place(cp)) => cp.clone(),
-            PropertyArg::Expr(ContractExpr::IndexAccess { slice, .. }) => match slice.as_ref() {
+            ContractExpr::Place(cp) => cp.clone(),
+            ContractExpr::IndexAccess { slice, .. } => match slice.as_ref() {
                 ContractExpr::Place(cp) => cp.clone(),
                 _ => return None,
             },

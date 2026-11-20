@@ -452,6 +452,9 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                                 expr, checkpoint,
                             ))
                         }
+                        contract::PropertyArg::ForEach(expr) => contract::PropertyArg::ForEach(
+                            Self::rebind_contract_expr(expr, checkpoint),
+                        ),
                         contract::PropertyArg::Predicates(predicates) => {
                             let rebound: Vec<_> = predicates
                                 .iter()
@@ -470,10 +473,6 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                     kind: atom.kind,
                     args: new_args,
                     contract_kind: atom.contract_kind,
-                    for_each: atom
-                        .for_each
-                        .as_ref()
-                        .map(|p| Self::rebind_place(p, checkpoint)),
                     origin: None,
                 })
             }
@@ -483,7 +482,6 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                     .iter()
                     .map(|p| Self::bind_property_to_checkpoint(p, checkpoint))
                     .collect(),
-                contract_kind: and.contract_kind,
                 origin: None,
             }),
             Property::Or(or) => Property::Or(OrProperty {
@@ -492,7 +490,6 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                     .iter()
                     .map(|p| Self::bind_property_to_checkpoint(p, checkpoint))
                     .collect(),
-                contract_kind: or.contract_kind,
                 origin: None,
             }),
         }
@@ -503,11 +500,8 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
     /// `Return` and `Arg` bases are unchanged; a `Local(n)` that falls within
     /// the checkpoint's argument range is remapped to `Arg(n - 1)` (locals
     /// 1..=k correspond to the callee's arguments in order).
-    fn rebind_place(
-        place: &contract::ContractPlace,
-        checkpoint: &Checkpoint<'tcx>,
-    ) -> contract::ContractPlace {
-        let new_base = match place.base {
+    fn rebind_base(base: &contract::PlaceBase, checkpoint: &Checkpoint<'tcx>) -> contract::PlaceBase {
+        match *base {
             contract::PlaceBase::Return => contract::PlaceBase::Return,
             contract::PlaceBase::Arg(n) => contract::PlaceBase::Arg(n),
             contract::PlaceBase::Local(n) => {
@@ -517,9 +511,12 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                     contract::PlaceBase::Local(n)
                 }
             }
-        };
+        }
+    }
+
+    fn rebind_place(place: &contract::ContractPlace, checkpoint: &Checkpoint<'tcx>) -> contract::ContractPlace {
         contract::ContractPlace {
-            base: new_base,
+            base: Self::rebind_base(&place.base, checkpoint),
             projections: place.projections.clone(),
         }
     }

@@ -120,7 +120,7 @@ impl PropertyChecker {
             // constant length carries no known terminator position, so use
             // the tracked allocation instead.
             let n_term = property.args().get(1).and_then(|a| match a {
-                PropertyArg::Expr(ContractExpr::Const(_)) => None,
+                PropertyArg::Expr(ContractExpr::Const(_)) | PropertyArg::ForEach(ContractExpr::Const(_)) => None,
                 a => self.resolve_arg_term(vm_state, checkpoint, a),
             });
             let buffer_size = n_term

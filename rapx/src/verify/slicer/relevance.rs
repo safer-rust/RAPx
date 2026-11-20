@@ -84,7 +84,7 @@ impl RelevantPlaces {
         if !is_target_argument_index(kind, arg_index) {
             return false;
         }
-        let PropertyArg::Expr(ContractExpr::Const(value)) = arg else {
+        let Some(ContractExpr::Const(value)) = arg.expr() else {
             return false;
         };
         let Ok(index) = usize::try_from(*value) else {
@@ -100,7 +100,7 @@ impl RelevantPlaces {
     /// Collect all roots mentioned by a property argument.
     fn collect_property_arg(&mut self, arg: &PropertyArg<'_>) {
         match arg {
-            PropertyArg::Expr(expr) => self.collect_contract_expr(expr),
+            PropertyArg::Expr(expr) | PropertyArg::ForEach(expr) => self.collect_contract_expr(expr),
             PropertyArg::Predicates(predicates) => {
                 for predicate in predicates {
                     self.collect_numeric_predicate(predicate);

@@ -277,52 +277,37 @@ pub(crate) fn projected_field_ty<'tcx>(tcx: TyCtxt<'tcx>, mut ty: Ty<'tcx>, path
     Some(ty)
 }
 
-/// Strip `ForEach` from a property arg and return the container place
-/// (without the projection) if `ForEach` was present.
-pub(crate) fn strip_for_each<'tcx>(arg: &mut PropertyArg<'tcx>) -> Option<ContractPlace> {
+/// Strip a `ForEach` projection from a property argument.
+pub(crate) fn strip_for_each<'tcx>(arg: &mut PropertyArg<'tcx>) -> bool {
     if let PropertyArg::Expr(ContractExpr::Place(place)) = arg
         && place
             .projections
             .iter()
             .any(|p| matches!(p, ContractProjection::ForEach))
         {
-            let mut container = place.clone();
-            container
-                .projections
-                .retain(|p| !matches!(p, ContractProjection::ForEach));
             place
                 .projections
                 .retain(|p| !matches!(p, ContractProjection::ForEach));
-            return Some(container);
+            return true;
         }
-    None
+    false
 }
 
 /// Check if the given expression refers to a function parameter whose type is
-/// an array.  If so, return a `ContractPlace` for that parameter to be used as
-/// the `for_each` container.
-pub(crate) fn detect_array_for_each<'tcx>(
+/// an array whose elements should be checked individually.
+pub(crate) fn is_array_for_each<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
     expr: &Expr,
-) -> Option<ContractPlace> {
-    let place = parse_contract_place(tcx, def_id, expr)?;
+) -> bool {
+    let Some(place) = parse_contract_place(tcx, def_id, expr) else { return false };
     let param_idx = match place.base {
         PlaceBase::Arg(n) => n,
-        PlaceBase::Local(n) => {
-            n.checked_sub(1)?
-        }
-        _ => return None,
+        PlaceBase::Local(n) => match n.checked_sub(1) { Some(n) => n, None => return false },
+        _ => return false,
     };
     let fn_sig = tcx.fn_sig(def_id).instantiate_identity().skip_binder();
-    if let Some(arg_ty) = fn_sig.inputs().get(param_idx)
-        && matches!(arg_ty.kind(), TyKind::Array(..)) {
-            return Some(ContractPlace {
-                base: PlaceBase::Arg(param_idx),
-                projections: vec![],
-            });
-        }
-    None
+    fn_sig.inputs().get(param_idx).is_some_and(|ty| matches!(ty.kind(), TyKind::Array(..)))
 }
 
 /// The field name selected by the first `Field` projection of `place` on
@@ -361,7 +346,7 @@ pub(crate) fn field_name_from_arg<'tcx>(
 ) -> Option<String> {
     match arg {
         PropertyArg::Ident(s) => Some(s.clone()),
-        PropertyArg::Expr(ContractExpr::Place(place)) => {
+        PropertyArg::Expr(ContractExpr::Place(place)) | PropertyArg::ForEach(ContractExpr::Place(place)) => {
             field_name_from_place(tcx, adt_def_id, place)
         }
         _ => None,

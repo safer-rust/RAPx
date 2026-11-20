@@ -199,7 +199,7 @@ impl<'tcx> PropertyArg<'tcx> {
     ) -> String {
         match self {
             PropertyArg::Ty(ty) => format!("{}", ty),
-            PropertyArg::Expr(expr) => {
+            PropertyArg::Expr(expr) | PropertyArg::ForEach(expr) => {
                 display_expr_user_friendly(expr, tcx, struct_def_id, fn_def_id)
             }
             PropertyArg::Predicates(preds) => {
@@ -240,8 +240,7 @@ impl<'tcx> Property<'tcx> {
         };
 
         if matches!(self.kind(), Some(PropertyKind::InBound))
-            && let Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) =
-                self.args().first()
+            && let Some(ContractExpr::IndexAccess { slice, index }) = self.args().first().and_then(PropertyArg::expr)
         {
             let slice_str = display_expr_user_friendly(slice, tcx, struct_def_id, fn_def_id);
             let index_str = display_expr_user_friendly(index, tcx, struct_def_id, fn_def_id);

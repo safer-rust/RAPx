@@ -31,7 +31,7 @@ impl PropertyChecker {
         property: &Property<'tcx>,
     ) -> CheckResult {
         let locals: Option<Vec<Local>> = property.args().iter().map(|arg| {
-            let PropertyArg::Expr(ContractExpr::Place(place)) = arg else { return None };
+            let Some(ContractExpr::Place(place)) = arg.expr() else { return None };
             place.projections.is_empty().then(|| place.base.to_local())
         }).collect();
         let Some(locals) = locals else {
@@ -110,8 +110,7 @@ impl PropertyChecker {
             return CheckResult::ProvedByRule;
         }
 
-        if let Some(PropertyArg::Expr(ContractExpr::IndexAccess { .. })) =
-            property.args().first()
+        if let Some(ContractExpr::IndexAccess { .. }) = property.args().first().and_then(PropertyArg::expr)
         {
             return self.check_in_bound_slice(vm_state, &solver, checkpoint, property);
         }
@@ -141,7 +140,7 @@ impl PropertyChecker {
             }
         }
         // A slice access covers its whole length, not one element.
-        let slice_len = vm_state.unsized_slice_len(&value, property.ty_arg(1));
+        let slice_len = vm_state.unsized_slice_len(&value, property.try_type_arg_at(1));
         // `in_bounds` records "points at a valid element" (established by a
         // single-element deref/contract), so it only discharges a single-element
         // InBound.  A `count > 1` check still needs the byte-range proof below.
@@ -325,7 +324,7 @@ impl PropertyChecker {
         let Some(count_arg) = property.args().get(2) else {
             return false;
         };
-        let PropertyArg::Expr(ContractExpr::Place(cp)) = count_arg else {
+        let Some(ContractExpr::Place(cp)) = count_arg.expr() else {
             return false;
         };
         let PlaceBase::Arg(n) = cp.base else {
@@ -358,8 +357,7 @@ impl PropertyChecker {
     pub(super) fn resolve_index_access_args(
         property: &Property<'_>,
     ) -> (Option<usize>, Option<usize>) {
-        if let Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, index })) =
-            property.args().first()
+        if let Some(ContractExpr::IndexAccess { slice, index }) = property.args().first().and_then(PropertyArg::expr)
         {
             let slice_idx = Self::extract_place_arg_index(slice);
             let index_idx = Self::extract_place_arg_index(index);
@@ -614,7 +612,7 @@ impl PropertyChecker {
             .get(1)
             .and_then(|a| {
                 let cp = match a {
-                    PropertyArg::Expr(ContractExpr::Place(cp)) => cp.clone(),
+                    PropertyArg::Expr(ContractExpr::Place(cp)) | PropertyArg::ForEach(ContractExpr::Place(cp)) => cp.clone(),
                     _ => return None,
                 };
                 match cp.base {

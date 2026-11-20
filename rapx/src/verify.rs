@@ -539,7 +539,7 @@ fn property_field_indices(property: &Property<'_>) -> Vec<usize> {
     let mut indices = Vec::new();
     for arg in property.args() {
         let place = match arg {
-            PropertyArg::Expr(ContractExpr::Place(p)) => Some(p),
+            PropertyArg::Expr(ContractExpr::Place(p)) | PropertyArg::ForEach(ContractExpr::Place(p)) => Some(p),
             _ => None,
         };
         if let Some(place) = place {
@@ -564,7 +564,7 @@ fn property_field_indices(property: &Property<'_>) -> Vec<usize> {
 fn remap_constructor_contract<'tcx>(property: Property<'tcx>) -> Property<'tcx> {
     fn remap_place_arg<'tcx>(arg: &PropertyArg<'tcx>) -> PropertyArg<'tcx> {
         let place = match arg {
-            PropertyArg::Expr(ContractExpr::Place(p)) => p,
+            PropertyArg::Expr(ContractExpr::Place(p)) | PropertyArg::ForEach(ContractExpr::Place(p)) => p,
             _ => return arg.clone(),
         };
         let PlaceBase::Arg(field_idx) = place.base else {
@@ -576,7 +576,10 @@ fn remap_constructor_contract<'tcx>(property: Property<'tcx>) -> Property<'tcx> 
             projections: vec![projection],
         };
         new_place.projections.extend(place.projections.iter().cloned());
-        PropertyArg::Expr(ContractExpr::Place(new_place))
+        match arg {
+            PropertyArg::ForEach(_) => PropertyArg::ForEach(ContractExpr::Place(new_place)),
+            _ => PropertyArg::Expr(ContractExpr::Place(new_place)),
+        }
     }
 
     match property {

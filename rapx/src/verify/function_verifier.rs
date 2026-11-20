@@ -428,7 +428,7 @@ fn type_invariant_subject(property: &Property<'_>) -> Option<Local> {
     let mut roots = FxHashSet::default();
     for arg in property.args() {
         match arg {
-            PropertyArg::Expr(expr) => collect_expr(expr, &mut roots),
+            PropertyArg::Expr(expr) | PropertyArg::ForEach(expr) => collect_expr(expr, &mut roots),
             PropertyArg::Predicates(predicates) => {
                 for predicate in predicates {
                     collect_expr(&predicate.lhs, &mut roots);

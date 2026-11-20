@@ -9,7 +9,7 @@ use z3::ast::{Ast, Int};
 use crate::def_ids::type_ids;
 use crate::compat::GenericArgsRef;
 use crate::helpers::mir_utils;
-use crate::verify::contract::{ContractExpr, ContractProjection, PropertyArg, PropertyKind, place::projected_field_ty};
+use crate::verify::contract::{ContractExpr, ContractProjection, PropertyKind, place::projected_field_ty};
 
 use super::state::{AllocId, Provenance, ValueFacts, ValueSource, VmState, VmValue};
 
@@ -342,7 +342,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             property.kind() == Some(kind)
                 && (kind != PropertyKind::Allocated
                     || property.args().get(2).is_none_or(|arg| {
-                        matches!(arg, PropertyArg::Expr(ContractExpr::Const(count)) if *count > 0)
+                        matches!(arg.expr(), Some(ContractExpr::Const(count)) if *count > 0)
                     }))
                 && property.target_place().is_some_and(|place| {
                     place

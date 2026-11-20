@@ -227,7 +227,7 @@ fn instantiate_entry<'tcx>(
 
 fn resolve_pointer_wrapper_target<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, property: &mut Property<'tcx>) {
     let Property::Atom(atom) = property else { return };
-    let Some(PropertyArg::Expr(ContractExpr::Place(place))) = atom.args.first_mut() else {
+    let Some(PropertyArg::Expr(ContractExpr::Place(place)) | PropertyArg::ForEach(ContractExpr::Place(place))) = atom.args.first_mut() else {
         return;
     };
     if !matches!(place.projections.last(), Some(ContractProjection::Field { .. })) {
