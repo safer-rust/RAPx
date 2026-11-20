@@ -1266,14 +1266,14 @@ fn box_deref() {
 // A self-recursive callee is truncated by the inline-depth bound. Its return
 // value feeds `ptr.add`; the base case (no recursion) keeps the offset bounded
 // (`InBound | Proved`), while the truncated recursion makes the offset
-// unprovable (`Unknown (inline depth)`). The call summary must stay
+// unprovable (`Unknown (incomplete inline)`). The call summary must stay
 // cycle-detected (no overflow).
 #[test]
 fn self_recursive_callee() {
     let output = run_with_args("verify_units/self_recursive_callee", CMD_VERIFY_TARGETED);
     assert_not_contain(&output, "overflowed");
     assert_function_result(&output, "target", "UNSOUND");
-    assert_contain(&output, "Unknown (inline depth)");
+    assert_contain(&output, "Unknown (incomplete inline)");
     assert_contain(&output, "InBound | Proved");
     assert_contain(&output, "InBound | Failed");
 }

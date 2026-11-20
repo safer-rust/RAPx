@@ -4,8 +4,6 @@
 //! through the types in this module.  Keeping these types here leaves the driver
 //! focused on orchestration.
 
-use rustc_hir::def_id::DefId;
-
 use super::contract::Property;
 use crate::verify::checkpoint::CheckpointLocation;
 
@@ -73,11 +71,7 @@ impl UnknownReason {
     }
 
     pub(crate) fn from_solver(solver: &z3::Solver<'_>) -> Self {
-        Self::SmtUnknown(
-            solver
-                .get_reason_unknown()
-                .unwrap_or_else(|| "reason unavailable".to_string()),
-        )
+        Self::SmtUnknown(solver.get_reason_unknown().unwrap_or_else(|| "reason unavailable".to_string()))
     }
 
     fn description(&self) -> String {
@@ -150,18 +144,13 @@ impl UnknownReason {
 /// Verification status for one required property on one path.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum CheckResult {
-    /// Proved by a *sound structural rule* (a fast-path that needs no solver
-    /// query): ZST guards, zero-element access, tracked invariants/flags,
-    /// type-level transparency, provenance-origin classification.  These are
-    /// the rules that must be audited for soundness.
+    /// Proved by a sound structural rule without an SMT query.
     ProvedByRule,
-    /// Proved by an *SMT query*: the solver showed the negation is unsatisfiable
-    /// (numeric bounds, byte-range coverage, alignment modulo/linear checks).
+    /// Proved by an SMT query showing the negation is unsatisfiable.
     ProvedBySmt,
     /// The verifier found a possible violation for this path.
     Failed,
-    /// The verifier has not implemented or completed the proof for this path;
-    /// the reason is carried in the payload.
+    /// The proof is incomplete; the payload records why.
     Unknown(UnknownReason),
 }
 
@@ -252,14 +241,6 @@ impl CheckResult {
         }
     }
 
-    pub(crate) fn disjunction(results: impl IntoIterator<Item = CheckResult>) -> CheckResult {
-        let mut results = results.into_iter();
-        let Some(first) = results.next() else {
-            return CheckResult::Failed;
-        };
-        results.fold(first, CheckResult::or)
-    }
-
     /// A false guard is independent of the symbolic program state. When all
     /// other disjuncts except one are false guards, that disjunct's witness is
     /// also a witness against the whole OR.
@@ -268,14 +249,12 @@ impl CheckResult {
     ) -> CheckResult {
         let results: Vec<_> = results.into_iter().collect();
         if !results.is_empty()
-            && results
-                .iter()
-                .all(|(result, _)| matches!(result, CheckResult::Failed))
+            && results.iter().all(|(result, _)| matches!(result, CheckResult::Failed))
             && results.iter().filter(|(_, guard)| *guard).count() + 1 >= results.len()
         {
             return CheckResult::Failed;
         }
-        Self::disjunction(results.into_iter().map(|(result, _)| result))
+        results.into_iter().map(|(result, _)| result).reduce(CheckResult::or).unwrap_or(CheckResult::Failed)
     }
 }
 
@@ -294,47 +273,4 @@ pub(crate) struct PropertyCheckResult<'tcx> {
     pub path_desc: String,
     /// Callee name or synthetic obligation label.
     pub callee_name: String,
-}
-
-/// Verification report for one function target.
-#[derive(Clone, Debug)]
-pub(crate) struct VerificationReport<'tcx> {
-    /// Function that was verified.
-    pub function: DefId,
-    /// Per-path property results emitted by the verifier.
-    pub results: Vec<PropertyCheckResult<'tcx>>,
-}
-
-impl<'tcx> VerificationReport<'tcx> {
-    /// Create an empty report for a function target.
-    pub(crate) fn new(function: DefId) -> Self {
-        Self {
-            function,
-            results: Vec::new(),
-        }
-    }
-
-    /// Render the whole report as a readable multi-line diagnostic.
-    pub(crate) fn describe(&self) -> String {
-        let mut out = String::new();
-        out.push_str(&format!(
-            "[rapx::verify::diagnostics] function {:?}: {} check item(s)\n",
-            self.function,
-            self.results.len()
-        ));
-
-        for (index, result) in self.results.iter().enumerate() {
-            out.push_str(&format!(
-                "  check #{index}: checkpoint #{}, bb{}, path {}, property {:?}, callee {}, result {:?}\n",
-                result.checkpoint_index,
-                result.checkpoint.block.as_usize(),
-                result.path_desc,
-                result.property.kind(),
-                result.callee_name,
-                result.result,
-            ));
-        }
-
-        out
-    }
 }

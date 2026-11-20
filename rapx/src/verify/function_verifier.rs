@@ -26,9 +26,7 @@ use super::{
     contract::{ContractExpr, PlaceBase, Property, PropertyArg, PropertyKind},
     path::PathExtractor,
     proof_cache::{VmCache, new_z3_context},
-    report::{
-        CheckResult, PATH_LIMIT_DESCRIPTION, PropertyCheckResult, UnknownReason, VerificationReport,
-    },
+    report::{CheckResult, PATH_LIMIT_DESCRIPTION, PropertyCheckResult, UnknownReason},
     slicer::{BackwardSlicer, RelevantItem},
     target::FunctionTarget,
 };
@@ -92,8 +90,8 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
     }
 
     /// Enumerate and check paths independently for each unsafe operation.
-    pub(crate) fn verify_checkpoints(tcx: TyCtxt<'tcx>, target: &'target FunctionTarget<'tcx>, allow_repeat: usize, config: Arc<VerifyConfig>, cache: &mut VmCache<'_, 'tcx>) -> (VerificationReport<'tcx>, bool) {
-        let mut report = VerificationReport::new(target.def_id);
+    pub(crate) fn verify_checkpoints(tcx: TyCtxt<'tcx>, target: &'target FunctionTarget<'tcx>, allow_repeat: usize, config: Arc<VerifyConfig>, cache: &mut VmCache<'_, 'tcx>) -> (Vec<PropertyCheckResult<'tcx>>, bool) {
+        let mut results = Vec::new();
         let mut trait_impl_limited = false;
         for (checkpoint_index, checkpoint) in target.all_checkpoints().enumerate() {
             if target.properties_for_callsite(checkpoint).is_empty()
@@ -102,9 +100,9 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
             }
             let verifier = Self::new_for_checkpoint(tcx, target, allow_repeat, checkpoint, Arc::clone(&config));
             trait_impl_limited |= verifier.is_trait_impl_limited();
-            verifier.verify_checkpoint(cache, checkpoint, checkpoint_index, &mut report);
+            verifier.verify_checkpoint(cache, checkpoint, checkpoint_index, &mut results);
         }
-        (report, trait_impl_limited)
+        (results, trait_impl_limited)
     }
 
     /// Append a checkpoint's property results or an unresolved-call UNKNOWN.
@@ -113,14 +111,14 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         cache: &mut VmCache<'_, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         checkpoint_index: usize,
-        report: &mut VerificationReport<'tcx>,
+        results: &mut Vec<PropertyCheckResult<'tcx>>,
     ) {
         let properties = self.target.properties_for_callsite(checkpoint);
         let unresolved_call = checkpoint.kind == CheckpointKind::UnsafeCall
             && checkpoint.callee.is_none()
             && properties.is_empty();
         if unresolved_call {
-            report.results.push(PropertyCheckResult {
+            results.push(PropertyCheckResult {
                 checkpoint: checkpoint.location(),
                 checkpoint_index,
                 property: Property::new(self.tcx, self.target.def_id, "Unknown", &[]),
@@ -139,7 +137,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
             }
         }
         for (path_desc, property_index, result) in path_results {
-            report.results.push(PropertyCheckResult {
+            results.push(PropertyCheckResult {
                 checkpoint: checkpoint.location(),
                 checkpoint_index,
                 property: properties[property_index].clone(),
@@ -156,11 +154,10 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
     /// return blocks to avoid unwinding paths where the struct may not be
     /// fully initialised. For methods, the invariant is re-proved at every
     /// exit block of the shared whole-CFG path tree.
-    pub(crate) fn verify_struct_invariants(&self) -> VerificationReport<'tcx> {
-        let mut report = VerificationReport::new(self.target.def_id);
+    pub(crate) fn verify_struct_invariants(&self) -> Vec<PropertyCheckResult<'tcx>> {
         let invariants = &self.target.struct_invariants;
         if invariants.is_empty() {
-            return report;
+            return Vec::new();
         }
 
         let is_constructor = get_type(self.tcx, self.target.def_id) == FnKind::Constructor;
@@ -175,35 +172,30 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
             .filter(|c| !matches!(c.kind(), Some(PropertyKind::Unknown)))
             .map(|c| RelevantItem::ContractFact { property: c.clone() })
             .collect();
-        report.results.extend(self.check_exit_properties(invariants, &entry_facts, !is_constructor, "struct"));
-        report
+        self.check_exit_properties(invariants, &entry_facts, !is_constructor, "struct")
     }
 
     /// Recheck built-in type invariants at exits when unsafe operations are
     /// present. Skip paths where the subject was moved or dropped.
-    pub(crate) fn verify_type_invariants(&self) -> VerificationReport<'tcx> {
-        let mut report = VerificationReport::new(self.target.def_id);
+    pub(crate) fn verify_type_invariants(&self) -> Vec<PropertyCheckResult<'tcx>> {
         let invariants = &self.target.type_invariants;
         if invariants.is_empty() || !self.target.has_checkable_checkpoint() {
-            return report;
+            return Vec::new();
         }
 
         let entry_facts: Vec<RelevantItem<'tcx>> = invariants.iter()
             .map(|inv| RelevantItem::ContractFact { property: inv.clone() })
             .collect();
-        report.results.extend(self.check_exit_properties(invariants, &entry_facts, false, "type"));
-        report
+        self.check_exit_properties(invariants, &entry_facts, false, "type")
     }
 
     /// Check postconditions at normal return blocks using entry requirements.
-    pub(crate) fn verify_postconditions(&self, postconditions: &[Property<'tcx>]) -> VerificationReport<'tcx> {
-        let mut report = VerificationReport::new(self.target.def_id);
+    pub(crate) fn verify_postconditions(&self, postconditions: &[Property<'tcx>]) -> Vec<PropertyCheckResult<'tcx>> {
         let entry_facts: Vec<RelevantItem<'tcx>> = self.target.caller_requires.iter()
             .filter(|property| !matches!(property.kind(), Some(PropertyKind::Unknown)))
             .map(|property| RelevantItem::ContractFact { property: property.clone() })
             .collect();
-        report.results.extend(self.check_exit_properties(postconditions, &entry_facts, false, "postcond"));
-        report
+        self.check_exit_properties(postconditions, &entry_facts, false, "postcond")
     }
 
     /// Check exit properties together when they share the same eligible paths.

@@ -27,6 +27,7 @@ type CountEntry = (
     usize,
 );
 
+/// Format a function name with its argument names and optional return type.
 pub(crate) fn fmt_fn_with_params(path: &str, arg_names: &[String], ret_ty: Option<&str>) -> String {
     let args = arg_names.join(", ");
     match ret_ty {
@@ -36,6 +37,7 @@ pub(crate) fn fmt_fn_with_params(path: &str, arg_names: &[String], ret_ty: Optio
     }
 }
 
+/// Append the function's own generic parameter names to its path.
 pub(crate) fn fmt_fn_path_with_generics(
     tcx: rustc_middle::ty::TyCtxt<'_>,
     def_id: rustc_hir::def_id::DefId,
@@ -54,6 +56,7 @@ pub(crate) fn fmt_fn_path_with_generics(
     }
 }
 
+/// Render a function path with trait bounds on its generic parameters.
 pub(crate) fn fmt_fn_path_with_bounds(tcx: TyCtxt<'_>, def_id: DefId) -> String {
     let path = tcx.def_path_str(def_id);
     let predicates = crate::compat::predicates_of(tcx, def_id);
@@ -101,6 +104,7 @@ pub(crate) fn fmt_fn_path_with_bounds(tcx: TyCtxt<'_>, def_id: DefId) -> String 
     insert_bounds_into_path(&path, &param_bounds)
 }
 
+/// Insert collected trait bounds into the rendered generic parameter list.
 fn insert_bounds_into_path(path: &str, param_bounds: &FxHashMap<String, Vec<String>>) -> String {
     let mut result = String::new();
     let mut remaining = path;
@@ -140,6 +144,7 @@ fn insert_bounds_into_path(path: &str, param_bounds: &FxHashMap<String, Vec<Stri
     result
 }
 
+/// Prefix a rendered contract according to its role.
 fn contract_kind_prefix(kind: crate::verify::contract::ContractKind) -> &'static str {
     match kind {
         ContractKind::Precond => "",
@@ -149,6 +154,7 @@ fn contract_kind_prefix(kind: crate::verify::contract::ContractKind) -> &'static
     }
 }
 
+/// Render a property as a contract call and its human-readable meaning.
 pub(crate) fn fmt_contract_expanded<'tcx>(
     tcx: rustc_middle::ty::TyCtxt<'tcx>,
     property: &crate::verify::contract::Property<'tcx>,
@@ -358,14 +364,8 @@ pub(crate) fn dedup_compound_props<'a, 'tcx>(
     out
 }
 
-pub(crate) fn emit_results_counts_and_checkpoints<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    all_results: &[PropertyCheckResult<'tcx>],
-) -> (usize, usize) {
-    // Distinguish a *confirmed* violation (`Failed`) from an *incomplete* proof
-    // (`Unknown`).  A `Failed` makes the function UNSOUND; a lone `Unknown`
-    // (e.g. an unannotated unsafe callee) only leaves it UNKNOWN.  Optional
-    // (`Option_`) properties do not take part in the verdict.
+/// Print checkpoint results and return the non-optional failed and unknown counts.
+pub(crate) fn emit_results_counts_and_checkpoints<'tcx>(all_results: &[PropertyCheckResult<'tcx>]) -> (usize, usize) {
     let failed = all_results
         .iter()
         .filter(|r| {
@@ -389,13 +389,13 @@ pub(crate) fn emit_results_counts_and_checkpoints<'tcx>(
             .push(r);
     }
 
-    let checkpoint_groups: Vec<_> = groups
-        .iter()
-        .filter(|((_, _, name), _)| !name.starts_with("struct-invariant"))
-        .collect();
-    let invariant_groups: Vec<_> = groups
-        .iter()
-        .filter(|((_, _, name), _)| name.starts_with("struct-invariant"))
+    let exit_sections = [
+        ("struct-invariant(", "struct invariants"),
+        ("type-invariant(", "type invariants"),
+        ("postcond-invariant(", "postconditions"),
+    ];
+    let checkpoint_groups: Vec<_> = groups.iter()
+        .filter(|((_, _, name), _)| !exit_sections.iter().any(|(prefix, _)| name.starts_with(prefix)))
         .collect();
 
     if !checkpoint_groups.is_empty() {
@@ -405,21 +405,26 @@ pub(crate) fn emit_results_counts_and_checkpoints<'tcx>(
                 "      unsafe checkpoint: bb{} -> {callee_name} (#{index})",
                 checkpoint.block.as_usize(),
             );
-            emit_property_rows(tcx, results);
+            emit_property_rows(results);
         }
     }
 
-    if !invariant_groups.is_empty() {
-        rap_info!("  --- struct invariants ---");
-        for ((_, checkpoint, _), results) in &invariant_groups {
+    for (prefix, title) in exit_sections {
+        let exit_groups: Vec<_> = groups.iter().filter(|((_, _, name), _)| name.starts_with(prefix)).collect();
+        if exit_groups.is_empty() {
+            continue;
+        }
+        rap_info!("  --- {title} ---");
+        for ((_, checkpoint, _), results) in exit_groups {
             rap_info!("      checkpoint bb{}:", checkpoint.block.as_usize());
-            emit_property_rows(tcx, results);
+            emit_property_rows(results);
         }
     }
 
     (failed, unknown)
 }
 
+/// Print one function's heading, constructor context, and verification results.
 pub(crate) fn emit_verify_summary<'tcx>(
     tcx: TyCtxt<'tcx>,
     target_path: &str,
@@ -439,16 +444,13 @@ pub(crate) fn emit_verify_summary<'tcx>(
         }
     }
 
-    emit_results_and_verdict(tcx, all_results, mono_limited);
+    emit_results_and_verdict(all_results, mono_limited);
     rap_info!("");
 }
 
-pub(crate) fn emit_results_and_verdict<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    all_results: &[PropertyCheckResult<'tcx>],
-    mono_limited: bool,
-) {
-    let (failed, unknown) = emit_results_counts_and_checkpoints(tcx, all_results);
+/// Print checkpoint results, the overall verdict, and any unknown diagnostics.
+pub(crate) fn emit_results_and_verdict<'tcx>(all_results: &[PropertyCheckResult<'tcx>], mono_limited: bool) {
+    let (failed, unknown) = emit_results_counts_and_checkpoints(all_results);
 
     if failed == 0 && unknown == 0 {
         let path_limited = all_results
@@ -506,7 +508,8 @@ pub(crate) fn emit_results_and_verdict<'tcx>(
     }
 }
 
-pub(crate) fn emit_property_rows<'tcx>(_tcx: TyCtxt<'tcx>, results: &[&PropertyCheckResult<'tcx>]) {
+/// Print the properties grouped by path, combining repeated report rows.
+pub(crate) fn emit_property_rows<'tcx>(results: &[&PropertyCheckResult<'tcx>]) {
     let path_groups: Vec<(&str, Vec<_>)> = {
         let mut map: FxHashMap<&str, Vec<_>> = FxHashMap::default();
         for r in results.iter() {

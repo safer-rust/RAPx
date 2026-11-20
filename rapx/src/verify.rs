@@ -184,7 +184,7 @@ impl<'tcx> VerifyDriver<'tcx> {
         for &repeat in repeat_rounds {
             let verification_started = Instant::now();
             match mir_utils::catch_panic(|| FunctionVerifier::verify_checkpoints(self.tcx, target, repeat, Arc::clone(&self.config), &mut cache)) {
-                Ok((report, limited)) => {
+                Ok((results, limited)) => {
                     *trait_impl_limited |= limited;
                     rap_debug!(
                         "checked checkpoint paths for {} repeat {} in {:?}",
@@ -192,8 +192,7 @@ impl<'tcx> VerifyDriver<'tcx> {
                         repeat,
                         verification_started.elapsed()
                     );
-                    rap_debug!("{}", report.describe());
-                    all_results.extend(report.results);
+                    all_results.extend(results);
                 }
                 Err(msg) => {
                     rap_warn!("Skipping {} (repeat {}): {msg}", skip_label, repeat);
@@ -242,7 +241,7 @@ impl<'tcx> VerifyDriver<'tcx> {
         } else if all_results.is_empty() {
             rap_info!("  result: SOUND (no unsafe checkpoints)");
         } else {
-            emit_results_and_verdict(self.tcx, &all_results, trait_impl_limited);
+            emit_results_and_verdict(&all_results, trait_impl_limited);
         }
         rap_info!("");
     }
@@ -308,12 +307,9 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
                 let verifier = FunctionVerifier::new_with_repeat(self.tcx, target, planned_repeat, Arc::clone(&self.config));
                 trait_impl_limited |= verifier.is_trait_impl_limited();
                 match mir_utils::catch_panic(|| verifier.verify_struct_invariants()) {
-                    Ok(struct_report) => {
-                        rap_debug!("{}", struct_report.describe());
+                    Ok(struct_results) => {
                         if let Some(struct_id) = target.owner_struct_def_id {
-                            let verdict = struct_report
-                                .results
-                                .iter()
+                            let verdict = struct_results.iter()
                                 .fold(CheckResult::ProvedByRule, |acc, r| {
                                     acc.and(r.result.clone())
                                 });
@@ -322,7 +318,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
                                 .and_modify(|v| *v = v.clone().and(verdict.clone()))
                                 .or_insert(verdict);
                         }
-                        all_results.extend(struct_report.results);
+                        all_results.extend(struct_results);
                     }
                     Err(msg) => {
                         rap_warn!("Skipping struct invariants for {} : {msg}", target_path);
@@ -336,10 +332,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
                 let verifier = FunctionVerifier::new_with_repeat(self.tcx, target, planned_repeat, Arc::clone(&self.config));
                 trait_impl_limited |= verifier.is_trait_impl_limited();
                 match mir_utils::catch_panic(|| verifier.verify_type_invariants()) {
-                    Ok(type_report) => {
-                        rap_debug!("{}", type_report.describe());
-                        all_results.extend(type_report.results);
-                    }
+                    Ok(type_results) => all_results.extend(type_results),
                     Err(msg) => {
                         rap_warn!("Skipping type invariants for {} : {msg}", target_path);
                         all_results.clear();
@@ -489,7 +482,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
                     for repeat in repeats {
                         let verifier = FunctionVerifier::new_with_repeat(self.tcx, &target, repeat, Arc::clone(&self.config));
                         match mir_utils::catch_panic(|| verifier.verify_postconditions(&postconditions)) {
-                            Ok(report) => results.extend(report.results),
+                            Ok(postcondition_results) => results.extend(postcondition_results),
                             Err(message) => {
                                 crashed = Some(message);
                                 break;
@@ -499,7 +492,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
                     if let Some(message) = crashed {
                         rap_warn!("      result: UNKNOWN (verifier crashed: {message})");
                     } else {
-                        emit_results_and_verdict(self.tcx, &results, false);
+                        emit_results_and_verdict(&results, false);
                     }
                 }
                 for (method_name, contracts) in ensures {
