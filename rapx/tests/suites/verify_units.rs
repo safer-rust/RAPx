@@ -292,7 +292,6 @@ sound_tests! {
 }
 
 #[test]
-#[ignore = "TODO: unsigned bitwise not rejects the safe u8 branch"]
 fn validptr_sound_07() {
     let output = run_with_args("verify_units/validptr_sound_07", CMD_VERIFY_TARGETED);
     assert_function_result(&output, "sound_unsigned_not_selects_in_bounds_read", "SOUND");
@@ -329,14 +328,12 @@ unsound_weak_tests! {
 }
 
 #[test]
-#[ignore = "TODO: signed division prunes a feasible out-of-bounds read"]
 fn validptr_unsound_08() {
     let output = run_with_args("verify_units/validptr_unsound_08", CMD_VERIFY_TARGETED);
     assert_unproved(&output, "unsound_signed_division_selects_out_of_bounds_read", "ValidPtr");
 }
 
 #[test]
-#[ignore = "TODO: unsigned bitwise not prunes a feasible out-of-bounds read"]
 fn validptr_unsound_09() {
     let output = run_with_args("verify_units/validptr_unsound_09", CMD_VERIFY_TARGETED);
     assert_unproved(&output, "unsound_unsigned_not_selects_out_of_bounds_read", "ValidPtr");

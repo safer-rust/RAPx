@@ -47,12 +47,14 @@ pub(crate) fn refine_contract_method_const<'z3, 'tcx>(
     };
     let Some(bits) = value
         .try_to_scalar_int()
-        .and_then(|scalar| u64::try_from(scalar.to_bits(scalar.size())).ok())
+        .map(|scalar| scalar.to_bits(scalar.size()))
     else {
         return;
     };
-    if let Some(mut assigned) = state.local_value(place.local).cloned() {
-        assigned.z3_term = Int::from_u64(state.z3_ctx, bits);
+    if let Some(mut assigned) = state.local_value(place.local).cloned()
+        && let Some(term) = state.scalar_bits_term(assigned.ty, bits)
+    {
+        assigned.z3_term = term;
         state.set_local(place.local, assigned);
     }
 }

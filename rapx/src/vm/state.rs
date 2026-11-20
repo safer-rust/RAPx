@@ -1054,7 +1054,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
 
     pub(crate) fn constrain_integer_input(&mut self, term: &Int<'z3>, ty: Ty<'tcx>) {
         if let Some(layout) = self.integer_layout(ty) {
-            self.constraints
+            self.path_state.constraints
                 .assertions
                 .push(layout.in_domain(self.z3_ctx, term));
         }

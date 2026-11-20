@@ -88,10 +88,9 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             .and_then(Self::non_trivial_align)
     }
 
-    /// Assert the Euclidean division identity and its bounds for `Div`/`Rem`:
-    ///   `lhs == (lhs/rhs)*rhs + lhs%rhs  ∧  lhs%rhs >= 0`
-    /// plus `(lhs/rhs)*rhs <= lhs` directly for robustness.  This lets later
-    /// checks prove `(x/N)*N <= x` and `x%N >= 0`.
+    /// Conditional facts for the legacy nonnegative mathematical division path.
+    /// Typed machine division uses the integer kernel instead: signed Rust
+    /// division cannot inherit Euclidean or nonnegative remainder assumptions.
     ///
     /// `term` must be the *same* Z3 term returned by `eval_binary_op` (the
     /// quotient), not a separate `lhs.div(rhs)` call, so the axiom constrains
@@ -111,25 +110,40 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let rem = lhs.rem(rhs);
         let mul_term = Int::mul(self.z3_ctx, &[quot, rhs]);
         let sum_term = Int::add(self.z3_ctx, &[&mul_term, &rem]);
-        self.path_state.constraints.assertions.push(lhs._eq(&sum_term));
         let zero = Int::from_u64(self.z3_ctx, 0);
-        self.path_state.constraints.assertions.push(rem.ge(&zero));
-        if rhs.as_u64().is_none_or(|r| r >= 1) {
-            self.path_state.constraints.assertions.push(rem.lt(rhs));
-        }
-        self.path_state.constraints.assertions.push(rem.le(lhs));
-        self.path_state.constraints.assertions.push(quot.ge(&zero));
+        let positive_divisor = rhs.gt(&zero);
+        let nonnegative_division = Bool::and(self.z3_ctx, &[&lhs.ge(&zero), &positive_divisor]);
+        self.path_state.constraints
+            .assertions
+            .push(positive_divisor.implies(&lhs._eq(&sum_term)));
+        self.path_state.constraints
+            .assertions
+            .push(positive_divisor.implies(&rem.ge(&zero)));
+        self.path_state.constraints
+            .assertions
+            .push(positive_divisor.implies(&rem.lt(rhs)));
+        self.path_state.constraints
+            .assertions
+            .push(nonnegative_division.implies(&rem.le(lhs)));
+        self.path_state.constraints
+            .assertions
+            .push(nonnegative_division.implies(&quot.ge(&zero)));
         // Direct inequality: (lhs/rhs)*rhs <= lhs
-        self.path_state.constraints.assertions.push(mul_term.le(lhs));
+        self.path_state.constraints
+            .assertions
+            .push(positive_divisor.implies(&mul_term.le(lhs)));
         if rhs.as_u64().is_some_and(|r| r >= 2) {
             let one = Int::from_u64(self.z3_ctx, 1);
             let qp1 = Int::add(self.z3_ctx, &[quot, &one]);
-            self.path_state.constraints
-                .assertions
-                .push(lhs.ge(&one).implies(&qp1.le(lhs)));
+            self.path_state.constraints.assertions.push(
+                Bool::and(self.z3_ctx, &[&nonnegative_division, &lhs.ge(&one)])
+                    .implies(&qp1.le(lhs)),
+            );
         } else {
             if rhs.as_u64().is_some_and(|r| r >= 1) {
-                self.path_state.constraints.assertions.push(quot.le(lhs));
+                self.path_state.constraints
+                    .assertions
+                    .push(nonnegative_division.implies(&quot.le(lhs)));
             }
         }
     }
