@@ -6,23 +6,32 @@
 
 mod api_classify;
 mod auto_trait;
-pub(crate) mod call_summary;
+mod call_summary;
 mod checkpoint;
-pub(crate) mod constructor_policy;
+mod constructor_policy;
 mod contract;
 mod display;
 mod function_verifier;
-pub(crate) mod loop_handling;
+mod loop_handling;
 mod marker_trait;
 mod path;
 mod proof_cache;
 mod property_checker;
 mod report;
-pub(crate) mod slicer;
-pub(crate) mod target;
+mod slicer;
+mod target;
 mod trait_ensurance;
 mod type_invariants;
-pub(crate) mod vm;
+mod vm;
+
+pub(crate) use self::{
+    call_summary::{callback::supports_result as supports_callback_result, effects::has_registered_effect},
+    constructor_policy::set_constructor_mir_mode,
+    loop_handling::RepeatStrategy,
+    slicer::RelevantItem,
+    target::PrepareTargets,
+    vm::{VmState, state::{AllocId, SafeDropEvent, SafeDropEventKind}},
+};
 
 use std::time::Instant;
 
@@ -49,28 +58,30 @@ use self::{
         fmt_fn_path_with_bounds, fmt_fn_path_with_generics, fmt_fn_with_params,
     },
     function_verifier::FunctionVerifier,
-    loop_handling::{LoopSensitivityAnalyzer, RepeatStrategy},
+    loop_handling::LoopSensitivityAnalyzer,
     marker_trait::MarkerTraitVerifier,
     proof_cache::{VmCache, new_z3_context},
     report::{CheckResult, PropertyCheckResult},
-    target::{
-        FunctionTarget, VerifyTargetCollector, get_contract_from_annotation,
-    },
+    target::{FunctionTarget, VerifyTargetCollector, get_contract_from_annotation},
     trait_ensurance::{MarkerTraitKind, TraitEnsurance, TraitEnsuranceKind},
 };
 
-/// Crate-level analysis pass that schedules targets and emits their summaries.
+/// Collects verification targets, schedules checks, and emits their summaries.
 pub(crate) struct VerifyDriver<'tcx> {
+    /// Compiler context for target collection and verification.
     tcx: TyCtxt<'tcx>,
+    /// Loop repetition policy applied to each target.
     repeat_strategy: RepeatStrategy,
+    /// Verification mode passed to target collection.
     mode: VerifyMode,
+    /// Skip standalone invariants and run constructor/read sequences.
     skip_invariant: bool,
+    /// Optional crate filter for collected targets.
     crate_filter: Option<String>,
+    /// Optional module filter for collected targets.
     module_filter: Option<String>,
+    /// Print expanded contracts without running verification.
     debug_contracts: bool,
-    /// Per-struct verdict of the struct-invariant verification, consumed by the
-    /// type-level `Allocated`/`Owning` checks to discharge the field invariants.
-    struct_invariant_results: FxHashMap<DefId, CheckResult>,
 }
 
 impl<'tcx> VerifyDriver<'tcx> {
@@ -92,7 +103,6 @@ impl<'tcx> VerifyDriver<'tcx> {
             crate_filter,
             module_filter,
             debug_contracts,
-            struct_invariant_results: FxHashMap::default(),
         }
     }
 
@@ -302,6 +312,8 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
             DefId,
             (Vec<PropertyCheckResult<'tcx>>, Option<String>, bool, bool),
         > = FxHashMap::default();
+        // Keep struct-invariant verdicts for later marker-trait obligations.
+        let mut struct_invariant_results: FxHashMap<DefId, CheckResult> = FxHashMap::default();
 
         for target in &collector.function_targets {
             let target_path = fmt_fn_path_with_bounds(self.tcx, target.def_id);
@@ -326,11 +338,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
             );
 
             if !target.struct_invariants.is_empty() && !self.skip_invariant {
-                let verifier = FunctionVerifier::new_with_repeat(
-                    self.tcx,
-                    target,
-                    planned_repeat,
-                );
+                let verifier = FunctionVerifier::new_with_repeat(self.tcx, target, planned_repeat);
                 trait_impl_limited |= verifier.is_trait_impl_limited();
                 match mir_utils::catch_panic(|| verifier.verify_struct_invariants()) {
                     Ok(struct_report) => {
@@ -342,7 +350,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
                                 .fold(CheckResult::ProvedByRule, |acc, r| {
                                     acc.and(r.result.clone())
                                 });
-                            self.struct_invariant_results
+                            struct_invariant_results
                                 .entry(struct_id)
                                 .and_modify(|v| *v = v.clone().and(verdict.clone()))
                                 .or_insert(verdict);
@@ -358,11 +366,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
             }
 
             if !target.type_invariants.is_empty() && !self.skip_invariant {
-                let verifier = FunctionVerifier::new_with_repeat(
-                    self.tcx,
-                    target,
-                    planned_repeat,
-                );
+                let verifier = FunctionVerifier::new_with_repeat(self.tcx, target, planned_repeat);
                 trait_impl_limited |= verifier.is_trait_impl_limited();
                 match mir_utils::catch_panic(|| verifier.verify_type_invariants()) {
                     Ok(type_report) => {
@@ -485,11 +489,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
             } else {
                 rap_info!("  ensures (implementor must satisfy):");
                 let mut checked_methods = FxHashSet::default();
-                for item in self
-                    .tcx
-                    .associated_items(trait_target.impl_def_id)
-                    .in_definition_order()
-                {
+                for item in self.tcx.associated_items(trait_target.impl_def_id).in_definition_order() {
                     let Some(trait_method) = item.trait_item_def_id() else {
                         continue;
                     };
@@ -520,14 +520,8 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
                     let mut results = Vec::new();
                     let mut crashed = None;
                     for repeat in repeats {
-                        let verifier = FunctionVerifier::new_with_repeat(
-                            self.tcx,
-                            &target,
-                            repeat,
-                        );
-                        match mir_utils::catch_panic(|| {
-                            verifier.verify_postconditions(&postconditions)
-                        }) {
+                        let verifier = FunctionVerifier::new_with_repeat(self.tcx, &target, repeat);
+                        match mir_utils::catch_panic(|| verifier.verify_postconditions(&postconditions)) {
                             Ok(report) => results.extend(report.results),
                             Err(message) => {
                                 crashed = Some(message);
@@ -568,7 +562,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
             .filter(|t| matches!(&t.kind, TraitEnsuranceKind::Marker(..)))
             .collect();
         if !marker_targets.is_empty() {
-            MarkerTraitVerifier::new(self.tcx, &self.struct_invariant_results).emit(&marker_targets);
+            MarkerTraitVerifier::new(self.tcx, &struct_invariant_results).emit(&marker_targets);
         }
 
         if self.skip_invariant {
@@ -777,10 +771,7 @@ impl<'tcx> VerifyDriver<'tcx> {
         if has_caller {
             rap_info!("{cont}  [Caller Contracts]:");
             let caller_props = dedup_compound_props(
-                target
-                    .caller_requires
-                    .iter()
-                    .filter(|p| p.kind() != Some(PropertyKind::Unknown)),
+                target.caller_requires.iter().filter(|p| p.kind() != Some(PropertyKind::Unknown)),
             );
             for (pi, property) in caller_props.iter().enumerate() {
                 let is_last = pi + 1 == caller_props.len();
@@ -813,9 +804,7 @@ impl<'tcx> VerifyDriver<'tcx> {
                     fmt_fn_with_params(&callee_path, &callee_typed, callee_ret.as_deref())
                 );
                 let props = dedup_compound_props(
-                    contracts
-                        .iter()
-                        .filter(|p| p.kind() != Some(PropertyKind::Unknown)),
+                    contracts.iter().filter(|p| p.kind() != Some(PropertyKind::Unknown)),
                 );
                 for (pi, property) in props.iter().enumerate() {
                     let is_last_prop = pi + 1 == props.len();
@@ -835,10 +824,7 @@ impl<'tcx> VerifyDriver<'tcx> {
         true
     }
 
-    fn resolve_arg_names_with_types(
-        &self,
-        def_id: DefId,
-    ) -> (Vec<String>, Option<String>) {
+    fn resolve_arg_names_with_types(&self, def_id: DefId) -> (Vec<String>, Option<String>) {
         if !self.tcx.is_mir_available(def_id) {
             return (Vec::new(), None);
         }
@@ -901,14 +887,8 @@ fn property_field_indices(property: &Property<'_>) -> Vec<usize> {
     indices
 }
 
-/// Whether an invariant targets the function's return value (as opposed to a
-/// parameter / the receiver).  Only `Atom` invariants carry a first-argument
-/// place; `And`/`Or` invariants have no `target_place`, so they are never
-/// treated as return-value invariants.
-fn remap_constructor_contract<'tcx>(
-    property: Property<'tcx>,
-) -> Property<'tcx> {
-
+/// Remap constructor parameter references in an atomic contract to fields of `self`.
+fn remap_constructor_contract<'tcx>(property: Property<'tcx>) -> Property<'tcx> {
     fn remap_place_arg<'tcx>(arg: &PropertyArg<'tcx>) -> PropertyArg<'tcx> {
         let place = match arg {
             PropertyArg::Expr(ContractExpr::Place(p)) => p,
@@ -925,21 +905,13 @@ fn remap_constructor_contract<'tcx>(
             base: PlaceBase::Arg(0),
             projections: vec![projection],
         };
-        new_place
-            .projections
-            .extend(place.projections.iter().cloned());
+        new_place.projections.extend(place.projections.iter().cloned());
         PropertyArg::Expr(ContractExpr::Place(new_place))
     }
 
-    let new_args: Vec<PropertyArg<'tcx>> = property
-        .args()
-        .iter()
-        .map(|arg| remap_place_arg(arg))
-        .collect();
-
     match property {
         Property::Atom(mut atom) => {
-            atom.args = new_args;
+            atom.args = atom.args.iter().map(remap_place_arg).collect();
             Property::Atom(atom)
         }
         Property::And(and) => Property::And(and),

@@ -41,7 +41,7 @@ use crate::{
     cli::{
         AliasStrategyKind, AnalysisKind, CheckArgs, Commands, PostfixRepeat, RapxArgs, VerifyArgs,
     },
-    verify::{VerifyDriver, loop_handling::RepeatStrategy, target::PrepareTargets},
+    verify::{PrepareTargets, RepeatStrategy, VerifyDriver},
 };
 use analysis::{
     Analysis,
@@ -284,7 +284,7 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
             trait_impl_limit,
             ..
         }) => {
-            crate::verify::constructor_policy::set_constructor_mir_mode(if *skip_invariant
+            crate::verify::set_constructor_mir_mode(if *skip_invariant
                 && matches!(*constructor_mir, crate::cli::ConstructorMirMode::Default)
             {
                 crate::cli::ConstructorMirMode::True
