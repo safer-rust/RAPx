@@ -2,7 +2,7 @@
 
 use crate::helpers::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
-use crate::verify::contract::{ContractExpr, NumericBinOp, NumericUnaryOp, PlaceBase, RelOp};
+use crate::verify::contract::{ContractExpr, BinOp, UnaryOp, PlaceBase, RelOp};
 use rustc_hir::def_id::DefId;
 #[cfg(rapx_const_ext)]
 use rustc_middle::ty::consts::ConstExt;
@@ -39,20 +39,20 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 let left = self.eval_contract_tree(lhs, context)?;
                 let right = self.eval_contract_tree(rhs, context)?;
                 match op {
-                    NumericBinOp::Add | NumericBinOp::Sub | NumericBinOp::Mul => {
+                    BinOp::Add | BinOp::Sub | BinOp::Mul => {
                         self.contract_binary_term(*op, &left, &right)
                     }
-                    NumericBinOp::Div | NumericBinOp::Rem if !context.is_check() => {
-                        Some(if matches!(op, NumericBinOp::Div) {
+                    BinOp::Div | BinOp::Rem if !context.is_check() => {
+                        Some(if matches!(op, BinOp::Div) {
                             left.div(&right)
                         } else {
                             left.rem(&right)
                         })
                     }
-                    NumericBinOp::Div | NumericBinOp::Rem => {
+                    BinOp::Div | BinOp::Rem => {
                         if right.as_u64() == Some(0) {
                             Some(Int::from_u64(self.z3_ctx, 0))
-                        } else if matches!(op, NumericBinOp::Div) {
+                        } else if matches!(op, BinOp::Div) {
                             Some(left.div(&right))
                         } else {
                             let quotient = left.div(&right);
@@ -62,10 +62,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                             ))
                         }
                     }
-                    NumericBinOp::Min if context.is_check() => {
+                    BinOp::Min if context.is_check() => {
                         Some(left.le(&right).ite(&left, &right))
                     }
-                    NumericBinOp::Max if context.is_check() => {
+                    BinOp::Max if context.is_check() => {
                         Some(left.ge(&right).ite(&left, &right))
                     }
                     _ => None,
@@ -364,7 +364,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     fn eval_contract_place(
         &self,
         checkpoint: Option<&Checkpoint<'tcx>>,
-        cp: &crate::verify::contract::ContractPlace<'tcx>,
+        cp: &crate::verify::contract::ContractPlace,
     ) -> Option<Int<'z3>> {
         let field_path = cp.plain_field_path()?;
 
@@ -570,23 +570,23 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
 
     pub(crate) fn contract_binary_term(
         &self,
-        op: NumericBinOp,
+        op: BinOp,
         left: &Int<'z3>,
         right: &Int<'z3>,
     ) -> Option<Int<'z3>> {
         match op {
-            NumericBinOp::Add => Some(Int::add(self.z3_ctx, &[left, right])),
-            NumericBinOp::Sub => Some(Int::sub(self.z3_ctx, &[left, right])),
-            NumericBinOp::Mul => Some(Int::mul(self.z3_ctx, &[left, right])),
+            BinOp::Add => Some(Int::add(self.z3_ctx, &[left, right])),
+            BinOp::Sub => Some(Int::sub(self.z3_ctx, &[left, right])),
+            BinOp::Mul => Some(Int::mul(self.z3_ctx, &[left, right])),
             _ => None,
         }
     }
 
-    pub(crate) fn contract_unary_term(&self, op: NumericUnaryOp, value: &Int<'z3>) -> Int<'z3> {
+    pub(crate) fn contract_unary_term(&self, op: UnaryOp, value: &Int<'z3>) -> Int<'z3> {
         let zero = Int::from_u64(self.z3_ctx, 0);
         match op {
-            NumericUnaryOp::Not => value._eq(&zero).ite(&Int::from_u64(self.z3_ctx, 1), &zero),
-            NumericUnaryOp::Neg => Int::sub(self.z3_ctx, &[&zero, value]),
+            UnaryOp::Not => value._eq(&zero).ite(&Int::from_u64(self.z3_ctx, 1), &zero),
+            UnaryOp::Neg => Int::sub(self.z3_ctx, &[&zero, value]),
         }
     }
 

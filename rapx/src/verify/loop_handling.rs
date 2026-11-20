@@ -221,7 +221,7 @@ impl<'tcx> LoopSensitivityAnalyzer<'tcx> {
         let mut hints = Vec::new();
 
         for sink in sinks {
-            if sink.property.is_or() || matches!(sink.property.kind(), Some(PropertyKind::Unknown))
+            if matches!(sink.property, Property::Or(_)) || matches!(sink.property.kind(), Some(PropertyKind::Unknown))
             {
                 continue;
             }

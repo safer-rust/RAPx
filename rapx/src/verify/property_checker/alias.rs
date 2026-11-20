@@ -309,7 +309,7 @@ fn owning_field_source(
             property.kind() == Some(kind)
                 && property.target_place().is_some_and(|place| matches!(
                     place.projections.first(),
-                    Some(crate::verify::contract::ContractProjection::Field { index, .. }) if *index == field
+                    Some(crate::verify::contract::ContractProjection::Field { index }) if *index == field
                 ))
         }))
 }

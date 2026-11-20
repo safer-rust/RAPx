@@ -504,9 +504,9 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
     /// the checkpoint's argument range is remapped to `Arg(n - 1)` (locals
     /// 1..=k correspond to the callee's arguments in order).
     fn rebind_place(
-        place: &contract::ContractPlace<'tcx>,
+        place: &contract::ContractPlace,
         checkpoint: &Checkpoint<'tcx>,
-    ) -> contract::ContractPlace<'tcx> {
+    ) -> contract::ContractPlace {
         let new_base = match place.base {
             contract::PlaceBase::Return => contract::PlaceBase::Return,
             contract::PlaceBase::Arg(n) => contract::PlaceBase::Arg(n),

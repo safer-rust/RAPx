@@ -9,7 +9,7 @@ use z3::ast::{Ast, Int};
 use crate::def_ids::type_ids;
 use crate::compat::GenericArgsRef;
 use crate::helpers::mir_utils;
-use crate::verify::contract::{ContractExpr, ContractProjection, PropertyArg, PropertyKind};
+use crate::verify::contract::{ContractExpr, ContractProjection, PropertyArg, PropertyKind, place::projected_field_ty};
 
 use super::state::{AllocId, Provenance, ValueFacts, ValueSource, VmState, VmValue};
 
@@ -258,19 +258,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             .map(|v| v.z3_term.clone())
     }
 
-    /// Resolve the type of a place (`local` + field path) by walking the ADT
-    /// field definitions.
+    /// Resolve the type of a local plus its field-index path.
     pub(crate) fn field_type_at(&self, local: Local, field_path: &[usize]) -> Option<Ty<'tcx>> {
-        let mut ty = self.body().local_decls[local].ty;
-        for &idx in field_path {
-            let rustc_middle::ty::TyKind::Adt(adt_def, substs) = ty.kind() else {
-                return None;
-            };
-            let variant = adt_def.non_enum_variant();
-            let field_def = variant.fields.get(rustc_abi::FieldIdx::from_usize(idx))?;
-            ty = mir_utils::field_ty(self.tcx, field_def, substs);
-        }
-        Some(ty)
+        projected_field_ty(self.tcx, self.body().local_decls[local].ty, field_path)
     }
 
     /// Extract the pointee type if `ty` is a `#[repr(transparent)]`
@@ -359,7 +349,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         .projections
                         .iter()
                         .map(|projection| match projection {
-                            ContractProjection::Field { index, .. } => Some(*index),
+                            ContractProjection::Field { index } => Some(*index),
                             _ => None,
                         })
                         .collect::<Option<Vec<_>>>()

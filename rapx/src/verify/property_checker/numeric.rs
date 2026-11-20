@@ -9,7 +9,7 @@ use crate::helpers::def_use::PlaceKey;
 use crate::verify::call_summary;
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{
-    ContractExpr, NumericBinOp, PlaceBase, Property, PropertyArg, PropertyKind, RelOp,
+    ContractExpr, BinOp, PlaceBase, Property, PropertyArg, PropertyKind, RelOp,
 };
 use crate::verify::report::{CheckResult, UnknownReason};
 use crate::verify::vm::state::VmState;
@@ -285,7 +285,7 @@ impl PropertyChecker {
     fn expr_has_mul<'tcx>(&self, expr: &ContractExpr<'tcx>) -> bool {
         match expr {
             ContractExpr::Binary {
-                op: NumericBinOp::Mul,
+                op: BinOp::Mul,
                 ..
             } => true,
             ContractExpr::Binary { lhs, rhs, .. } => {
@@ -385,7 +385,7 @@ impl PropertyChecker {
     ) {
         match expr {
             ContractExpr::Binary {
-                op: NumericBinOp::Div,
+                op: BinOp::Div,
                 lhs,
                 rhs,
             } => {
@@ -402,7 +402,7 @@ impl PropertyChecker {
                 }
             }
             ContractExpr::Binary {
-                op: NumericBinOp::Mul,
+                op: BinOp::Mul,
                 lhs,
                 rhs,
             } => {

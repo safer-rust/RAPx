@@ -545,7 +545,7 @@ fn property_field_indices(property: &Property<'_>) -> Vec<usize> {
         if let Some(place) = place {
             for proj in &place.projections {
                 match proj {
-                    ContractProjection::Field { index, .. } => {
+                    ContractProjection::Field { index } => {
                         let idx = *index;
                         if !indices.contains(&idx) {
                             indices.push(idx);
@@ -570,10 +570,7 @@ fn remap_constructor_contract<'tcx>(property: Property<'tcx>) -> Property<'tcx> 
         let PlaceBase::Arg(field_idx) = place.base else {
             return arg.clone();
         };
-        let projection = ContractProjection::Field {
-            index: field_idx,
-            ty: None,
-        };
+        let projection = ContractProjection::Field { index: field_idx };
         let mut new_place = ContractPlace {
             base: PlaceBase::Arg(0),
             projections: vec![projection],

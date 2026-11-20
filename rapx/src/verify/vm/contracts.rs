@@ -63,7 +63,7 @@ pub(crate) fn rebind_property_place<'tcx>(property: &mut Property<'tcx>, local: 
 
 fn map_property_places<'tcx>(
     property: &mut Property<'tcx>,
-    map: &mut impl FnMut(&mut ContractPlace<'tcx>),
+    map: &mut impl FnMut(&mut ContractPlace),
 ) {
     match property {
         Property::Atom(atom) => {
@@ -98,7 +98,7 @@ fn map_property_places<'tcx>(
 
 fn map_expr_places<'tcx>(
     expr: &mut ContractExpr<'tcx>,
-    map: &mut impl FnMut(&mut ContractPlace<'tcx>),
+    map: &mut impl FnMut(&mut ContractPlace),
 ) {
     match expr {
         ContractExpr::Place(cp) => map(cp),

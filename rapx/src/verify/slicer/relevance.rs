@@ -16,7 +16,7 @@ use super::super::contract::{
 
 impl PlaceKey {
     /// Build a relevance place key from a parsed contract place.
-    pub(crate) fn from_contract_place(place: &ContractPlace<'_>) -> Self {
+    pub(crate) fn from_contract_place(place: &ContractPlace) -> Self {
         Self {
             base: match place.base {
                 PlaceBase::Return => PlaceBaseKey::Return,
@@ -27,7 +27,7 @@ impl PlaceKey {
                 .projections
                 .iter()
                 .filter_map(|projection| match projection {
-                    ContractProjection::Field { index, .. } => Some(*index),
+                    ContractProjection::Field { index } => Some(*index),
                     ContractProjection::Downcast { .. } => Some(0),
                     ContractProjection::ForEach => None,
                 })
@@ -45,7 +45,7 @@ impl RelevantPlaces {
     }
 
     /// Insert a contract place as a relevance root.
-    fn insert_contract_place(&mut self, place: &ContractPlace<'_>) {
+    fn insert_contract_place(&mut self, place: &ContractPlace) {
         self.insert_place_key(PlaceKey::from_contract_place(place));
     }
 

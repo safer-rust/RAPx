@@ -19,13 +19,13 @@ use crate::helpers::name::{access_ident_recursive, get_adt_self_ty, parse_signat
 
 use super::{ContractExpr, ContractPlace, ContractProjection, PlaceBase, PropertyArg};
 
-type PlacePath<'tcx> = (usize, Vec<(usize, Ty<'tcx>)>, Ty<'tcx>);
+type PlacePath<'tcx> = (usize, Vec<usize>, Ty<'tcx>);
 
 pub(crate) fn parse_contract_place<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
     expr: &Expr,
-) -> Option<ContractPlace<'tcx>> {
+) -> Option<ContractPlace> {
     if let Expr::MethodCall(expr_method) = expr
         && (expr_method.method == "iter" || expr_method.method == "each_element")
             && expr_method.args.is_empty()
@@ -74,7 +74,7 @@ fn parse_return_field_place<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
     expr: &Expr,
-) -> Option<ContractPlace<'tcx>> {
+) -> Option<ContractPlace> {
     let mut field_names: Vec<String> = Vec::new();
     let mut cur = expr;
     loop {
@@ -96,19 +96,10 @@ fn parse_return_field_place<'tcx>(
     field_names.reverse();
     let ret_ty = tcx.fn_sig(def_id).skip_binder().output().skip_binder();
     let (field_indices, _) = walk_fields(tcx, ret_ty, Vec::new(), &field_names)?;
-    Some(ContractPlace {
-        base: PlaceBase::Return,
-        projections: field_indices
-            .into_iter()
-            .map(|(index, ty)| ContractProjection::Field {
-                index,
-                ty: Some(ty),
-            })
-            .collect(),
-    })
+    Some(ContractPlace::local(0, field_indices))
 }
 
-fn parse_named_place<'tcx>(expr: &Expr) -> Option<ContractPlace<'tcx>> {
+fn parse_named_place(expr: &Expr) -> Option<ContractPlace> {
     // A bare `return` parses as `syn::Expr::Return { expr: None }` (a keyword,
     // not an `Expr::Path`), so `parse_named_place`'s `Expr::Path` arm below
     // never sees it.  Resolve it to the return-value place here so it works
@@ -176,17 +167,17 @@ pub(crate) fn resolve_place_from_ident<'tcx>(
     None
 }
 
-/// Walk a list of field names from `current_ty`, appending `(index, ty)` pairs.
+/// Walk field names, retaining their indices and the final type.
 fn walk_fields<'tcx>(
     tcx: TyCtxt<'tcx>,
     mut current_ty: Ty<'tcx>,
-    mut field_indices: Vec<(usize, Ty<'tcx>)>,
+    mut field_indices: Vec<usize>,
     fields: &[String],
-) -> Option<(Vec<(usize, Ty<'tcx>)>, Ty<'tcx>)> {
+) -> Option<(Vec<usize>, Ty<'tcx>)> {
     for field_name in fields {
         let (field_idx, field_ty) = resolve_next_field(tcx, current_ty, field_name)?;
         current_ty = field_ty;
-        field_indices.push((field_idx, current_ty));
+        field_indices.push(field_idx);
     }
     Some((field_indices, current_ty))
 }
@@ -209,7 +200,7 @@ fn resolve_projection_from_struct_ident<'tcx>(
     struct_ty: Ty<'tcx>,
 ) -> Option<PlacePath<'tcx>> {
     let (field_idx, field_ty) = resolve_next_field(tcx, struct_ty, &base_ident)?;
-    let (mut field_indices, current_ty) = walk_fields(tcx, field_ty, vec![(field_idx, field_ty)], &fields)?;
+    let (mut field_indices, current_ty) = walk_fields(tcx, field_ty, vec![field_idx], &fields)?;
 
     let base_local = if get_type(tcx, def_id) == FnKind::Constructor {
         0
@@ -222,7 +213,7 @@ fn resolve_projection_from_struct_ident<'tcx>(
     // field access so the invariant's place resolves through the variant's data
     // (e.g. `ptr` -> `Return.Field(0).Field(0)`).
     if base_local == 0 && crate::helpers::fn_info::returns_wrapped_self(tcx, def_id) {
-        field_indices.insert(0, (0, struct_ty));
+        field_indices.insert(0, 0);
     }
 
     Some((base_local, field_indices, current_ty))
@@ -265,9 +256,30 @@ fn resolve_next_field<'tcx>(
     None
 }
 
+/// Resolve a field-index path against its root type, including `Some`/`Ok` wrappers.
+pub(crate) fn projected_field_ty<'tcx>(tcx: TyCtxt<'tcx>, mut ty: Ty<'tcx>, path: &[usize]) -> Option<Ty<'tcx>> {
+    for &index in path {
+        ty = match ty.peel_refs().kind() {
+            TyKind::Adt(adt, args) => {
+                let variant = if adt.is_enum() {
+                    adt.variants().iter().find(|variant| {
+                        matches!(variant.name.as_str(), "Some" | "Ok") && variant.fields.len() > index
+                    })?
+                } else {
+                    adt.non_enum_variant()
+                };
+                mir_utils::field_ty(tcx, variant.fields.get(FieldIdx::from_usize(index))?, args)
+            }
+            TyKind::Tuple(fields) => *fields.get(index)?,
+            _ => return None,
+        };
+    }
+    Some(ty)
+}
+
 /// Strip `ForEach` from a property arg and return the container place
 /// (without the projection) if `ForEach` was present.
-pub(crate) fn strip_for_each<'tcx>(arg: &mut PropertyArg<'tcx>) -> Option<ContractPlace<'tcx>> {
+pub(crate) fn strip_for_each<'tcx>(arg: &mut PropertyArg<'tcx>) -> Option<ContractPlace> {
     if let PropertyArg::Expr(ContractExpr::Place(place)) = arg
         && place
             .projections
@@ -293,7 +305,7 @@ pub(crate) fn detect_array_for_each<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
     expr: &Expr,
-) -> Option<ContractPlace<'tcx>> {
+) -> Option<ContractPlace> {
     let place = parse_contract_place(tcx, def_id, expr)?;
     let param_idx = match place.base {
         PlaceBase::Arg(n) => n,
@@ -318,7 +330,7 @@ pub(crate) fn detect_array_for_each<'tcx>(
 pub(crate) fn field_name_from_place<'tcx>(
     tcx: TyCtxt<'tcx>,
     adt_def_id: DefId,
-    place: &ContractPlace<'tcx>,
+    place: &ContractPlace,
 ) -> Option<String> {
     // `adt_def_id` may be a function/impl def-id (e.g. from a `requires`
     // annotation on a method); only resolve fields on real ADTs.
@@ -329,7 +341,7 @@ pub(crate) fn field_name_from_place<'tcx>(
         return None;
     }
     let idx = place.projections.iter().find_map(|p| match p {
-        ContractProjection::Field { index, .. } => Some(*index),
+        ContractProjection::Field { index } => Some(*index),
         _ => None,
     })?;
     let adt = tcx.adt_def(adt_def_id);

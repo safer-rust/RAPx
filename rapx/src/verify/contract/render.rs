@@ -9,8 +9,8 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 
 use super::{
-    ContractExpr, ContractPlace, ContractProjection, NumericBinOp, NumericPredicate,
-    NumericUnaryOp, PlaceBase, Property, PropertyArg, PropertyKind, RelOp,
+    ContractExpr, ContractPlace, ContractProjection, BinOp, NumericPredicate,
+    UnaryOp, PlaceBase, Property, PropertyArg, PropertyKind, RelOp,
 };
 
 /// Best-effort source snippet for a MIR local's declaration, if its function
@@ -33,8 +33,8 @@ fn local_snippet<'tcx>(
     tcx.sess.source_map().span_to_snippet(span).ok()
 }
 
-impl<'tcx> ContractPlace<'tcx> {
-    pub(crate) fn display_user_friendly(
+impl ContractPlace {
+    pub(crate) fn display_user_friendly<'tcx>(
         &self,
         tcx: TyCtxt<'tcx>,
         struct_def_id: Option<DefId>,
@@ -75,7 +75,7 @@ impl<'tcx> ContractPlace<'tcx> {
         let mut result = base_str;
         for projection in &self.projections {
             match projection {
-                ContractProjection::Field { index, ty: _ } => {
+                ContractProjection::Field { index } => {
                     let field_name = crate::helpers::name::resolve_field_name(tcx, index, struct_def_id);
                     if result.is_empty() {
                         result = field_name;
@@ -150,23 +150,23 @@ pub(crate) fn display_expr_user_friendly<'tcx>(
             let lhs_str = display_expr_user_friendly(lhs, tcx, struct_def_id, fn_def_id);
             let rhs_str = display_expr_user_friendly(rhs, tcx, struct_def_id, fn_def_id);
             let op_str = match op {
-                NumericBinOp::Min => return format!("min({lhs_str}, {rhs_str})"),
-                NumericBinOp::Max => return format!("max({lhs_str}, {rhs_str})"),
-                NumericBinOp::Add => "+",
-                NumericBinOp::Sub => "-",
-                NumericBinOp::Mul => "*",
-                NumericBinOp::Div => "/",
-                NumericBinOp::Rem => "%",
-                NumericBinOp::BitAnd => "&",
-                NumericBinOp::BitOr => "|",
-                NumericBinOp::BitXor => "^",
+                BinOp::Min => return format!("min({lhs_str}, {rhs_str})"),
+                BinOp::Max => return format!("max({lhs_str}, {rhs_str})"),
+                BinOp::Add => "+",
+                BinOp::Sub => "-",
+                BinOp::Mul => "*",
+                BinOp::Div => "/",
+                BinOp::Rem => "%",
+                BinOp::BitAnd => "&",
+                BinOp::BitOr => "|",
+                BinOp::BitXor => "^",
             };
             format!("{lhs_str} {op_str} {rhs_str}")
         }
         ContractExpr::Unary { op, expr } => {
             let op_str = match op {
-                NumericUnaryOp::Not => "!",
-                NumericUnaryOp::Neg => "-",
+                UnaryOp::Not => "!",
+                UnaryOp::Neg => "-",
             };
             format!(
                 "{}{}",
@@ -231,7 +231,7 @@ impl<'tcx> Property<'tcx> {
         let kind_str = match self.kind() {
             Some(k) => format!("{k:?}"),
             None => {
-                if self.is_and() {
+                if matches!(self, Property::And(_)) {
                     "And".to_string()
                 } else {
                     "Or".to_string()

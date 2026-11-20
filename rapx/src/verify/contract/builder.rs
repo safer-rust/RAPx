@@ -264,7 +264,7 @@ impl<'tcx> Property<'tcx> {
                         index: Box::new(index),
                     })],
                 );
-                prop.set_for_each(for_each);
+                if let Property::Atom(atom) = &mut prop { atom.for_each = for_each; }
                 prop
             }
             [target_expr] => {

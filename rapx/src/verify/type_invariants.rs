@@ -15,8 +15,8 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{self, Ty, TyCtxt};
 
 use super::contract::{
-    ContractExpr, ContractProjection, NumericPredicate, Property, PropertyArg, PropertyKind,
-    json::AnyItem,
+    json::AnyItem, place::projected_field_ty, ContractExpr, ContractPlace, ContractProjection, NumericPredicate, PlaceBase,
+    Property, PropertyArg, PropertyKind,
 };
 
 /// For each function parameter (and the return type), look up the type's
@@ -221,29 +221,39 @@ fn instantiate_entry<'tcx>(
         };
         replace_ty_args(&mut property, ty);
     }
-    resolve_pointer_wrapper_target(tcx, &mut property);
+    resolve_pointer_wrapper_target(tcx, def_id, &mut property);
     vec![property]
 }
 
-fn resolve_pointer_wrapper_target<'tcx>(tcx: TyCtxt<'tcx>, property: &mut Property<'tcx>) {
+fn resolve_pointer_wrapper_target<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, property: &mut Property<'tcx>) {
     let Property::Atom(atom) = property else { return };
     let Some(PropertyArg::Expr(ContractExpr::Place(place))) = atom.args.first_mut() else {
         return;
     };
-    let Some(ContractProjection::Field { ty: Some(ty), .. }) = place.projections.last() else {
+    if !matches!(place.projections.last(), Some(ContractProjection::Field { .. })) {
         return;
-    };
-    let Some(fields) = transparent_nonnull_path(tcx, *ty, 5) else { return };
-    for (index, ty) in fields {
-        place.projections.push(ContractProjection::Field { index, ty: Some(ty) });
     }
+    let Some(ty) = contract_place_ty(tcx, def_id, place) else { return };
+    let Some(fields) = transparent_nonnull_path(tcx, ty, 5) else { return };
+    place.projections.extend(fields.into_iter().map(|index| ContractProjection::Field { index }));
+}
+
+fn contract_place_ty<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, place: &ContractPlace) -> Option<Ty<'tcx>> {
+    let sig = tcx.fn_sig(def_id).skip_binder();
+    let inputs = sig.inputs().skip_binder();
+    let ty = match place.base {
+        PlaceBase::Return | PlaceBase::Local(0) => sig.output().skip_binder(),
+        PlaceBase::Arg(index) => *inputs.get(index)?,
+        PlaceBase::Local(index) => *inputs.get(index.checked_sub(1)?)?,
+    };
+    projected_field_ty(tcx, ty, &place.plain_field_path()?)
 }
 
 fn transparent_nonnull_path<'tcx>(
     tcx: TyCtxt<'tcx>,
     ty: Ty<'tcx>,
     depth: usize,
-) -> Option<Vec<(usize, Ty<'tcx>)>> {
+) -> Option<Vec<usize>> {
     let ty::Adt(adt, args) = ty.kind() else { return None };
     if type_ids::is_std_nonnull(adt.did()) {
         return Some(Vec::new());
@@ -260,7 +270,7 @@ fn transparent_nonnull_path<'tcx>(
         if path.is_some() {
             return None;
         }
-        suffix.insert(0, (index, field_ty));
+        suffix.insert(0, index);
         path = Some(suffix);
     }
     path

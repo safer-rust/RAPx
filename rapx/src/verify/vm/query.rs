@@ -4,7 +4,7 @@ use crate::def_ids::type_ids;
 use crate::helpers::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{
-    ContractExpr, ContractPlace, ContractProjection, PlaceBase, Property, PropertyArg,
+    ContractExpr, ContractPlace, ContractProjection, PlaceBase, Property, PropertyArg, place::projected_field_ty,
 };
 use rustc_middle::{
     mir::{Local, Operand},
@@ -105,7 +105,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn contract_place_term_at(
         &self,
         checkpoint: &Checkpoint<'tcx>,
-        place: &ContractPlace<'tcx>,
+        place: &ContractPlace,
     ) -> Option<Int<'z3>> {
         if !place.projections.is_empty() {
             let fields = place.plain_field_path()?;
@@ -170,7 +170,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     pub(crate) fn contract_place_value_at(
         &self,
         context: ContractTargetContext<'_, 'tcx>,
-        cp: &ContractPlace<'tcx>,
+        cp: &ContractPlace,
     ) -> Option<VmValue<'z3, 'tcx>> {
         let checkpoint = match context {
             ContractTargetContext::Bound => None,
@@ -200,14 +200,9 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             PlaceBase::Local(n) => Local::from_usize(n),
         };
         let mut field_path: Vec<usize> = Vec::new();
-        let mut last_field_ty: Option<Ty<'tcx>> = None;
-
         for proj in &cp.projections {
             match proj {
-                ContractProjection::Field { index, ty } => {
-                    field_path.push(*index);
-                    last_field_ty = *ty;
-                }
+                ContractProjection::Field { index } => field_path.push(*index),
                 ContractProjection::Downcast { variant_index } => {
                     if checkpoint.is_none() {
                         return self.bound_field_value(base_local, &field_path);
@@ -218,7 +213,18 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         .or_else(|| self.local_value(base_local).cloned());
                     let base_val = base_val?;
 
-                    let enum_ty = last_field_ty.unwrap_or(base_val.ty);
+                    let enum_ty = if field_path.is_empty() {
+                        base_val.ty
+                    } else {
+                        let root_ty = match cp.base {
+                            PlaceBase::Arg(n) => match checkpoint?.args.get(n)? {
+                                Operand::Copy(place) | Operand::Move(place) => place.ty(self.body(), self.tcx).ty,
+                                _ => return None,
+                            },
+                            _ => self.body().local_decls[base_local].ty,
+                        };
+                        projected_field_ty(self.tcx, root_ty, &field_path).unwrap_or(base_val.ty)
+                    };
                     let inner_ty = match enum_ty.kind() {
                         TyKind::Adt(adt_def, substs) => {
                             if adt_def.is_enum() {

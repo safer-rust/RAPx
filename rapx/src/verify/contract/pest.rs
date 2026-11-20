@@ -17,7 +17,7 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 
 use super::compound::{CompoundArg, CompoundBody};
-use super::{ContractExpr, NumericBinOp, NumericPredicate, NumericUnaryOp, RelOp};
+use super::{ContractExpr, BinOp, NumericPredicate, UnaryOp, RelOp};
 use crate::helpers::name::match_ty_with_ident;
 
 /// Parser derived from `grammar.pest`.
@@ -151,16 +151,16 @@ fn conv_if<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, pair: Pair<Rule>) -> Contract
     }
 }
 
-fn op_from_str(op: &str) -> Option<NumericBinOp> {
+fn op_from_str(op: &str) -> Option<BinOp> {
     match op {
-        "+" => Some(NumericBinOp::Add),
-        "-" => Some(NumericBinOp::Sub),
-        "*" => Some(NumericBinOp::Mul),
-        "/" => Some(NumericBinOp::Div),
-        "%" => Some(NumericBinOp::Rem),
-        "&" => Some(NumericBinOp::BitAnd),
-        "|" => Some(NumericBinOp::BitOr),
-        "^" => Some(NumericBinOp::BitXor),
+        "+" => Some(BinOp::Add),
+        "-" => Some(BinOp::Sub),
+        "*" => Some(BinOp::Mul),
+        "/" => Some(BinOp::Div),
+        "%" => Some(BinOp::Rem),
+        "&" => Some(BinOp::BitAnd),
+        "|" => Some(BinOp::BitOr),
+        "^" => Some(BinOp::BitXor),
         _ => None,
     }
 }
@@ -232,8 +232,8 @@ fn conv_unary<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, pair: Pair<Rule>) -> Contr
     match first.as_rule() {
         Rule::unop => {
             let op = match first.as_str() {
-                "!" => NumericUnaryOp::Not,
-                "-" => NumericUnaryOp::Neg,
+                "!" => UnaryOp::Not,
+                "-" => UnaryOp::Neg,
                 _ => return ContractExpr::Unknown,
             };
             let operand = conv_unary(tcx, def_id, inner.next().expect("unary inner"));
@@ -330,9 +330,9 @@ fn conv_call<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, pair: Pair<Rule>) -> Contra
             let a = conv_arg_expr(tcx, def_id, args[0].clone());
             let b = conv_arg_expr(tcx, def_id, args[1].clone());
             let op = if builtin == "min" {
-                NumericBinOp::Min
+                BinOp::Min
             } else {
-                NumericBinOp::Max
+                BinOp::Max
             };
             ContractExpr::Binary {
                 op,
@@ -365,7 +365,7 @@ fn conv_const_path<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, pair: Pair<Rule>) -> 
     // `T::BITS` is the bit width, i.e. `size_of::<T>() * 8`.
     if which == "BITS" {
         return ContractExpr::Binary {
-            op: NumericBinOp::Mul,
+            op: BinOp::Mul,
             lhs: Box::new(ContractExpr::SizeOf(ty)),
             rhs: Box::new(ContractExpr::Const(8)),
         };
@@ -382,7 +382,7 @@ fn conv_const_path<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, pair: Pair<Rule>) -> 
             // resolves to `-2147483648` rather than `+2147483648`.
             if let rustc_middle::ty::TyKind::Int(_) = ty.kind() {
                 ContractExpr::Unary {
-                    op: NumericUnaryOp::Neg,
+                    op: UnaryOp::Neg,
                     expr: Box::new(ContractExpr::Const(min)),
                 }
             } else {

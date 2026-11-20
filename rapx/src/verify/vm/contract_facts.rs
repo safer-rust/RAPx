@@ -7,7 +7,7 @@ use crate::{
     helpers::mir_utils,
     verify::{
         contract::{
-            ContractExpr, ContractKind, ContractPlace, ContractProjection, NumericBinOp, PlaceBase,
+            ContractExpr, ContractKind, ContractPlace, ContractProjection, BinOp, PlaceBase,
             Property, PropertyArg, PropertyKind,
         },
     },
@@ -94,12 +94,12 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
     }
 
-    fn place_root_alloc(&self, cp: &ContractPlace<'tcx>) -> Option<AllocId> {
+    fn place_root_alloc(&self, cp: &ContractPlace) -> Option<AllocId> {
         let local = cp.base.to_local();
         let mut field_path: Vec<usize> = Vec::new();
         for proj in &cp.projections {
             match proj {
-                ContractProjection::Field { index, .. } => field_path.push(*index),
+                ContractProjection::Field { index } => field_path.push(*index),
                 _ => return None,
             }
         }
@@ -580,7 +580,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let mut path = Vec::new();
         for proj in &cp.projections {
             match proj {
-                crate::verify::contract::ContractProjection::Field { index, .. } => {
+                crate::verify::contract::ContractProjection::Field { index } => {
                     path.push(*index);
                 }
                 _ => break,
@@ -643,11 +643,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         &self,
         left: &Int<'z3>,
         right: &Int<'z3>,
-        op: crate::verify::contract::NumericBinOp,
+        op: crate::verify::contract::BinOp,
     ) -> Option<Int<'z3>> {
         match op {
-            NumericBinOp::Div => Some(left.div(right)),
-            NumericBinOp::Rem => Some(left.rem(right)),
+            BinOp::Div => Some(left.div(right)),
+            BinOp::Rem => Some(left.rem(right)),
             _ => self.contract_binary_term(op, left, right),
         }
     }
@@ -666,7 +666,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     fn assert_in_bound_for_each(
         &mut self,
         property: &Property<'tcx>,
-        fe_place: &crate::verify::contract::ContractPlace<'tcx>,
+        fe_place: &crate::verify::contract::ContractPlace,
     ) {
         if matches!(fe_place.base, PlaceBase::Return) {
             return;

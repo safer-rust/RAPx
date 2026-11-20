@@ -78,7 +78,7 @@ impl PropertyChecker {
         &self,
         vm_state: &VmState<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
-        place: &ContractPlace<'tcx>,
+        place: &ContractPlace,
     ) -> bool {
         let key = PlaceKey::from_contract_place(place);
         let local = match key.base {

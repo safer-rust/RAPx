@@ -64,7 +64,7 @@ pub(crate) fn parse_contract_expr<'tcx>(
         return e;
     }
     if let Some(value) = parse_expr_into_number(expr) {
-        return ContractExpr::new_value(value);
+        return ContractExpr::Const(value as u128);
     }
     // A `const` item (e.g. `CAPACITY` in `ValidNum(len <= CAPACITY)`).
     if let Expr::Path(expr_path) = expr
@@ -219,10 +219,7 @@ fn parse_const_param<'tcx>(
         if let Some(param) = current.own_params.iter().find(|param| {
             matches!(param.kind, GenericParamDefKind::Const { .. }) && param.name.as_str() == ident
         }) {
-            return Some(ContractExpr::ConstParam {
-                index: param.index,
-                name: ident,
-            });
+            return Some(ContractExpr::ConstParam { index: param.index, name: ident });
         }
         generics = current.parent.map(|parent| tcx.generics_of(parent));
     }

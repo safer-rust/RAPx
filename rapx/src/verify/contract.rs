@@ -74,34 +74,34 @@ impl PlaceBase {
 /// A step into a place, from the base down to the value a contract talks
 /// about (written as `.field`, `.unwrap_some()`, or `.iter()` in the DSL).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum ContractProjection<'tcx> {
-    /// Select a struct/tuple field.
-    Field { index: usize, ty: Option<Ty<'tcx>> },
+pub(crate) enum ContractProjection {
+    /// Select a struct/tuple field by index; its type is derived when needed.
+    Field { index: usize },
     /// Unwrap the `Some` variant of an enum.
     Downcast { variant_index: usize },
-    /// Iterate over the elements of a container.
+    /// Treat `iter()` or `each_element()` syntax as a per-element projection.
     ForEach,
 }
 
 /// A place a contract refers to: a [`PlaceBase`] root plus a sequence of
-/// [`ContractProjection`] steps into it (e.g. `self.next.value`, `head.iter()`).
+/// [`ContractProjection`] steps into it (e.g. `self.next.value`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct ContractPlace<'tcx> {
+pub(crate) struct ContractPlace {
     /// The root: return value, an argument, or a MIR local.
     pub base: PlaceBase,
     /// Field / `Some`-unwrap / element steps from the base down.
-    pub projections: Vec<ContractProjection<'tcx>>,
+    pub projections: Vec<ContractProjection>,
 }
 
-impl<'tcx> ContractPlace<'tcx> {
-    pub(crate) fn local(base: usize, fields: Vec<(usize, Ty<'tcx>)>) -> Self {
+impl ContractPlace {
+    pub(crate) fn local(base: usize, fields: Vec<usize>) -> Self {
         Self {
             base: if base == 0 {
                 PlaceBase::Return
             } else {
                 PlaceBase::Local(base)
             },
-            projections: fields.into_iter().map(|(index, ty)| ContractProjection::Field { index, ty: Some(ty) }).collect(),
+            projections: fields.into_iter().map(|index| ContractProjection::Field { index }).collect(),
         }
     }
 
@@ -127,7 +127,7 @@ impl<'tcx> ContractPlace<'tcx> {
         let mut path = Vec::new();
         for proj in &self.projections {
             match proj {
-                ContractProjection::Field { index, .. } => path.push(*index),
+                ContractProjection::Field { index } => path.push(*index),
                 _ => return None,
             }
         }
@@ -136,7 +136,7 @@ impl<'tcx> ContractPlace<'tcx> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum NumericBinOp {
+pub(crate) enum BinOp {
     Add,
     Sub,
     Mul,
@@ -150,53 +150,26 @@ pub(crate) enum NumericBinOp {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum NumericUnaryOp {
+pub(crate) enum UnaryOp {
     Not,
     Neg,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum ContractExpr<'tcx> {
-    Place(ContractPlace<'tcx>),
+    Place(ContractPlace),
     Const(u128),
-    ConstParam {
-        index: u32,
-        name: String,
-    },
+    ConstParam { index: u32, name: String },
     SizeOf(Ty<'tcx>),
     AlignOf(Ty<'tcx>),
     Len(Box<ContractExpr<'tcx>>, Option<DefId>),
-    MethodCall {
-        receiver: Box<ContractExpr<'tcx>>,
-        method: DefId,
-        args: Vec<ContractExpr<'tcx>>,
-    },
+    MethodCall { receiver: Box<ContractExpr<'tcx>>, method: DefId, args: Vec<ContractExpr<'tcx>> },
     IsEmpty(Box<ContractExpr<'tcx>>, Option<DefId>),
-    IndexAccess {
-        slice: Box<ContractExpr<'tcx>>,
-        index: Box<ContractExpr<'tcx>>,
-    },
-    Binary {
-        op: NumericBinOp,
-        lhs: Box<ContractExpr<'tcx>>,
-        rhs: Box<ContractExpr<'tcx>>,
-    },
-    Unary {
-        op: NumericUnaryOp,
-        expr: Box<ContractExpr<'tcx>>,
-    },
-    If {
-        cond: Box<NumericPredicate<'tcx>>,
-        then_expr: Box<ContractExpr<'tcx>>,
-        else_expr: Box<ContractExpr<'tcx>>,
-    },
+    IndexAccess { slice: Box<ContractExpr<'tcx>>, index: Box<ContractExpr<'tcx>> },
+    Binary { op: BinOp, lhs: Box<ContractExpr<'tcx>>, rhs: Box<ContractExpr<'tcx>> },
+    Unary { op: UnaryOp, expr: Box<ContractExpr<'tcx>> },
+    If { cond: Box<NumericPredicate<'tcx>>, then_expr: Box<ContractExpr<'tcx>>, else_expr: Box<ContractExpr<'tcx>> },
     Unknown,
-}
-
-impl<'tcx> ContractExpr<'tcx> {
-    pub(crate) fn new_value(value: usize) -> Self {
-        Self::Const(value as u128)
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -280,8 +253,7 @@ pub(crate) enum PropertyArg<'tcx> {
     Predicates(Vec<NumericPredicate<'tcx>>),
     /// A name: lifetime, allocator, trait (e.g. `Copy`), or `sized`/`unsized`.
     Ident(String),
-    /// A resolved lifetime region (e.g. `'a` in `Alive(p, 'a)`), bound against
-    /// the item that declares the lifetime (a struct for its invariants).
+    /// Resolved lifetime region (e.g. `'a` in `Alive(p, 'a)`).
     Region(Region<'tcx>),
 }
 
@@ -322,11 +294,8 @@ pub(crate) struct AtomProperty<'tcx> {
     pub kind: PropertyKind,
     pub args: Vec<PropertyArg<'tcx>>,
     pub contract_kind: ContractKind,
-    /// When set, this property must hold for every element of this
-    /// container (e.g. `Owning(buckets.iter())`).  The target place
-    /// in `args` is already stripped of the `ForEach` projection
-    /// and refers to a single element slot.
-    pub for_each: Option<ContractPlace<'tcx>>,
+    /// Container whose elements this atom quantifies over.
+    pub for_each: Option<ContractPlace>,
     /// Display metadata when this property was expanded from a compound property.
     pub origin: Option<ContractOrigin>,
 }
@@ -415,7 +384,7 @@ impl<'tcx> Property<'tcx> {
 
     /// The `ContractPlace` this atom's first argument refers to, when the
     /// first argument is a place (or an index access over one, e.g. `slice[i]`).
-    pub(crate) fn target_place(&self) -> Option<&ContractPlace<'tcx>> {
+    pub(crate) fn target_place(&self) -> Option<&ContractPlace> {
         match self.args().first()? {
             PropertyArg::Expr(ContractExpr::Place(cp)) => Some(cp),
             PropertyArg::Expr(ContractExpr::IndexAccess { slice, .. }) => match slice.as_ref() {
@@ -488,7 +457,7 @@ impl<'tcx> Property<'tcx> {
         }
     }
 
-    pub(crate) fn for_each(&self) -> Option<&ContractPlace<'tcx>> {
+    pub(crate) fn for_each(&self) -> Option<&ContractPlace> {
         match self {
             Property::Atom(a) => a.for_each.as_ref(),
             Property::And(_) | Property::Or(_) => None,
@@ -502,14 +471,6 @@ impl<'tcx> Property<'tcx> {
             Property::And(a) => a.origin.as_ref(),
             Property::Or(o) => o.origin.as_ref(),
         }
-    }
-
-    pub(crate) fn is_or(&self) -> bool {
-        matches!(self, Property::Or(_))
-    }
-
-    pub(crate) fn is_and(&self) -> bool {
-        matches!(self, Property::And(_))
     }
 
     /// Apply contract kind metadata from a JSON entry or attribute.
@@ -544,13 +505,6 @@ impl<'tcx> Property<'tcx> {
             Property::Atom(a) => a.origin = None,
             Property::And(a) => a.origin = None,
             Property::Or(o) => o.origin = None,
-        }
-    }
-
-    /// Attach a `for_each` container to an atom.
-    pub(crate) fn set_for_each(&mut self, place: Option<ContractPlace<'tcx>>) {
-        if let Property::Atom(a) = self {
-            a.for_each = place;
         }
     }
 

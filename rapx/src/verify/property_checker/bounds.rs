@@ -8,7 +8,7 @@ use crate::def_ids::type_ids;
 use crate::helpers::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{
-    ContractExpr, ContractKind, NumericBinOp, PlaceBase, Property, PropertyArg, RelOp,
+    ContractExpr, ContractKind, BinOp, PlaceBase, Property, PropertyArg, RelOp,
 };
 use crate::verify::report::{CheckResult, UnknownReason};
 use crate::verify::vm::state::{OffsetKind, VmState, VmValue};
@@ -832,7 +832,7 @@ impl PropertyChecker {
             return false;
         }
         let ContractExpr::Binary {
-            op: NumericBinOp::Mul,
+            op: BinOp::Mul,
             lhs,
             rhs,
         } = &pred.lhs

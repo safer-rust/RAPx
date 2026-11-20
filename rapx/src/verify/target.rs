@@ -342,7 +342,7 @@ fn rebind_ty<'tcx>(
 }
 
 fn rebind_place<'tcx>(
-    place: &mut ContractPlace<'tcx>,
+    place: &mut ContractPlace,
     args: &[rustc_middle::mir::Operand<'tcx>],
     body: &rustc_middle::mir::Body<'tcx>,
 ) -> bool {
