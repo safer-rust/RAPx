@@ -1,6 +1,6 @@
 use super::CalleeBodies;
 use crate::analysis::path::{CallArg, CallBinding, PathTree};
-use crate::cli::ConstructorMirMode;
+use crate::verify::config::ConstructorMirMode;
 use crate::compat::{FxHashMap, FxHashSet};
 use crate::def_ids::lang_api::{self, LangItem};
 use crate::helpers::fn_info::{self, FnKind};
@@ -213,7 +213,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                 };
                 if fn_info::get_type(self.tcx, callee) == FnKind::Constructor
                     && matches!(
-                        effective_constructor_mir_mode(self.tcx, callee, self.config.constructor_mir_mode),
+                        effective_constructor_mir_mode(self.tcx, callee, self.config.constructor_mir_mode()),
                         ConstructorMirMode::False
                     )
                 {
@@ -243,12 +243,12 @@ impl<'tcx> CallSiteIndex<'tcx> {
                     if is_virtual {
                         if !effect_modeled {
                             let candidates = mir_utils::trait_impl_candidates(self.tcx, base_callee);
-                            if candidates.len() > self.config.trait_impl_limit {
+                            if candidates.len() > self.config.trait_impl_limit() {
                                 self.trait_impl_limited = true;
                             }
                             for candidate in candidates
                                 .into_iter()
-                                .take(self.config.trait_impl_limit)
+                                .take(self.config.trait_impl_limit())
                             {
                                 if self.tcx.is_mir_available(candidate)
                                     && !expanded.contains(&candidate)
@@ -343,7 +343,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                     });
                 let ctor_mode =
                     (fn_info::get_type(self.tcx, callee) == FnKind::Constructor)
-                        .then(|| effective_constructor_mir_mode(self.tcx, callee, self.config.constructor_mir_mode));
+                        .then(|| effective_constructor_mir_mode(self.tcx, callee, self.config.constructor_mir_mode()));
                 if crate::def_ids::intrinsic_api::is_intrinsic(self.tcx, callee)
                     || !self.tcx.is_mir_available(callee)
                     || expanded.contains(&callee)

@@ -60,20 +60,6 @@ use crate::limit::{
     MAX_EXACT_RANGE_REPEAT, MIN_DATAFLOW_REPEAT,
 };
 
-/// User-selected policy for SCC postfix repetition.
-///
-/// `Fixed(n)` preserves the explicit CLI behavior: the driver checks all
-/// rounds `0..=n`.  `Auto` delegates the upper bound to this module and checks
-/// `0..=repeat`, because the current SCC path enumerator is not strictly
-/// monotonic across repeat depths when path limits and branch order interact.
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum RepeatStrategy {
-    /// Let `LoopSensitivityAnalyzer` choose a repeat count from MIR structure.
-    Auto,
-    /// Use the concrete repeat count supplied by `--postfix-repeat N`.
-    Fixed(usize),
-}
-
 /// A loop-carried dataflow hint.
 ///
 /// `needed_backedges` is measured in loop backedge traversals between the first

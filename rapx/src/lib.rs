@@ -41,7 +41,7 @@ use crate::{
     cli::{
         AliasStrategyKind, AnalysisKind, CheckArgs, Commands, RapxArgs,
     },
-    verify::{PrepareTargets, VerifyConfig, VerifyDriver},
+    verify::{PrepareTargets, VerifyDriver},
 };
 use analysis::{
     Analysis,
@@ -272,7 +272,7 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
         },
 
         Commands::Verify(args) => {
-            let config = std::sync::Arc::new(VerifyConfig::from_args(args));
+            let config = Arc::new(args.clone());
             if config.prepare_targets {
                 PrepareTargets::new(tcx, config).run();
             } else {

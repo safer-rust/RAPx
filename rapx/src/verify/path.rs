@@ -122,7 +122,7 @@ impl<'tcx> PathExtractor<'tcx> {
         };
         caller_graph.find_scc();
         let caller_paths = PathEnumerator::new(&caller_graph)
-            .with_path_limit(self.config.path_limit)
+            .with_path_limit(self.config.path_limit())
             .with_coverage_targets(self.coverage_targets)
             .with_terminal_target(self.terminal_target)
             .enumerate_paths_repeat(self.allow_repeat);
@@ -136,7 +136,7 @@ impl<'tcx> PathExtractor<'tcx> {
         call_index.collect();
         let bodies = call_index.unambiguous_bodies();
         let entry_bodies = call_index.entry_bodies();
-        let mut tree = PathComposer::new(&call_index, self.allow_repeat, self.config.path_limit).compose(&caller_paths);
+        let mut tree = PathComposer::new(&call_index, self.allow_repeat, self.config.path_limit()).compose(&caller_paths);
         tree.mark_structural();
         call_index.attach_metadata(&mut tree);
         (tree, bodies, entry_bodies)

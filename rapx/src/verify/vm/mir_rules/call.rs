@@ -15,7 +15,7 @@ use super::super::state::{VmState, VmValue};
 use super::RuleFlow;
 use self::comparison::ComparisonPlan;
 use self::index::BuiltinIndexPlan;
-use crate::cli::ConstructorMirMode;
+use crate::verify::config::ConstructorMirMode;
 use crate::def_ids::type_ids;
 use crate::compat::Spanned;
 use crate::def_ids::diagnostic_api;

@@ -1,12 +1,11 @@
 mod analyze;
 mod check;
-mod verify;
 
+use clap::{Args, Subcommand};
+
+pub use crate::verify::config::{ConstructorMirMode, PostfixRepeat, VerifyConfig, VerifyMode};
 pub use analyze::*;
 pub use check::*;
-use clap::{Args, Subcommand};
-pub use verify::PostfixRepeat;
-pub use verify::*;
 
 #[derive(Args, Debug, Clone)]
 pub struct RapxArgs {
@@ -34,7 +33,7 @@ pub enum Commands {
     /// detect code optimization opportunities
     Opt,
     /// verify annotated functions in the crate, e.g., identify `#[rapx::verify]` targets
-    Verify(VerifyArgs),
+    Verify(VerifyConfig),
 }
 
 impl RapxArgs {

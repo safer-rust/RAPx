@@ -32,7 +32,7 @@ use rustc_middle::{
 use z3::{Context, ast::Int};
 
 use crate::compat::{FxHashMap, FxHashSet};
-use crate::cli::ConstructorMirMode;
+use crate::verify::config::ConstructorMirMode;
 
 use self::{
     diagnostics::Diagnostics,

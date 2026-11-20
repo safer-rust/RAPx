@@ -8,7 +8,7 @@ mod api_classify;
 mod auto_trait;
 mod call_summary;
 mod checkpoint;
-mod config;
+pub(crate) mod config;
 mod contract;
 mod debug_contracts;
 mod display;
@@ -27,7 +27,6 @@ mod vm;
 
 pub(crate) use self::{
     call_summary::{callback::supports_result as supports_callback_result, effects::has_registered_effect},
-    config::VerifyConfig,
     slicer::RelevantItem,
     target::PrepareTargets,
     vm::{VmState, state::{AllocId, SafeDropEvent, SafeDropEventKind}},
@@ -57,7 +56,8 @@ use self::{
         fmt_fn_path_with_bounds,
     },
     function_verifier::FunctionVerifier,
-    loop_handling::{LoopSensitivityAnalyzer, RepeatStrategy},
+    config::{PostfixRepeat, VerifyConfig},
+    loop_handling::LoopSensitivityAnalyzer,
     marker_trait::MarkerTraitVerifier,
     proof_cache::{VmCache, new_z3_context},
     report::{CheckResult, PropertyCheckResult},
@@ -69,20 +69,20 @@ use self::{
 pub(crate) struct VerifyDriver<'tcx> {
     /// Compiler context for target collection and verification.
     tcx: TyCtxt<'tcx>,
-    /// Normalized options shared with target preparation and call handling.
+    /// Verification options shared with target preparation and call handling.
     config: Arc<VerifyConfig>,
 }
 
 impl<'tcx> VerifyDriver<'tcx> {
-    /// Create a verification pass with the normalized options.
+    /// Create a verification pass with the selected options.
     pub(crate) fn new(tcx: TyCtxt<'tcx>, config: Arc<VerifyConfig>) -> Self {
         Self { tcx, config }
     }
 
     fn repeat_rounds_for_target(&self, target: &FunctionTarget<'tcx>) -> (usize, Vec<usize>) {
-        match self.config.repeat_strategy {
-            RepeatStrategy::Fixed(n) => (n, (0..=n).collect()),
-            RepeatStrategy::Auto => {
+        match &self.config.postfix_repeat {
+            PostfixRepeat::Fixed(n) => (*n, (0..=*n).collect()),
+            PostfixRepeat::Auto => {
                 let repeat = LoopSensitivityAnalyzer::new(self.tcx).analyze(target);
                 (repeat, (0..=repeat).collect())
             }

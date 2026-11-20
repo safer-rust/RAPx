@@ -107,7 +107,7 @@ impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
                     tcx,
                     caller_def_id,
                     instance_body,
-                    self.config.constructor_mir_mode,
+                    self.config.constructor_mir_mode(),
                 )
                 .execute_items(&[]),
             )

@@ -1,7 +1,7 @@
 use crate::analysis::path::PathTree;
 use crate::check::safedrop::bug_records::{BugRecords, BugType, LocalSpot, TyBug};
 use crate::compat::FxHashMap;
-use crate::cli::ConstructorMirMode;
+use crate::verify::config::ConstructorMirMode;
 use crate::utils::source::{get_filename, get_name};
 use crate::verify::{AllocId, RelevantItem, SafeDropEvent, SafeDropEventKind, VmState};
 use rustc_hir::def_id::DefId;

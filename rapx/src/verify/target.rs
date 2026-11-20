@@ -8,7 +8,7 @@ use crate::analysis::Analysis;
 use crate::analysis::safety_flow::root::{
     function_has_rapx_struct_invariant, function_has_trait_ensurance, hir_contains_unsafe,
 };
-use crate::cli::VerifyMode;
+use crate::verify::config::VerifyMode;
 use crate::compat::FxHashMap;
 use crate::def_ids::{
     intrinsic_api,
@@ -727,7 +727,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         let instances = crate::helpers::mir_utils::enumerate_mono_instances(
             self.tcx,
             def_id,
-            self.config.trait_impl_limit,
+            self.config.trait_impl_limit(),
         );
         let mut targets = Vec::new();
         let mut needs_generic = instances.is_empty();
@@ -767,7 +767,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
     }
 
     fn crate_name_matches(&self, def_id: DefId) -> bool {
-        match &self.config.crate_filter {
+        match &self.config.crate_name {
             None => true,
             Some(filter) => {
                 let crate_name = self.tcx.crate_name(def_id.krate);
@@ -785,7 +785,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
     }
 
     fn module_path_matches(&self, def_id: DefId) -> bool {
-        let Some(ref filter) = self.config.module_filter else {
+        let Some(ref filter) = self.config.module else {
             return true;
         };
         let crate_name = self.tcx.crate_name(def_id.krate);
@@ -808,12 +808,12 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
     }
 
     pub(crate) fn check_module_filter_result(&self) {
-        if let Some(ref filter) = self.config.crate_filter
+        if let Some(ref filter) = self.config.crate_name
             && !self.crate_filter_matched
         {
             rap_warn!("[rapx::verify] --crate \"{filter}\" matched no targets");
         }
-        if let Some(ref filter) = self.config.module_filter
+        if let Some(ref filter) = self.config.module
             && !self.module_filter_matched
         {
             rap_warn!("[rapx::verify] --module \"{filter}\" matched no functions in the crate");
