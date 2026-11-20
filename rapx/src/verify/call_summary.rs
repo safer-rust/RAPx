@@ -1,7 +1,7 @@
 //! Call effects and verifier semantics for dataflow dependency queries.
 mod dependency_semantics;
 pub(crate) mod effects;
-pub(crate) mod callback;
+pub(crate) mod function_var;
 pub(crate) mod pointer_semantics;
 pub(crate) mod shared_owner;
 

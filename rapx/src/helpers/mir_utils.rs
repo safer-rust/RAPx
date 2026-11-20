@@ -423,7 +423,7 @@ pub(crate) fn has_direct_unmodeled_generic_call<'tcx>(tcx: TyCtxt<'tcx>, def_id:
             .is_some()
             && resolve_callee_def_id(tcx, def_id, func)
                 .is_none_or(|target| !tcx.is_mir_available(target))
-            && !has_callback_effect(tcx, callee, body.local_decls[destination.local].ty)
+            && !has_function_var_effect(tcx, callee, body.local_decls[destination.local].ty)
             && !crate::verify::has_registered_effect(tcx, Some(callee))
     })
 }
@@ -460,7 +460,7 @@ fn has_unmodeled_generic_call_rec<'tcx>(
             // executable MIR after resolving this call.
             let target = resolve_callee_def_id(tcx, def_id, func);
             if target.is_none_or(|target| !tcx.is_mir_available(target))
-                && !has_callback_effect(tcx, callee, body.local_decls[destination.local].ty)
+                && !has_function_var_effect(tcx, callee, body.local_decls[destination.local].ty)
                 && !crate::verify::has_registered_effect(tcx, Some(callee))
             {
                 return true;
@@ -479,10 +479,10 @@ fn has_unmodeled_generic_call_rec<'tcx>(
     false
 }
 
-fn has_callback_effect(tcx: TyCtxt<'_>, callee: DefId, result_ty: Ty<'_>) -> bool {
+fn has_function_var_effect(tcx: TyCtxt<'_>, callee: DefId, result_ty: Ty<'_>) -> bool {
     tcx.trait_of_assoc(callee)
         .is_some_and(|trait_id| lang_api::is_fn_trait(tcx, trait_id))
-        && crate::verify::supports_callback_result(result_ty)
+        && crate::verify::supports_function_var_result(result_ty)
 }
 
 /// Resolve a call `func` operand to its monomorphized [`Instance`].

@@ -89,10 +89,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                 Self::combine_conjuncts_on_path(child, conjunct_results, next_conjunct)
             }).collect();
             let description = children.iter().find_map(|child| child.as_ref().map(|(_, path)| path.clone()))?;
-            if children.iter().any(|child| child.as_ref().is_none_or(|(_, path)| path != &description)) {
-                return Some((CheckResult::Unknown(UnknownReason::InconsistentPathResults), description));
-            }
-            let result = children.into_iter().flatten()
+            let result = children.into_iter().map(|child| child.expect("each path checks every conjunct"))
                 .fold(CheckResult::ProvedByRule, |acc, (result, _)| acc.and(result));
             return Some((result, description));
         }
@@ -109,11 +106,12 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         properties: &[&Property<'tcx>],
     ) -> Vec<Vec<Option<(CheckResult, String)>>> {
         let manual_drop = api_classify::is_manually_drop_drop(self.tcx, checkpoint.callee);
+        let drop_alias = manual_drop && properties.iter().any(|property| property.kind() == Some(PropertyKind::Alias));
         let selected: Vec<_> = properties.iter().enumerate()
             .filter(|(_, property)| !(manual_drop && property.kind() == Some(PropertyKind::Alias)))
             .collect();
         let mut results = Vec::new();
-        if !selected.is_empty() {
+        if !selected.is_empty() || drop_alias {
             let tree = &self.path_tree;
             let selected_properties: Vec<_> = selected.iter().map(|(_, property)| **property).collect();
             let bound: Vec<_> = selected_properties.iter()
@@ -125,16 +123,22 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                 .collect();
             let needs_post_deref = checkpoint.kind == CheckpointKind::RawPtrDeref
                 && selected_properties.iter().any(|property| property.kind() == Some(PropertyKind::Alias));
-            let needs_forward_alias = manual_drop
-                && selected_properties.iter().any(|property| Self::property_contains_alias(property));
-
-            for goal in self.slicer.visit_path_tree_batch(tree, checkpoint, &selected_properties).into_iter().rev() {
+            let slice_properties = if selected_properties.is_empty() { properties.to_vec() } else { selected_properties };
+            for goal in self.slicer.visit_path_tree_batch(tree, checkpoint, &slice_properties).into_iter().rev() {
                 let mut path_results = vec![None; properties.len()];
                 let description = goal.path.describe_caller_indices(tree);
-                let alias_result = needs_forward_alias.then(|| {
-                    let slot = self.drop_referent_local(tree, checkpoint, &goal.path.blocks);
-                    self.drop_alias_for_prefix(tree, checkpoint, &goal.path.blocks, slot)
-                });
+                if drop_alias {
+                    let result = self.check_drop_on_prefix(checkpoint, &goal.path.blocks);
+                    for (index, property) in properties.iter().enumerate() {
+                        if property.kind() == Some(PropertyKind::Alias) {
+                            path_results[index] = Some((result.clone(), description.clone()));
+                        }
+                    }
+                }
+                if selected.is_empty() {
+                    results.push(path_results);
+                    continue;
+                }
                 let goal = self.prepare_goal(tree, goal, &entry_facts);
                 let deref_position = needs_post_deref.then(|| goal.items.iter().rposition(|item| {
                     matches!(item, RelevantItem::Statement { def_id, block, statement_index, .. }
@@ -156,76 +160,35 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                         (Some(states), Some(reachability)) if post_deref => (states.as_slice(), reachability.as_slice()),
                         _ => (cached.states.as_slice(), cached.reachability.as_slice()),
                     };
-                    let result = states.iter().zip(reachability).map(|(state, reachability)| {
-                        if let Some(alias_result) = &alias_result {
-                            Self::check_with_forward_alias(state, checkpoint, bound_property, tree.is_structural(), reachability, alias_result)
-                        } else {
-                            PropertyChecker.check(state, checkpoint, bound_property, tree.is_structural(), reachability)
-                        }
-                    }).fold(CheckResult::ProvedByRule, CheckResult::and);
+                    let result = states.iter().zip(reachability)
+                        .map(|(state, reachability)| PropertyChecker.check(state, checkpoint, bound_property, tree.is_structural(), reachability))
+                        .fold(CheckResult::ProvedByRule, CheckResult::and);
                     path_results[*index] = Some((result, description.clone()));
                 }
                 results.push(path_results);
             }
         }
-        if manual_drop && properties.iter().any(|property| property.kind() == Some(PropertyKind::Alias)) {
-            let drop_results = self.check_drop(checkpoint);
-            while results.len() < drop_results.len() {
-                results.push(vec![None; properties.len()]);
-            }
-            for (path, (result, description)) in results.iter_mut().zip(drop_results) {
-                for (index, property) in properties.iter().enumerate() {
-                    if property.kind() == Some(PropertyKind::Alias) {
-                        path[index] = Some((result.clone(), description.clone()));
-                    }
-                }
-            }
-        }
         results
     }
 
-    /// Path-sensitive forward scan for the `Drop` hazard.
+    /// Check every path suffix after one occurrence of a `ManuallyDrop::drop` checkpoint.
     ///
     /// `ManuallyDrop::drop(&mut slot)` drops the contained value while the
     /// wrapper remains live. A later read can use a dropped value. This forward
     /// obligation scans each path suffix after the call.
-    pub(super) fn check_drop(&self, checkpoint: &Checkpoint<'tcx>) -> Vec<(CheckResult, String)> {
+    fn check_drop_on_prefix(&self, checkpoint: &Checkpoint<'tcx>, prefix: &[usize]) -> CheckResult {
         let tree = &self.path_tree;
-        let caller = checkpoint.caller;
-        let target = checkpoint.block.as_usize();
-
-        let mut results: Vec<(CheckResult, String)> = Vec::new();
-        for path in tree.iter() {
-            let mut reaches = false;
-            let mut verdict = CheckResult::ProvedByRule;
-            for (pos, &g) in path.iter().enumerate() {
-                let Some((def, local)) = tree.block_fn_of(g) else {
-                    continue;
-                };
-                if def == caller && local == target {
-                    reaches = true;
-                    let result = match self.drop_referent_local(tree, checkpoint, &path[..=pos]) {
-                        Some(slot)
-                            if self.drop_suffix_reads(tree, caller, slot, &path[pos + 1..]) =>
-                        {
-                            CheckResult::Failed
-                        }
-                        Some(_) => CheckResult::ProvedByRule,
-                        None => CheckResult::Unknown(UnknownReason::Unimplemented),
-                    };
-                    verdict = verdict.and(result);
-                }
-            }
-            if reaches {
-                results.push((verdict, format!("{:?}", path)));
+        let Some(slot) = self.drop_referent_local(tree, checkpoint, prefix) else {
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
+        };
+        let mut found = false;
+        for path in tree.iter().filter(|path| path.starts_with(prefix)) {
+            found = true;
+            if self.drop_suffix_reads(tree, checkpoint.caller, slot, &path[prefix.len()..]) {
+                return CheckResult::Failed;
             }
         }
-
-        if results.is_empty() {
-            vec![(CheckResult::ProvedByRule, String::new())]
-        } else {
-            results
-        }
+        if found { CheckResult::ProvedByRule } else { CheckResult::Unknown(UnknownReason::Unimplemented) }
     }
 
     /// Follow the borrow passed to `ManuallyDrop::drop` on the current path.
@@ -391,80 +354,6 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
             }
         }
         false
-    }
-
-    fn drop_alias_for_prefix(
-        &self,
-        tree: &PathTree,
-        checkpoint: &Checkpoint<'tcx>,
-        prefix: &[usize],
-        slot: Option<Local>,
-    ) -> CheckResult {
-        let Some(slot) = slot else {
-            return CheckResult::Unknown(UnknownReason::Unimplemented);
-        };
-        let mut safe = false;
-        let mut unsafe_path = false;
-        for path in tree.iter().filter(|path| path.starts_with(prefix)) {
-            let used = self.drop_suffix_reads(tree, checkpoint.caller, slot, &path[prefix.len()..]);
-            safe |= !used;
-            unsafe_path |= used;
-        }
-        match (safe, unsafe_path) {
-            (true, false) => CheckResult::ProvedByRule,
-            (false, true) => CheckResult::Failed,
-            (true, true) => CheckResult::Unknown(UnknownReason::DropAliasMixedPaths),
-            (false, false) => CheckResult::Unknown(UnknownReason::Unimplemented),
-        }
-    }
-
-    fn check_with_forward_alias<'z3>(
-        vm_state: &VmState<'z3, 'tcx>,
-        checkpoint: &Checkpoint<'tcx>,
-        property: &Property<'tcx>,
-        structural: bool,
-        reachability: &Cell<Option<z3::SatResult>>,
-        alias_result: &CheckResult,
-    ) -> CheckResult {
-        match property {
-            Property::Atom(atom) if atom.kind == contract::PropertyKind::Alias => {
-                alias_result.clone()
-            }
-            Property::Atom(_) => {
-                PropertyChecker.check(vm_state, checkpoint, property, structural, reachability)
-            }
-            Property::And(and) => {
-                and.conjuncts
-                    .iter()
-                    .fold(CheckResult::ProvedByRule, |acc, child| {
-                        acc.and(Self::check_with_forward_alias(
-                            vm_state,
-                            checkpoint,
-                            child,
-                            structural,
-                            reachability,
-                            alias_result,
-                        ))
-                    })
-            }
-            Property::Or(or) => CheckResult::disjunction_with_guards(
-                or.disjuncts.iter().map(|child| {
-                    let result = Self::check_with_forward_alias(
-                        vm_state,
-                        checkpoint,
-                        child,
-                        structural,
-                        reachability,
-                        alias_result,
-                    );
-                    let guard = matches!(
-                        child.kind(),
-                        Some(PropertyKind::Size | PropertyKind::Null | PropertyKind::Trait)
-                    );
-                    (result, guard)
-                }),
-            ),
-        }
     }
 
     /// Insert callee boundaries from each retained item's callsite ancestry.

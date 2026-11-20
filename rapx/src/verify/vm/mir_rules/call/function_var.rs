@@ -11,7 +11,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
     /// site, so every allocation outside the active frame may have been
     /// reached through captures or globals. Locals explicitly passed by
     /// reference are also invalidated. Frame-private counters remain stable.
-    pub(crate) fn apply_callback_effect(
+    pub(crate) fn apply_function_var_effect(
         &mut self,
         args: &[VmValue<'z3, 'tcx>],
         caller_arg_locals: &[Option<Local>],
@@ -19,7 +19,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         callee: DefId,
     ) {
         let ty = self.body().local_decls[dest].ty;
-        if !crate::verify::call_summary::callback::supports_result(ty) {
+        if !crate::verify::call_summary::function_var::supports_result(ty) {
             self.record_missing_mir(callee);
             return;
         }
@@ -112,7 +112,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         for id in affected {
             let may_drop = !borrowed.contains(&id);
             if may_drop {
-                self.alloc_mut(id).facts.callback_may_drop = true;
+                self.alloc_mut(id).facts.function_var_may_drop = true;
             }
             self.forget_memory_values(id);
             for alias in 0..self.units.len() {
@@ -127,7 +127,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
         }
 
-        let term = self.fresh_int("callback_result");
+        let term = self.fresh_int("function_var_result");
         if matches!(ty.kind(), TyKind::Bool) {
             let zero = Int::from_u64(self.z3_ctx, 0);
             let one = Int::from_u64(self.z3_ctx, 1);

@@ -1,4 +1,4 @@
-mod callback;
+mod function_var;
 mod comparison;
 mod constructor;
 mod effect;
@@ -401,7 +401,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                     if self.tcx.trait_of_assoc(callee).is_some_and(|trait_id| {
                         crate::def_ids::lang_api::is_fn_trait(self.tcx, trait_id)
                     }) {
-                        self.apply_callback_effect(arg_values, arg_locals, destination, callee);
+                        self.apply_function_var_effect(arg_values, arg_locals, destination, callee);
                     } else if !crate::def_ids::lang_api::is_panic_exit(self.tcx, callee) {
                         self.record_missing_mir(callee);
                     }

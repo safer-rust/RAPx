@@ -1,4 +1,4 @@
-//! Conservative dependencies for a generic callable with no concrete body.
+//! Conservative dependencies for a `Fn*` function variable with no concrete body.
 //!
 //! Rust-call bundles the callable's arguments in a tuple. Inspect the actual
 //! call operands rather than the generic `FnMut::call_mut` signature so nested

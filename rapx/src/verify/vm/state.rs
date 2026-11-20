@@ -255,8 +255,8 @@ pub(crate) struct ForEachFacts<'z3, 'tcx> {
 pub(crate) struct AllocFacts<'z3, 'tcx> {
     /// Whether the allocation has been freed (StorageDead / Drop).
     pub dead: bool,
-    /// Whether an opaque callback may have freed this allocation.
-    pub callback_may_drop: bool,
+    /// Whether an unresolved `Fn*` call may have freed this allocation.
+    pub function_var_may_drop: bool,
     /// A destructor may have freed this allocation.
     pub drop_may_free: bool,
     /// Pointer term licensed by an `Owning` precondition.

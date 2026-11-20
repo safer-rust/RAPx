@@ -26,7 +26,7 @@ mod type_invariants;
 mod vm;
 
 pub(crate) use self::{
-    call_summary::{callback::supports_result as supports_callback_result, effects::has_registered_effect},
+    call_summary::{effects::has_registered_effect, function_var::supports_result as supports_function_var_result},
     slicer::RelevantItem,
     target::PrepareTargets,
     vm::{VmState, state::{AllocId, SafeDropEvent, SafeDropEventKind}},

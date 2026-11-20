@@ -352,10 +352,12 @@ impl PropertyChecker {
                     .and_then(|value| value.provenance_alloc_id());
                 if target_alloc_id
                     .is_some_and(|id| {
-                        vm_state.alloc(vm_state.root_alloc(id)).facts.callback_may_drop
+                        vm_state.alloc(vm_state.root_alloc(id)).facts.function_var_may_drop
                     })
                 {
-                    return CheckResult::Unknown(UnknownReason::CallbackMayInvalidate);
+                    return CheckResult::Unknown(UnknownReason::UnsupportedEffect(vec![
+                        "unresolved function variable call may free allocation".to_string(),
+                    ]));
                 }
                 if atom.kind == PropertyKind::Init
                     && (target_alloc_id

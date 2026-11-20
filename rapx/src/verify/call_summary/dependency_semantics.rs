@@ -16,7 +16,7 @@ use crate::def_ids::{intrinsic_api, other_api};
 use crate::helpers::mir_utils as helpers;
 use crate::verify::api_classify;
 
-use super::{CallEffect, callback, effects};
+use super::{CallEffect, effects, function_var};
 
 pub(crate) struct VerifierCallSemantics;
 
@@ -30,7 +30,7 @@ impl CallSemantics for VerifierCallSemantics {
         args: &[Spanned<Operand<'tcx>>],
         body: &Body<'tcx>,
     ) -> Option<CallDependencies> {
-        callback::estimate(tcx, callee, args, body)
+        function_var::estimate(tcx, callee, args, body)
             .or_else(|| intrinsic_dependency_summary(tcx, caller, callee, func, args.len()))
     }
 

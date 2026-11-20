@@ -26,13 +26,9 @@ pub(crate) enum UnknownReason {
     OpaqueControlFlow(Vec<String>),
     IncompleteInlineBranch,
     UnmodeledIntrinsic(String),
-    CallbackMayInvalidate,
     UnresolvedUnsafeCall,
     MissingContract(String),
     UnsupportedProperty,
-    InconsistentPathResults,
-    DisjunctionNeedsJointProof,
-    DropAliasMixedPaths,
     /// A checker cannot resolve a value or supported property shape.
     Unimplemented,
     Multiple(Vec<UnknownReason>),
@@ -50,14 +46,10 @@ impl UnknownReason {
             Self::OpaqueControlFlow(_) => out.push("opaque_control_flow"),
             Self::IncompleteInlineBranch => out.push("incomplete_inline_branch"),
             Self::UnmodeledIntrinsic(_) => out.push("unmodeled_intrinsic"),
-            Self::CallbackMayInvalidate => out.push("callback_invalidation"),
             Self::UnresolvedUnsafeCall => out.push("unresolved_unsafe_call"),
             Self::MissingContract(_) => out.push("missing_contract"),
             Self::UnsupportedProperty => out.push("unsupported_property"),
-            Self::InconsistentPathResults => out.push("inconsistent_path_results"),
-            Self::DisjunctionNeedsJointProof => out.push("disjunction_joint_proof"),
-            Self::DropAliasMixedPaths => out.push("drop_alias_mixed_paths"),
-            Self::Unimplemented => out.push("unresolved_value"),
+            Self::Unimplemented => out.push("unimplemented"),
             Self::Multiple(reasons) => {
                 for reason in reasons {
                     reason.categories(out);
@@ -85,13 +77,9 @@ impl UnknownReason {
             Self::OpaqueControlFlow(_) => "opaque call controls branch".to_string(),
             Self::IncompleteInlineBranch => "incomplete inline branch".to_string(),
             Self::UnmodeledIntrinsic(_) => "unmodeled intrinsic".to_string(),
-            Self::CallbackMayInvalidate => "callback may invalidate allocation".to_string(),
             Self::UnresolvedUnsafeCall => "unresolved unsafe call".to_string(),
             Self::MissingContract(callee) => format!("missing safety contract: {callee}"),
             Self::UnsupportedProperty => "unsupported property".to_string(),
-            Self::InconsistentPathResults => "compound property paths do not align".to_string(),
-            Self::DisjunctionNeedsJointProof => "disjunction needs a joint proof".to_string(),
-            Self::DropAliasMixedPaths => "drop alias outcome differs across paths".to_string(),
             Self::Unimplemented => "unresolved value or unsupported shape".to_string(),
             Self::Multiple(reasons) => reasons
                 .iter()
@@ -243,7 +231,8 @@ impl CheckResult {
                 CheckResult::ProvedBySmt
             }
             (CheckResult::Failed, CheckResult::Failed) => {
-                CheckResult::Unknown(UnknownReason::DisjunctionNeedsJointProof)
+                // Separate counterexamples do not establish a common witness.
+                CheckResult::Unknown(UnknownReason::UnsupportedProperty)
             }
             (CheckResult::Unknown(a), CheckResult::Unknown(b)) => CheckResult::Unknown(a.merge(b)),
             (CheckResult::Unknown(a), _) | (_, CheckResult::Unknown(a)) => CheckResult::Unknown(a),
