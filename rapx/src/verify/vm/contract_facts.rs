@@ -7,8 +7,8 @@ use crate::{
     helpers::mir_utils,
     verify::{
         contract::{
-            ContractExpr, ContractKind, ContractPlace, ContractProjection, NumericBinOp, Property,
-            PropertyArg, PropertyKind,
+            ContractExpr, ContractKind, ContractPlace, ContractProjection, NumericBinOp, PlaceBase,
+            Property, PropertyArg, PropertyKind,
         },
     },
 };
@@ -668,9 +668,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         property: &Property<'tcx>,
         fe_place: &crate::verify::contract::ContractPlace<'tcx>,
     ) {
-        let Some(fe_local) = fe_place.base.try_to_local() else {
+        if matches!(fe_place.base, PlaceBase::Return) {
             return;
-        };
+        }
+        let fe_local = fe_place.base.to_local();
         let fe_val = match self.local_value(fe_local).cloned() {
             Some(v) => v,
             None => return,
@@ -686,11 +687,11 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let slice_local = match property.args().first() {
             Some(PropertyArg::Expr(ContractExpr::IndexAccess { slice, .. })) => {
                 match slice.as_ref() {
-                    ContractExpr::Place(cp) => cp.base.try_to_local(),
+                    ContractExpr::Place(cp) if !matches!(cp.base, PlaceBase::Return) => Some(cp.base.to_local()),
                     _ => None,
                 }
             }
-            Some(PropertyArg::Expr(ContractExpr::Place(cp))) => cp.base.try_to_local(),
+            Some(PropertyArg::Expr(ContractExpr::Place(cp))) if !matches!(cp.base, PlaceBase::Return) => Some(cp.base.to_local()),
             _ => None,
         };
         let slice_val = slice_local.and_then(|loc| self.local_value(loc));
@@ -735,7 +736,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             return;
         }
         let slice_local = match slice.as_ref() {
-            ContractExpr::Place(cp) => cp.base.try_to_local(),
+            ContractExpr::Place(cp) if !matches!(cp.base, PlaceBase::Return) => Some(cp.base.to_local()),
             _ => None,
         };
         let Some(slice_local) = slice_local else {

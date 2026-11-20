@@ -40,14 +40,12 @@ use rustc_middle::{mir::Local, ty::{Region, Ty}};
 
 /// The `Ident` a contract uses for the `'static` lifetime. `'static` is a Rust
 /// keyword, so after the leading `'` is stripped it cannot be a plain ident
-/// token; `attr::strip_lifetime_ticks` maps it to this name.
+/// token; the attribute and JSON parsers map it to this name.
 pub(crate) const STATIC_LIFETIME_IDENT: &str = "static_lifetime";
 
-/// Whether a contract lifetime ident names the `'static` lifetime, accepting
-/// both the plain `"static"` spelling and [`STATIC_LIFETIME_IDENT`] (the
-/// keyword-stripped form produced by `attr::strip_lifetime_ticks`).
+/// Whether a contract lifetime ident is the keyword-safe `'static` placeholder.
 pub(crate) fn is_static_lifetime_ident(name: &str) -> bool {
-    name == "static" || name == STATIC_LIFETIME_IDENT
+    name == STATIC_LIFETIME_IDENT
 }
 
 /// The root of a contract place: a function's return value, an argument, or a
@@ -69,17 +67,6 @@ impl PlaceBase {
             PlaceBase::Return => Local::from_usize(0),
             PlaceBase::Arg(n) => Local::from_usize(*n + 1),
             PlaceBase::Local(n) => Local::from_usize(*n),
-        }
-    }
-
-    /// Like [`to_local`](Self::to_local), but `None` for `Return`.  Callers that
-    /// need a concrete `Arg`/`Local` index (e.g. resolving a container's local)
-    /// use this instead of hand-copying the `Arg`/`Local` arm plus an `_ => None`.
-    pub(crate) fn try_to_local(&self) -> Option<Local> {
-        match self {
-            PlaceBase::Return => None,
-            PlaceBase::Arg(n) => Some(Local::from_usize(*n + 1)),
-            PlaceBase::Local(n) => Some(Local::from_usize(*n)),
         }
     }
 }
@@ -114,13 +101,7 @@ impl<'tcx> ContractPlace<'tcx> {
             } else {
                 PlaceBase::Local(base)
             },
-            projections: fields
-                .into_iter()
-                .map(|(index, ty)| ContractProjection::Field {
-                    index,
-                    ty: Some(ty),
-                })
-                .collect(),
+            projections: fields.into_iter().map(|(index, ty)| ContractProjection::Field { index, ty: Some(ty) }).collect(),
         }
     }
 
@@ -481,11 +462,7 @@ impl<'tcx> Property<'tcx> {
             Property::Atom(atom) if atom.contract_kind == ContractKind::Hazard => None,
             Property::Atom(_) => Some(self.clone()),
             Property::And(and) => {
-                let conjuncts: Vec<Property<'tcx>> = and
-                    .conjuncts
-                    .iter()
-                    .filter_map(Property::strip_hazards)
-                    .collect();
+                let conjuncts: Vec<Property<'tcx>> = and.conjuncts.iter().filter_map(Property::strip_hazards).collect();
                 match conjuncts.len() {
                     0 => None,
                     1 => conjuncts.into_iter().next(),
@@ -497,11 +474,7 @@ impl<'tcx> Property<'tcx> {
                 }
             }
             Property::Or(or) => {
-                let disjuncts: Vec<Property<'tcx>> = or
-                    .disjuncts
-                    .iter()
-                    .filter_map(Property::strip_hazards)
-                    .collect();
+                let disjuncts: Vec<Property<'tcx>> = or.disjuncts.iter().filter_map(Property::strip_hazards).collect();
                 match disjuncts.len() {
                     0 => None,
                     1 => disjuncts.into_iter().next(),
@@ -557,11 +530,7 @@ impl<'tcx> Property<'tcx> {
     /// Tag a property (atom, `And`, or `Or`) with the display name, full
     /// call-site arguments, and meaning of the compound property it expanded from.
     pub(crate) fn set_origin(&mut self, name: String, args: Vec<String>, meaning: Option<String>) {
-        let origin = ContractOrigin {
-            name,
-            args,
-            meaning,
-        };
+        let origin = ContractOrigin { name, args, meaning };
         match self {
             Property::Atom(a) => a.origin = Some(origin),
             Property::And(a) => a.origin = Some(origin),

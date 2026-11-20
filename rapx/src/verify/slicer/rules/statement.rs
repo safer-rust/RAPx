@@ -16,7 +16,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         &self,
         def_id: DefId,
         block: BasicBlock,
-        statement_index: usize,
+        stmt_index: usize,
         place: &Place<'tcx>,
         rvalue: &'tcx Rvalue<'tcx>,
         body: &'tcx Body<'tcx>,
@@ -45,12 +45,12 @@ impl<'tcx> BackwardSlicer<'tcx> {
                     && mir_utils::pointee_ty(body.local_decls[place.local].ty)
                         .is_some_and(|ty| matches!(ty.kind(), rustc_middle::ty::TyKind::Adt(def, _) if def.is_enum()))))
         {
-            let uses = collect_assignment_uses(rvalue, block, statement_index, flow, &defs);
+            let uses = collect_assignment_uses(rvalue, block, stmt_index, flow, &defs);
             items.push(RelevantItem::Statement {
                 global_block: None,
                 def_id,
                 block,
-                statement_index,
+                stmt_index,
             });
             relevant.extend(uses);
             return;
@@ -60,12 +60,12 @@ impl<'tcx> BackwardSlicer<'tcx> {
         if keep_owner {
             let ty = body.local_decls[place.local].ty;
             if super::may_need_drop(self.tcx, def_id, ty) {
-                let uses = collect_assignment_uses(rvalue, block, statement_index, flow, &defs);
+                let uses = collect_assignment_uses(rvalue, block, stmt_index, flow, &defs);
                 items.push(RelevantItem::Statement {
                     global_block: None,
                     def_id,
                     block,
-                    statement_index,
+                    stmt_index,
                 });
                 relevant.remove_all(&defs);
                 relevant.extend(uses);
@@ -121,7 +121,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             .is_some_and(|p| matches!(p.kind(), rustc_middle::mir::ProjectionElem::Deref));
 
         if defs.intersects(relevant) || is_provenance_carrier || is_byte_write || is_pointee_write {
-            let mut uses = collect_assignment_uses(rvalue, block, statement_index, flow, &defs);
+            let mut uses = collect_assignment_uses(rvalue, block, stmt_index, flow, &defs);
             if is_pointee_write {
                 uses.insert_local(place.local);
             }
@@ -129,7 +129,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 global_block: None,
                 def_id,
                 block,
-                statement_index,
+                stmt_index,
             });
             // Save places already in the relevance set before removing
             // the current definition.  When the uses of this statement
@@ -150,13 +150,13 @@ impl<'tcx> BackwardSlicer<'tcx> {
         }
 
         if statement_can_refine(rvalue) {
-            let uses = collect_flow_uses(flow, block, statement_index, &defs);
+            let uses = collect_flow_uses(flow, block, stmt_index, &defs);
             if uses.intersects(relevant) {
                 items.push(RelevantItem::Statement {
                     global_block: None,
                     def_id,
                     block,
-                    statement_index,
+                    stmt_index,
                 });
             }
         }
@@ -167,7 +167,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
 pub(super) fn visit_storage_dead<'tcx>(
     def_id: DefId,
     block: BasicBlock,
-    statement_index: usize,
+    stmt_index: usize,
     local: Local,
     flow: &DataflowGraph,
     relevant: &mut RelevantPlaces,
@@ -179,19 +179,19 @@ pub(super) fn visit_storage_dead<'tcx>(
             global_block: None,
             def_id,
             block,
-            statement_index,
+            stmt_index,
         });
         return;
     }
     let mut defs = RelevantPlaces::new();
     defs.insert_local(local);
     if defs.intersects(relevant) {
-        let mut uses = collect_flow_uses(flow, block, statement_index, &defs);
+        let mut uses = collect_flow_uses(flow, block, stmt_index, &defs);
         items.push(RelevantItem::Statement {
             global_block: None,
             def_id,
             block,
-            statement_index,
+            stmt_index,
         });
         let already_seen = relevant.places.clone();
         relevant.remove_all(&defs);
@@ -211,11 +211,11 @@ fn statement_can_refine(rvalue: &Rvalue<'_>) -> bool {
 fn collect_assignment_uses<'tcx>(
     rvalue: &'tcx Rvalue<'tcx>,
     block: BasicBlock,
-    statement_index: usize,
+    stmt_index: usize,
     flow: &DataflowGraph,
     defs: &RelevantPlaces,
 ) -> RelevantPlaces {
-    let mut uses = collect_flow_uses(flow, block, statement_index, defs);
+    let mut uses = collect_flow_uses(flow, block, stmt_index, defs);
 
     // Also collect uses directly from operands — the dataflow graph
     // creates synthetic nodes for field projections (e.g. _13.0),
@@ -244,18 +244,18 @@ fn collect_assignment_uses<'tcx>(
 }
 
 /// Collect the source locals of the dataflow edges entering
-/// `(block, statement_index)` from the def locals of `defs`.
+/// `(block, stmt_index)` from the def locals of `defs`.
 fn collect_flow_uses(
     flow: &DataflowGraph,
     block: BasicBlock,
-    statement_index: usize,
+    stmt_index: usize,
     defs: &RelevantPlaces,
 ) -> RelevantPlaces {
     let mut uses = RelevantPlaces::new();
     for &local in &defs.locals {
         for &edge_idx in &flow.node(local).in_edges {
             let edge = &flow.edges[edge_idx];
-            if edge.block == block.as_usize() && edge.statement_index == statement_index {
+            if edge.block == block.as_usize() && edge.stmt_index == stmt_index {
                 uses.insert_local(edge.src);
             }
         }

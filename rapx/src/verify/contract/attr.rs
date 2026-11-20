@@ -209,7 +209,7 @@ fn type_to_arg_expr(ty: Type) -> Expr {
 
 /// Strips the leading `'` from Rust lifetime tokens so that `syn` can
 /// parse them as regular identifier expressions inside attribute arguments.
-/// For example, `'a` becomes `a`, `'static` becomes `static`.
+/// For example, `'a` becomes `a`, `'static` becomes `static_lifetime`.
 ///
 /// String literals (`"..."`) and char literals (`'x'`) are copied verbatim so
 /// their contents are never altered.

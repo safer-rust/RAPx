@@ -145,7 +145,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
 
     let body = tcx.optimized_mir(def_id);
     for (bb, data) in body.basic_blocks.iter_enumerated() {
-        for (statement_index, statement) in data.statements.iter().enumerate() {
+        for (stmt_index, statement) in data.statements.iter().enumerate() {
             if let StatementKind::Intrinsic(intrinsic) = &statement.kind {
                 let args = match &**intrinsic {
                     NonDivergingIntrinsic::CopyNonOverlapping(copy) => {
@@ -162,7 +162,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
                     requires: Vec::new(),
                     destination: None,
                     is_mut_ref: false,
-                    stmt_index: statement_index,
+                    stmt_index,
                 });
             }
         }
@@ -464,7 +464,7 @@ pub fn collect_static_mut_checkpoints<'tcx>(
 
     let body = tcx.optimized_mir(def_id);
     for (bb, data) in body.basic_blocks.iter_enumerated() {
-        for (statement_index, stmt) in data.statements.iter().enumerate() {
+        for (stmt_index, stmt) in data.statements.iter().enumerate() {
             if let StatementKind::Assign(assign) = &stmt.kind {
                 let (_lhs, rhs) = &**assign;
                 if let Rvalue::Use(op @ Operand::Constant(c), ..) = rhs
@@ -472,7 +472,7 @@ pub fn collect_static_mut_checkpoints<'tcx>(
                     && matches!(tcx.static_mutability(static_id), Some(m) if m.is_mut())
                 {
                     checkpoints.push(static_mut_checkpoint(
-                        tcx, def_id, bb, statement_index, op.clone(), static_id,
+                        tcx, def_id, bb, stmt_index, op.clone(), static_id,
                     ));
                 }
             }
@@ -502,7 +502,7 @@ fn static_mut_checkpoint<'tcx>(
     tcx: TyCtxt<'tcx>,
     caller: DefId,
     block: BasicBlock,
-    statement_index: usize,
+    stmt_index: usize,
     operand: Operand<'tcx>,
     static_id: DefId,
 ) -> Checkpoint<'tcx> {
@@ -518,7 +518,7 @@ fn static_mut_checkpoint<'tcx>(
         args: vec![operand],
         destination: None,
         block,
-        stmt_index: statement_index,
+        stmt_index,
         kind: CheckpointKind::StaticMutAccess,
         requires: vec![
             Property::new_atom(

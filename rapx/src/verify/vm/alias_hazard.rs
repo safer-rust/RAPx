@@ -1052,7 +1052,7 @@ fn local_hazard_violation_with(
         if !reachable.contains(&block_index) {
             continue;
         }
-        for (statement_index, statement) in block.statements.iter().enumerate() {
+        for (stmt_index, statement) in block.statements.iter().enumerate() {
             match &statement.kind {
                 StatementKind::StorageDead(local) => {
                     hazard_locals.remove(local);
@@ -1081,7 +1081,7 @@ fn local_hazard_violation_with(
                             tcx,
                             caller,
                             block_index,
-                            statement_index,
+                            stmt_index,
                             &hazard_locals,
                         )
                     {
@@ -1101,7 +1101,7 @@ fn local_hazard_violation_with(
                             tcx,
                             caller,
                             block_index,
-                            statement_index,
+                            stmt_index,
                             &hazard_locals,
                         )
                     {
@@ -1192,7 +1192,7 @@ fn reverse_postorder_blocks<'a, 'tcx>(
 }
 
 /// Compute the set of locals that are live (between `StorageLive` and
-/// `StorageDead`) at the deref point `(call_block, statement_index)`, scanning
+/// `StorageDead`) at the deref point `(call_block, stmt_index)`, scanning
 /// the function in execution order up to that point. Used by the callsite
 /// shared-XOR-mutable check to ignore temporaries that have already gone dead
 /// (e.g. a method call's `&self` receiver).
@@ -1200,7 +1200,7 @@ pub(crate) fn live_locals_at(
     tcx: TyCtxt<'_>,
     caller: DefId,
     call_block: BasicBlock,
-    statement_index: usize,
+    stmt_index: usize,
     seed_params: bool,
     track_moves: bool,
 ) -> HashSet<Local> {
@@ -1216,7 +1216,7 @@ pub(crate) fn live_locals_at(
     for (block, data) in reverse_postorder_blocks(body) {
         let reached = block == call_block;
         for (i, statement) in data.statements.iter().enumerate() {
-            if reached && i >= statement_index {
+            if reached && i >= stmt_index {
                 break;
             }
             match &statement.kind {
@@ -1319,12 +1319,12 @@ fn hazard_used_after_statement(
     tcx: TyCtxt<'_>,
     caller: DefId,
     block: BasicBlock,
-    statement_index: usize,
+    stmt_index: usize,
     hazard_locals: &HashSet<Local>,
 ) -> bool {
     let body = tcx.optimized_mir(caller);
     let data = &body.basic_blocks[block];
-    for statement in data.statements.iter().skip(statement_index + 1) {
+    for statement in data.statements.iter().skip(stmt_index + 1) {
         if statement_uses_any_local(statement, hazard_locals) {
             return true;
         }

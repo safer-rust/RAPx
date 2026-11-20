@@ -343,7 +343,7 @@ fn resolve_entry_group<'tcx>(
 /// Handles:
 /// - Named parameter resolution (e.g. `"src"` → `"arg:0"`)
 /// - Explicit token normalization (`arg:`, `const:`, `ty:` prefixes)
-/// - Lifetime stripping (`'a` → `a`)
+/// - Lifetime stripping (`'a` → `a`, `'static` → `static_lifetime`)
 pub(crate) fn resolve_json_args(
     args: &[String],
     param_names: &[String],
@@ -365,15 +365,18 @@ pub(crate) fn resolve_json_args(
                     .strip_prefix('\'')
                     .filter(|l| !l.is_empty() && l.chars().all(|c| c.is_alphabetic() || c == '_'));
                 match lifetime {
-                    Some(lifetime) => match syn::parse_str::<Expr>(lifetime) {
-                        Ok(expr) => exprs.push(expr),
-                        Err(_) => rap_error!(
-                            "JSON Contract Error: Failed to parse lifetime \
-                             '{}' as Rust Expr for tag {}",
-                            arg_str,
-                            tag
-                        ),
-                    },
+                    Some(lifetime) => {
+                        let ident = if lifetime == "static" { super::STATIC_LIFETIME_IDENT } else { lifetime };
+                        match syn::parse_str::<Expr>(ident) {
+                            Ok(expr) => exprs.push(expr),
+                            Err(_) => rap_error!(
+                                "JSON Contract Error: Failed to parse lifetime \
+                                 '{}' as Rust Expr for tag {}",
+                                arg_str,
+                                tag
+                            ),
+                        }
+                    }
                     None => rap_error!(
                         "JSON Contract Error: Failed to parse arg '{}' as Rust Expr for tag {}",
                         arg_str,

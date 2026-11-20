@@ -162,7 +162,7 @@ fn flow_xor_violation<'z3, 'tcx>(
     vm_state: &VmState<'z3, 'tcx>,
     checkpoint: &Checkpoint<'tcx>,
     unique: bool,
-    statement_index: usize,
+    stmt_index: usize,
 ) -> Option<String> {
     let origin_arg = checkpoint.args.first()?;
     let origin_place = alias_hazard::operand_mir_place(origin_arg)?;
@@ -175,7 +175,7 @@ fn flow_xor_violation<'z3, 'tcx>(
         vm_state.tcx,
         checkpoint.caller,
         checkpoint.block,
-        statement_index,
+        stmt_index,
         false,
         false,
     );

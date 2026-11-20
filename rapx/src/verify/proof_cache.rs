@@ -158,8 +158,8 @@ fn goal_key<'tcx>(items: &[RelevantItem<'tcx>]) -> Vec<GoalItemKey<'tcx>> {
                 def_id,
                 block,
                 global_block,
-                statement_index,
-            } => GoalItemKey::Statement(*def_id, *block, *global_block, *statement_index),
+                stmt_index,
+            } => GoalItemKey::Statement(*def_id, *block, *global_block, *stmt_index),
             RelevantItem::Terminator {
                 def_id,
                 block,

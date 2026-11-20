@@ -141,9 +141,9 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                 }
                 let goal = self.prepare_goal(tree, goal, &entry_facts);
                 let deref_position = needs_post_deref.then(|| goal.items.iter().rposition(|item| {
-                    matches!(item, RelevantItem::Statement { def_id, block, statement_index, .. }
+                    matches!(item, RelevantItem::Statement { def_id, block, stmt_index, .. }
                         if *def_id == checkpoint.caller && *block == checkpoint.block
-                            && *statement_index == checkpoint.stmt_index)
+                            && *stmt_index == checkpoint.stmt_index)
                 })).flatten();
                 let split = deref_position.unwrap_or(goal.items.len());
                 let pre_goal = ProofGoal { path: goal.path.clone(), items: goal.items[..split].to_vec() };
@@ -222,23 +222,23 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                 } else {
                     statements.len()
                 };
-                for statement_index in (0..end).rev() {
-                    let StatementKind::Assign(assign) = &statements[statement_index].kind else {
+                for stmt_index in (0..end).rev() {
+                    let StatementKind::Assign(assign) = &statements[stmt_index].kind else {
                         continue;
                     };
                     let (target, rvalue) = assign.as_ref();
                     if target.local == cur && target.projection.is_empty() {
-                        source = Some((rvalue, path_index, statement_index));
+                        source = Some((rvalue, path_index, stmt_index));
                         break 'find;
                     }
                 }
             }
-            let Some((rvalue, path_index, statement_index)) = source else {
+            let Some((rvalue, path_index, stmt_index)) = source else {
                 // A parameter can be the caller's `&mut slot`. A local with no
                 // visible definition may come from a call, which we cannot trace.
                 return (cur.as_usize() > 0 && cur.as_usize() <= body.arg_count).then_some(cur);
             };
-            before = (path_index, statement_index);
+            before = (path_index, stmt_index);
             match rvalue {
                 Rvalue::Ref(_, _, referent) if referent.projection.is_empty() => {
                     return Some(referent.local);

@@ -17,7 +17,7 @@ pub(super) struct StatementContext<'a, 'tcx> {
     pub slicer: &'a BackwardSlicer<'tcx>,
     pub def_id: DefId,
     pub block: BasicBlock,
-    pub statement_index: usize,
+    pub stmt_index: usize,
     pub statement: &'tcx Statement<'tcx>,
     pub body: &'tcx Body<'tcx>,
     pub flow: &'a DataflowGraph,
@@ -48,7 +48,7 @@ pub(super) fn apply_statement(ctx: &mut StatementContext<'_, '_>) {
             ctx.slicer.visit_assign_statement(
                 ctx.def_id,
                 ctx.block,
-                ctx.statement_index,
+                ctx.stmt_index,
                 place,
                 rvalue,
                 ctx.body,
@@ -64,7 +64,7 @@ pub(super) fn apply_statement(ctx: &mut StatementContext<'_, '_>) {
                 global_block: None,
                 def_id: ctx.def_id,
                 block: ctx.block,
-                statement_index: ctx.statement_index,
+                stmt_index: ctx.stmt_index,
             });
             if !place.projection.is_empty() {
                 ctx.relevant.insert_mir_place(place);
@@ -89,7 +89,7 @@ pub(super) fn apply_statement(ctx: &mut StatementContext<'_, '_>) {
             statement::visit_storage_dead(
                 ctx.def_id,
                 ctx.block,
-                ctx.statement_index,
+                ctx.stmt_index,
                 *local,
                 ctx.flow,
                 ctx.relevant,
@@ -104,7 +104,7 @@ pub(super) fn apply_statement(ctx: &mut StatementContext<'_, '_>) {
                     global_block: None,
                     def_id: ctx.def_id,
                     block: ctx.block,
-                    statement_index: ctx.statement_index,
+                    stmt_index: ctx.stmt_index,
                 });
             }
             "StorageLive"
@@ -116,7 +116,7 @@ pub(super) fn apply_statement(ctx: &mut StatementContext<'_, '_>) {
                 global_block: None,
                 def_id: ctx.def_id,
                 block: ctx.block,
-                statement_index: ctx.statement_index,
+                stmt_index: ctx.stmt_index,
             });
             if let Operand::Copy(place) | Operand::Move(place) = operand {
                 ctx.relevant.insert_mir_place(place);
@@ -130,7 +130,7 @@ pub(super) fn apply_statement(ctx: &mut StatementContext<'_, '_>) {
                 global_block: None,
                 def_id: ctx.def_id,
                 block: ctx.block,
-                statement_index: ctx.statement_index,
+                stmt_index: ctx.stmt_index,
             });
             ctx.relevant.extend(operand_uses(&copy.src));
             ctx.relevant.extend(operand_uses(&copy.dst));
@@ -149,7 +149,7 @@ pub(super) fn apply_statement(ctx: &mut StatementContext<'_, '_>) {
                 global_block: None,
                 def_id: ctx.def_id,
                 block: ctx.block,
-                statement_index: ctx.statement_index,
+                stmt_index: ctx.stmt_index,
             });
             "Unsupported"
         }

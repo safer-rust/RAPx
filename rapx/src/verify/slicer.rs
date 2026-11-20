@@ -42,7 +42,7 @@ pub(crate) enum RelevantItem<'tcx> {
         def_id: DefId,
         block: BasicBlock,
         global_block: Option<usize>,
-        statement_index: usize,
+        stmt_index: usize,
     },
     /// A MIR terminator retained from a basic block.  For a `SwitchInt`, `block`
     /// is the switch block and `switch_succ` is the successor taken along this
@@ -563,15 +563,15 @@ impl<'tcx> BackwardSlicer<'tcx> {
         let mut block_items: Vec<_> = items.drain(block_items_start..).collect();
         block_items.retain(|item| match item {
             RelevantItem::Statement {
-                statement_index, ..
-            } => seen.insert(*statement_index),
+                stmt_index, ..
+            } => seen.insert(*stmt_index),
             _ => true,
         });
         block_items.sort_by_key(|item| match item {
             RelevantItem::Terminator { .. } => (0, 0),
             RelevantItem::Statement {
-                statement_index, ..
-            } => (1, usize::MAX - statement_index),
+                stmt_index, ..
+            } => (1, usize::MAX - stmt_index),
             _ => (2, 0),
         });
         items.extend(block_items);

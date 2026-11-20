@@ -21,12 +21,12 @@ pub(crate) fn analyze<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, paths: &PathTree) 
         for (position, &bb_idx) in path.iter().enumerate() {
             let block = BasicBlock::from_usize(bb_idx);
             let data = &body.basic_blocks[block];
-            for statement_index in 0..data.statements.len() {
+            for stmt_index in 0..data.statements.len() {
                 let item = RelevantItem::Statement {
                     def_id,
                     block,
                     global_block: None,
-                    statement_index,
+                    stmt_index,
                 };
                 states = VmState::execute_items_after(states, &[item]);
             }

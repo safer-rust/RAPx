@@ -49,15 +49,15 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             RelevantItem::Statement {
                 def_id,
                 block,
-                statement_index,
+                stmt_index,
                 ..
             } => {
                 let body = self.body_for(*def_id);
-                let statement = &body.basic_blocks[*block].statements[*statement_index];
+                let statement = &body.basic_blocks[*block].statements[*stmt_index];
                 self.diagnostics.active_mir = Some(ActiveMirLocation {
                     def_id: *def_id,
                     block: block.as_usize(),
-                    item: ActiveMirItem::Statement(*statement_index),
+                    item: ActiveMirItem::Statement(*stmt_index),
                     span: statement.source_info.span,
                 });
                 crate::verify::vm::mir_rules::exec_statement(self, statement);

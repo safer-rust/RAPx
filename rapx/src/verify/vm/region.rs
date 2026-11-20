@@ -10,7 +10,7 @@ use rustc_middle::ty::{
 
 use crate::verify::contract::is_static_lifetime_ident;
 
-/// Resolve a lifetime name from a contract (e.g. `"a"`, `"static"`) to a
+/// Resolve a lifetime name from a contract (e.g. `"a"`, `"static_lifetime"`) to a
 /// concrete `Region`. `name` is the raw ident, without the leading `'`.
 pub(crate) fn resolve_region_name<'tcx>(
     tcx: TyCtxt<'tcx>,

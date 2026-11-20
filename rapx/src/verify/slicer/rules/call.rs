@@ -42,7 +42,7 @@ pub(crate) fn visit<'tcx>(
     let mut arg_uses = RelevantPlaces::new();
     for &edge_idx in &flow.node(destination.local).in_edges {
         let edge = &flow.edges[edge_idx];
-        if edge.block == block.as_usize() && edge.statement_index == tpos {
+        if edge.block == block.as_usize() && edge.stmt_index == tpos {
             arg_uses.insert_local(edge.src);
         }
     }
