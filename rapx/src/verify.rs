@@ -10,7 +10,6 @@ mod call_summary;
 mod checkpoint;
 pub(crate) mod config;
 mod contract;
-mod debug_contracts;
 mod display;
 mod function_verifier;
 mod loop_handling;
@@ -53,7 +52,7 @@ use self::{
     },
     display::{
         dedup_compound_props, emit_results_and_verdict, emit_verify_summary, fmt_contract_expanded,
-        fmt_fn_path_with_bounds,
+        fmt_fn_path_with_bounds, print_contracts_debug,
     },
     function_verifier::FunctionVerifier,
     config::{PostfixRepeat, VerifyConfig},
@@ -268,7 +267,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
         );
 
         if self.config.debug_contracts {
-            self.print_contracts_debug(&collector.function_targets, &collector.trait_targets);
+            print_contracts_debug(self.tcx, &collector.function_targets, &collector.trait_targets);
             return;
         }
 

@@ -3,6 +3,11 @@
 //! Presentation-only helpers: contract expansion to `(call, meaning)` pairs,
 //! function paths with generic bounds, and grouped result trees with verdicts.
 
+mod debug_contracts;
+mod result;
+
+pub(super) use debug_contracts::print_contracts_debug;
+
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{self, ClauseKind, TyCtxt};
 

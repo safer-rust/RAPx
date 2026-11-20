@@ -1,20 +1,32 @@
 //! Expanded contract display for `--debug-contracts`.
 
 use rustc_hir::def_id::DefId;
+use rustc_middle::ty::TyCtxt;
 
 use crate::compat::FxHashMap;
 use crate::helpers::name::short_fn_name;
 
-use super::{
-    VerifyDriver,
+use super::{dedup_compound_props, fmt_contract_expanded, fmt_fn_path_with_generics, fmt_fn_with_params};
+use crate::verify::{
     contract::PropertyKind,
-    display::{dedup_compound_props, fmt_contract_expanded, fmt_fn_path_with_generics, fmt_fn_with_params},
     target::FunctionTarget,
     trait_ensurance::{MarkerTraitKind, TraitEnsurance, TraitEnsuranceKind},
 };
 
-impl<'tcx> VerifyDriver<'tcx> {
-    pub(super) fn print_contracts_debug(
+pub(in crate::verify) fn print_contracts_debug<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    targets: &[FunctionTarget<'tcx>],
+    trait_targets: &[TraitEnsurance<'tcx>],
+) {
+    ContractDebugPrinter { tcx }.print(targets, trait_targets);
+}
+
+struct ContractDebugPrinter<'tcx> {
+    tcx: TyCtxt<'tcx>,
+}
+
+impl<'tcx> ContractDebugPrinter<'tcx> {
+    fn print(
         &self,
         targets: &[FunctionTarget<'tcx>],
         trait_targets: &[TraitEnsurance<'tcx>],
