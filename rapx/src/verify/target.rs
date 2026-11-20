@@ -767,7 +767,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
     }
 
     fn crate_name_matches(&self, def_id: DefId) -> bool {
-        match &self.config.crate_name {
+        match &self.config.crate_filter {
             None => true,
             Some(filter) => {
                 let crate_name = self.tcx.crate_name(def_id.krate);
@@ -785,7 +785,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
     }
 
     fn module_path_matches(&self, def_id: DefId) -> bool {
-        let Some(ref filter) = self.config.module else {
+        let Some(ref filter) = self.config.module_filter else {
             return true;
         };
         let crate_name = self.tcx.crate_name(def_id.krate);
@@ -808,12 +808,12 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
     }
 
     pub(crate) fn check_module_filter_result(&self) {
-        if let Some(ref filter) = self.config.crate_name
+        if let Some(ref filter) = self.config.crate_filter
             && !self.crate_filter_matched
         {
             rap_warn!("[rapx::verify] --crate \"{filter}\" matched no targets");
         }
-        if let Some(ref filter) = self.config.module
+        if let Some(ref filter) = self.config.module_filter
             && !self.module_filter_matched
         {
             rap_warn!("[rapx::verify] --module \"{filter}\" matched no functions in the crate");

@@ -48,8 +48,7 @@ impl std::str::FromStr for PostfixRepeat {
         if s.eq_ignore_ascii_case("auto") {
             Ok(PostfixRepeat::Auto)
         } else {
-            s.parse::<usize>()
-                .map(PostfixRepeat::Fixed)
+            s.parse::<usize>().map(PostfixRepeat::Fixed)
                 .map_err(|_| format!("expected 'auto' or a non-negative integer, got '{s}'"))
         }
     }
@@ -58,49 +57,49 @@ impl std::str::FromStr for PostfixRepeat {
 /// Configuration parsed by the `verify` command and shared throughout verification.
 #[derive(Debug, Clone, Args)]
 pub struct VerifyConfig {
-    /// Identify all functions annotated with `#[rapx::verify]` and print each target, its unsafe callees, and their safety contracts.
+    /// List collected verification targets and their resolved contracts without running verification.
     #[arg(long)]
     pub prepare_targets: bool,
     /// Number of extra SCC postfix repetitions allowed during path enumeration.
-    /// `auto` (default): automatic loop-depth detection for InBound and Align.
-    /// A number ≥ 0 sets a fixed repeat count.
+    /// `auto` (default) estimates the needed repetitions for each target.
+    /// A number N checks repeat counts from 0 through N.
     #[arg(long, default_value = "auto", value_parser = clap::value_parser!(PostfixRepeat))]
     pub postfix_repeat: PostfixRepeat,
     /// Verification mode: `scan` auto-detects unannotated unsafe targets (default), `targeted` verifies `#[rapx::verify]` functions.
     #[arg(long, default_value = "scan")]
     pub mode: VerifyMode,
-    /// Skip struct invariant checks and derive safety via constructor-mutator-method chains.
-    /// Works with both `scan` and `targeted` modes.
+    /// Skip standalone struct and type invariant checks and verify
+    /// constructor-mutator-method sequences instead.
     #[arg(long = "no-invariant-target")]
     pub skip_invariant: bool,
     /// Constructor MIR: true prioritizes available MIR over call models;
     /// false skips MIR; default skips MIR if the direct result has an invariant,
-    /// otherwise tries call models before MIR.
+    /// otherwise tries call models before MIR. With `--no-invariant-target`,
+    /// default behaves as true.
     #[arg(long = "expand-ctor", value_name = "MODE", default_value = "default")]
     pub constructor_mir: ConstructorMirMode,
     /// Filter verification targets to only those within the specified crate
     /// (Rust crate name or Cargo package name, e.g. `std`, `core`, `my-crate`).
     /// Useful for standard-library workspaces and sub-workspaces.
     #[arg(long = "crate")]
-    pub crate_name: Option<String>,
+    pub crate_filter: Option<String>,
     /// Filter verification targets to only those within the specified module path
     /// (e.g. `my_module::inner`). When combined with `--crate`, the path is
     /// interpreted relative to that crate. Applies to all verification modes.
-    #[arg(long)]
-    pub module: Option<String>,
+    #[arg(long = "module")]
+    pub module_filter: Option<String>,
     /// Cap on the number of paths collected per checkpoint (defaults to the
-    /// built-in `PATH_LIMIT`). Lower it to speed up verification at the cost of
-    /// path coverage (paths past the cap are treated as proved).
+    /// built-in `PATH_LIMIT`; 0 also selects that default). Lower it to speed
+    /// up verification; paths omitted by the cap are treated as proved.
     #[arg(long)]
     pub path_limit: Option<usize>,
     /// Cap on trait impls inlined for a virtual call and generic type combinations
-    /// checked during monomorphization. Defaults to 1.
+    /// checked during monomorphization. Defaults to 1; 0 also selects that default.
     #[arg(long)]
     pub trait_impl_limit: Option<usize>,
     /// Print all contract resolutions for every verification target: each
     /// unsafe callee with its resolved contracts, and the caller's own
-    /// contracts (expanded form).  Useful for debugging missing or unexpected
-    /// contract resolutions.
+    /// contracts (expanded form), without running verification.
     #[arg(long)]
     pub debug_contracts: bool,
 }
@@ -128,16 +127,10 @@ impl VerifyConfig {
 
 /// Resolve `default` to `false` when the constructor's direct result has an
 /// invariant. Otherwise retain the CLI mode for MIR versus call summaries.
-pub(crate) fn effective_constructor_mir_mode(
-    tcx: TyCtxt<'_>,
-    callee: DefId,
-    mode: ConstructorMirMode,
-) -> ConstructorMirMode {
+pub(crate) fn effective_constructor_mir_mode(tcx: TyCtxt<'_>, callee: DefId, mode: ConstructorMirMode) -> ConstructorMirMode {
     debug_assert_eq!(fn_info::get_type(tcx, callee), FnKind::Constructor);
     match mode {
-        ConstructorMirMode::Default if constructor_result_has_invariant(tcx, callee) => {
-            ConstructorMirMode::False
-        }
+        ConstructorMirMode::Default if constructor_result_has_invariant(tcx, callee) => ConstructorMirMode::False,
         mode => mode,
     }
 }
