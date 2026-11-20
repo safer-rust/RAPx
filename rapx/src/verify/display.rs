@@ -453,7 +453,7 @@ pub(crate) fn emit_results_and_verdict<'tcx>(
     if failed == 0 && unknown == 0 {
         let path_limited = all_results
             .iter()
-            .any(|result| result.path_description == super::report::PATH_LIMIT_DESCRIPTION);
+            .any(|result| result.path_desc == super::report::PATH_LIMIT_DESCRIPTION);
         let mut limits = Vec::new();
         if path_limited {
             limits.push("path limit");
@@ -510,7 +510,7 @@ pub(crate) fn emit_property_rows<'tcx>(_tcx: TyCtxt<'tcx>, results: &[&PropertyC
     let path_groups: Vec<(&str, Vec<_>)> = {
         let mut map: FxHashMap<&str, Vec<_>> = FxHashMap::default();
         for r in results.iter() {
-            map.entry(r.path_description.as_str()).or_default().push(r);
+            map.entry(r.path_desc.as_str()).or_default().push(r);
         }
         let mut entries: Vec<_> = map.into_iter().collect();
         entries.sort_by_key(|(desc, _)| desc.matches(',').count());

@@ -127,42 +127,30 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                 property_index: 0,
                 property: Property::new(self.tcx, self.target.def_id, "Unknown", &[]),
                 result: CheckResult::Unknown(UnknownReason::UnresolvedUnsafeCall),
-                diagnostics: Some("unsafe operation has no resolvable contract".to_string()),
-                path_description: String::new(),
+                path_desc: String::new(),
                 callee_name: checkpoint.callee_name(self.tcx),
             });
             return;
         }
-        let (path_results, path_counts) = self.check_checkpoint_properties(cache, checkpoint, properties);
-        for (path_description, property_index, path_index, result) in path_results {
+        let (mut path_results, path_counts) = self.check_checkpoint_properties(cache, checkpoint, properties);
+        // The path limit bounds precision. Mark omitted paths as proved
+        // so only results from enumerated paths affect the verdict.
+        if self.path_tree.is_truncated() {
+            for (property_index, path_index) in path_counts.into_iter().enumerate() {
+                path_results.push((PATH_LIMIT_DESCRIPTION.to_string(), property_index, path_index, CheckResult::ProvedByRule));
+            }
+        }
+        for (path_desc, property_index, path_index, result) in path_results {
             report.results.push(PropertyCheckResult {
                 checkpoint: checkpoint.location(),
                 checkpoint_index,
                 path_index,
                 property_index,
                 property: properties[property_index].clone(),
-                diagnostics: Some(format!("vm-check: {result:?}")),
                 result,
-                path_description,
+                path_desc,
                 callee_name: checkpoint.callee_name(self.tcx),
             });
-        }
-        // The path limit bounds precision. Mark omitted paths as proved
-        // so only results from enumerated paths affect the verdict.
-        if self.path_tree.is_truncated() {
-            for (property_index, (property, path_count)) in properties.iter().zip(path_counts).enumerate() {
-                report.results.push(PropertyCheckResult {
-                    checkpoint: checkpoint.location(),
-                    checkpoint_index,
-                    path_index: path_count,
-                    property_index,
-                    property: property.clone(),
-                    result: CheckResult::ProvedByRule,
-                    diagnostics: Some("path enumeration stopped at its limit".to_string()),
-                    path_description: PATH_LIMIT_DESCRIPTION.to_string(),
-                    callee_name: checkpoint.callee_name(self.tcx),
-                });
-            }
         }
     }
 
@@ -288,7 +276,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                 let checked = goals_by_path[path_index].take().map(|goal| {
                     self.check_exit_goal(&mut cache, &tree, checkpoint, &properties, entry_facts, goal)
                 });
-                let path_description = format!("{:?}", super::path::caller_blocks(&tree, self.target.def_id, path.iter().copied()));
+                let path_desc = format!("{:?}", super::path::caller_blocks(&tree, self.target.def_id, path.iter().copied()));
                 let mut slot = 0;
                 for &property_index in indices {
                     let result = if stable[property_index] {
@@ -305,9 +293,8 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                         path_index,
                         property_index,
                         property: invariants[property_index].clone(),
-                        diagnostics: Some(format!("vm-{label}-invariant: {result:?}")),
                         result,
-                        path_description: path_description.clone(),
+                        path_desc: path_desc.clone(),
                         callee_name: format!("{label}-invariant(bb{})", checkpoint.block.as_usize()),
                     });
                 }

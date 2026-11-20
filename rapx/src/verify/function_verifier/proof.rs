@@ -53,8 +53,8 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         for mut conjunct_results in path_results {
             let mut next_conjunct = 0;
             for (property_index, property) in properties.iter().enumerate() {
-                if let Some((result, path_description)) = Self::combine_conjuncts_on_path(property, &mut conjunct_results, &mut next_conjunct) {
-                    results.push((path_description, property_index, path_counts[property_index], result));
+                if let Some((result, path_desc)) = Self::combine_conjuncts_on_path(property, &mut conjunct_results, &mut next_conjunct) {
+                    results.push((path_desc, property_index, path_counts[property_index], result));
                     path_counts[property_index] += 1;
                 }
             }
