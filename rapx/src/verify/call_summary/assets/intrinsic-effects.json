@@ -537,7 +537,7 @@
     "effect": "eff_align_of_val"
   },
   "float_to_int_unchecked": {
-    "effect": "eff_opaque_return"
+    "effect": "eff_float_to_int_unchecked"
   },
   "vtable_size": {
     "effect": "eff_opaque_return"

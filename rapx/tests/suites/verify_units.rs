@@ -1002,7 +1002,8 @@ fn intrinsic_coverage_01() {
 #[test]
 fn intrinsic_effects_01() {
     let output = run_with_args("verify_units/intrinsic_effects_01", CMD_VERIFY_TARGETED);
-    assert_result_counts(&output, [7, 3, 2]);
+    assert_result_counts(&output, [8, 3, 1]);
+    assert_not_contain(&output, "Numeric expression in \"pest\" could not be resolved");
     assert_function_result(&output, "sound_after_array_fill", "SOUND");
     assert_function_result(&output, "unsound_after_array_fill", "UNSOUND");
     let block = extract_block_after(&output, "function: unknown_after_symbolic_write_bytes");
@@ -1011,9 +1012,7 @@ fn intrinsic_effects_01() {
     let block = extract_block_after(&output, "function: unsound_after_write_bytes");
     assert_contain(block, "bb1 -> need_nonzero");
     assert_contain(block, "ValidNum | Failed");
-    let block = extract_block_after(&output, "function: unknown_after_float_to_int");
-    assert_contain(block, "Unknown (opaque call controls branch)");
-    assert_contain(block, "opaque call result controls SwitchInt");
+    assert_function_result(&output, "sound_after_float_to_int", "SOUND");
 }
 
 #[test]

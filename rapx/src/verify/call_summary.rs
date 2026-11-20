@@ -1,11 +1,42 @@
 //! Call effects and verifier semantics for dataflow dependency queries.
-pub(crate) mod effects;
 mod dependency_semantics;
+pub(crate) mod effects;
 pub(crate) mod callback;
 pub(crate) mod pointer_semantics;
 pub(crate) mod shared_owner;
 
+use rustc_middle::{
+    mir::Operand,
+    ty::{FloatTy, Ty, TyCtxt, TyKind, TypingEnv},
+};
+use rustc_span::DUMMY_SP;
+
 pub(crate) use dependency_semantics::VerifierCallSemantics;
+
+/// Evaluate a valid constant input to `float_to_int_unchecked` exactly.
+pub(crate) fn constant_float_to_int<'tcx>(tcx: TyCtxt<'tcx>, input: &Operand<'tcx>, dest_ty: Ty<'tcx>) -> Option<u128> {
+    let Operand::Constant(constant) = input else { return None };
+    let scalar = constant.const_.eval(tcx, TypingEnv::fully_monomorphized(), DUMMY_SP)
+        .ok()?
+        .try_to_scalar_int()?;
+    let value = match constant.const_.ty().kind() {
+        TyKind::Float(FloatTy::F32) => f32::from_bits(scalar.to_bits(scalar.size()) as u32) as f64,
+        TyKind::Float(FloatTy::F64) => f64::from_bits(scalar.to_bits(scalar.size()) as u64),
+        _ => return None,
+    };
+    let width = (tcx.layout_of(TypingEnv::fully_monomorphized().as_query_input(dest_ty))
+        .ok()?.size.bytes() * 8) as i32;
+    if !value.is_finite() || !(1..=128).contains(&width) { return None }
+    match dest_ty.kind() {
+        TyKind::Int(_) if value >= -2f64.powi(width - 1) && value < 2f64.powi(width - 1) => {
+            Some((value.trunc() as i128) as u128)
+        }
+        TyKind::Uint(_) if value >= 0.0 && value < 2f64.powi(width) => {
+            Some(value.trunc() as u128)
+        }
+        _ => None,
+    }
+}
 
 /// Effect summary consumed by the forward visitor.
 pub(crate) type CallEffectSummary = Vec<CallEffect>;
@@ -20,6 +51,8 @@ pub(crate) enum CallEffect {
     /// facts, retyped to the destination — no pointer `non_null` forcing.
     ReturnArgValue { arg: usize },
     ReturnOpaque,
+    /// Fold a constant unchecked float-to-int conversion; other inputs remain opaque.
+    ReturnFloatToIntUnchecked,
     ReturnSizeOfVal { arg: usize },
     ReturnRawEq { left_arg: usize, right_arg: usize },
     ReturnExactDiv { lhs_arg: usize, rhs_arg: usize },

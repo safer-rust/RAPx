@@ -123,8 +123,6 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
             report.results.push(PropertyCheckResult {
                 checkpoint: checkpoint.location(),
                 checkpoint_index,
-                path_index: 0,
-                property_index: 0,
                 property: Property::new(self.tcx, self.target.def_id, "Unknown", &[]),
                 result: CheckResult::Unknown(UnknownReason::UnresolvedUnsafeCall),
                 path_desc: String::new(),
@@ -132,20 +130,18 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
             });
             return;
         }
-        let (mut path_results, path_counts) = self.check_checkpoint_properties(cache, checkpoint, properties);
+        let mut path_results = self.check_checkpoint_properties(cache, checkpoint, properties);
         // The path limit bounds precision. Mark omitted paths as proved
         // so only results from enumerated paths affect the verdict.
         if self.path_tree.is_truncated() {
-            for (property_index, path_index) in path_counts.into_iter().enumerate() {
-                path_results.push((PATH_LIMIT_DESCRIPTION.to_string(), property_index, path_index, CheckResult::ProvedByRule));
+            for property_index in 0..properties.len() {
+                path_results.push((PATH_LIMIT_DESCRIPTION.to_string(), property_index, CheckResult::ProvedByRule));
             }
         }
-        for (path_desc, property_index, path_index, result) in path_results {
+        for (path_desc, property_index, result) in path_results {
             report.results.push(PropertyCheckResult {
                 checkpoint: checkpoint.location(),
                 checkpoint_index,
-                path_index,
-                property_index,
                 property: properties[property_index].clone(),
                 result,
                 path_desc,
@@ -290,8 +286,6 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                     results.push(PropertyCheckResult {
                         checkpoint,
                         checkpoint_index: checkpoint.block.as_usize(),
-                        path_index,
-                        property_index,
                         property: invariants[property_index].clone(),
                         result,
                         path_desc: path_desc.clone(),

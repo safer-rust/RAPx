@@ -659,7 +659,7 @@
     {
       "tag": "ValidNum",
       "args": [
-        "self",
+        "value",
         "[Int::MIN, Int::MAX]"
       ]
     }

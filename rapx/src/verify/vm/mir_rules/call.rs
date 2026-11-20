@@ -338,6 +338,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                         effect,
                         arg_values,
                         arg_locals,
+                        args,
                         destination,
                         func,
                     );

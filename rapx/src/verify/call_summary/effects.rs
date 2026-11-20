@@ -91,6 +91,7 @@ fn effect_builder(name: &str) -> Option<EffectBuilder> {
         "eff_compare_bytes" => Some(eff_compare_bytes),
         "eff_copy_memory" => Some(eff_copy_memory),
         "eff_exact_div" => Some(eff_exact_div),
+        "eff_float_to_int_unchecked" => Some(eff_float_to_int_unchecked),
         "eff_fill_bytes" => Some(eff_fill_bytes),
         "eff_layout_const" => Some(eff_layout_const),
         "eff_leading_zeros" => Some(eff_leading_zeros),
@@ -225,6 +226,10 @@ fn eff_return_arg_value(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 
 fn eff_opaque_return(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::ReturnOpaque]
+}
+
+fn eff_float_to_int_unchecked(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnFloatToIntUnchecked]
 }
 
 fn eff_size_of_val(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {

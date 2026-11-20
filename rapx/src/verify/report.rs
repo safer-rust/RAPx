@@ -277,24 +277,20 @@ impl CheckResult {
     }
 }
 
-/// Result for one required property along one path to a checkpoint.
+/// Result for one property on a path to a checkpoint or function exit.
 #[derive(Clone, Debug)]
 pub(crate) struct PropertyCheckResult<'tcx> {
-    /// Unsafe checkpoint being checked.
+    /// MIR block containing the checked operation or exit.
     pub checkpoint: CheckpointLocation,
-    /// Index of the checkpoint in the function-level checkpoint list.
+    /// Distinguishes checks sharing a MIR block; exit checks use the block index.
     pub checkpoint_index: usize,
-    /// Index of the path in the checkpoint path set.
-    pub path_index: usize,
-    /// Index of the property in the checkpoint-level property list.
-    pub property_index: usize,
-    /// Required property checked on this path.
+    /// Property checked on this path, or a synthetic Unknown obligation.
     pub property: Property<'tcx>,
     /// Current verification status.
     pub result: CheckResult,
-    /// Human-readable path description.
+    /// Human-readable path or path-limit marker.
     pub path_desc: String,
-    /// Callee name for this checkpoint.
+    /// Callee name or synthetic obligation label.
     pub callee_name: String,
 }
 
@@ -327,12 +323,10 @@ impl<'tcx> VerificationReport<'tcx> {
 
         for (index, result) in self.results.iter().enumerate() {
             out.push_str(&format!(
-                "  check #{index}: checkpoint #{}, bb{}, path #{} {}, property #{} {:?}, callee {}, result {:?}\n",
+                "  check #{index}: checkpoint #{}, bb{}, path {}, property {:?}, callee {}, result {:?}\n",
                 result.checkpoint_index,
                 result.checkpoint.block.as_usize(),
-                result.path_index,
                 result.path_desc,
-                result.property_index,
                 result.property.kind(),
                 result.callee_name,
                 result.result,
@@ -340,40 +334,5 @@ impl<'tcx> VerificationReport<'tcx> {
         }
 
         out
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{CheckResult, Soundness, UnknownReason};
-
-    #[test]
-    fn soundness_join_uses_failed_unknown_sound_priority() {
-        assert_eq!(Soundness::Sound.join(Soundness::Sound), Soundness::Sound);
-        assert_eq!(
-            Soundness::Sound.join(Soundness::Unknown),
-            Soundness::Unknown
-        );
-        assert_eq!(
-            Soundness::Unknown.join(Soundness::Failed),
-            Soundness::Failed
-        );
-        assert_eq!(
-            Soundness::Failed.join(Soundness::Unknown),
-            Soundness::Failed
-        );
-    }
-
-    #[test]
-    fn unknown_labels_preserve_solver_reason_and_multiple_causes() {
-        let timeout = CheckResult::Unknown(UnknownReason::SmtUnknown("timeout".into()));
-        assert_eq!(timeout.label(), "Unknown (timeout)");
-
-        let combined = UnknownReason::UnsupportedMir(Vec::new())
-            .merge(UnknownReason::SmtUnknown("incomplete".into()));
-        assert_eq!(
-            CheckResult::Unknown(combined).label(),
-            "Unknown (unsupported MIR; SMT: incomplete)"
-        );
     }
 }

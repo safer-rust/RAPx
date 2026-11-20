@@ -45,21 +45,19 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         cache: &mut VmCache<'_, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         properties: &[Property<'tcx>],
-    ) -> (Vec<(String, usize, usize, CheckResult)>, Vec<usize>) {
+    ) -> Vec<(String, usize, CheckResult)> {
         let conjuncts = Self::collect_conjuncts(properties);
         let path_results = self.check_flattened_conjuncts(cache, checkpoint, &conjuncts);
         let mut results = Vec::new();
-        let mut path_counts = vec![0; properties.len()];
         for mut conjunct_results in path_results {
             let mut next_conjunct = 0;
             for (property_index, property) in properties.iter().enumerate() {
                 if let Some((result, path_desc)) = Self::combine_conjuncts_on_path(property, &mut conjunct_results, &mut next_conjunct) {
-                    results.push((path_desc, property_index, path_counts[property_index], result));
-                    path_counts[property_index] += 1;
+                    results.push((path_desc, property_index, result));
                 }
             }
         }
-        (results, path_counts)
+        results
     }
 
     /// Flatten conjunctions so each child can use the shared path replay.

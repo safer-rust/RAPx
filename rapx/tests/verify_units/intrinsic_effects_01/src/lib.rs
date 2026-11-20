@@ -75,7 +75,7 @@ pub fn sound_after_exact_div() {
 }
 
 #[rapx::verify]
-pub fn unknown_after_float_to_int() {
+pub fn sound_after_float_to_int() {
     let converted: u32 = unsafe { std::intrinsics::float_to_int_unchecked(1.0_f32) };
     if converted != 1 {
         unsafe { need_nonzero(0) };

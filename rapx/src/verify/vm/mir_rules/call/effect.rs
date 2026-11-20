@@ -12,6 +12,7 @@ use super::super::super::state::{
     AllocId, Provenance, ValueFacts, ValueSource, VmState, VmValue,
 };
 use crate::def_ids::type_ids;
+use crate::compat::Spanned;
 use crate::helpers::mir_utils;
 use crate::verify::call_summary::{
     BoundedArithmeticOp, CallEffect, OverflowOp, SimdArithOp, SimdCmpOp,
@@ -31,6 +32,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         effect: &CallEffect,
         args: &[VmValue<'z3, 'tcx>],
         caller_arg_locals: &[Option<Local>],
+        call_args: &[Spanned<Operand<'tcx>>],
         dest: Local,
         func: &Operand<'tcx>,
     ) {
@@ -65,6 +67,17 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
             CallEffect::ReturnOpaque => {
                 self.set_opaque_intrinsic_result(dest);
+            }
+            CallEffect::ReturnFloatToIntUnchecked => {
+                let dest_ty = self.body().local_decls[dest].ty;
+                let result = call_args.first()
+                    .and_then(|arg| crate::verify::call_summary::constant_float_to_int(self.tcx, &arg.node, dest_ty))
+                    .and_then(|bits| self.scalar_bits_term(dest_ty, bits));
+                if let Some(term) = result {
+                    self.set_local(dest, VmValue::new(term, dest_ty));
+                } else {
+                    self.set_opaque_intrinsic_result(dest);
+                }
             }
             CallEffect::ReturnSizeOfVal { arg } => {
                 let size = args.get(*arg).and_then(|value| {

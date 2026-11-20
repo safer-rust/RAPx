@@ -4,7 +4,9 @@
 //! `assert_all` plus Euclidean-division (NIA) axioms injected for both the
 //! contract expression and the VM's computed terms.
 
+use crate::def_ids::intrinsic_api;
 use crate::helpers::def_use::PlaceKey;
+use crate::verify::call_summary;
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{
     ContractExpr, NumericBinOp, PlaceBase, Property, PropertyArg, PropertyKind, RelOp,
@@ -87,6 +89,14 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
+        if intrinsic_api::intrinsic_name(vm_state.tcx, checkpoint.callee)
+            .is_some_and(|name| name.as_str() == "float_to_int_unchecked")
+            && let (Some(input), Some(dest)) = (checkpoint.args.first(), checkpoint.destination)
+            && call_summary::constant_float_to_int(
+                vm_state.tcx, input, vm_state.body().local_decls[dest].ty).is_some()
+        {
+            return CheckResult::ProvedByRule;
+        }
         let solver = Solver::new(vm_state.z3_ctx);
         vm_state.assert_all(&solver);
         if let Some(PropertyArg::Predicates(predicates)) = property.args().first() {
