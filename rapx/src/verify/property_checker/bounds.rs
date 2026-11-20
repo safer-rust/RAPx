@@ -123,8 +123,7 @@ impl PropertyChecker {
         let Some(value) = self.target_value(vm_state, checkpoint, property) else {
             return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
-        if property.contract_kind() == ContractKind::Postcond
-            && let Some(PropertyArg::Ty(ty)) = property.args().get(1)
+        if let Some(PropertyArg::Ty(ty)) = property.args().get(1)
             && matches!(ty.kind(), TyKind::Alias(..) | TyKind::Slice(..) | TyKind::Str)
         {
             let concrete_ty = if matches!(ty.kind(), TyKind::Alias(..)) {
@@ -137,12 +136,16 @@ impl PropertyChecker {
             {
                 return CheckResult::ProvedByRule;
             }
-            return CheckResult::Unknown(UnknownReason::Unimplemented);
+            if property.contract_kind() == ContractKind::Postcond {
+                return CheckResult::Unknown(UnknownReason::Unimplemented);
+            }
         }
+        // A slice access covers its whole length, not one element.
+        let slice_len = vm_state.unsized_slice_len(&value, property.ty_arg(1));
         // `in_bounds` records "points at a valid element" (established by a
         // single-element deref/contract), so it only discharges a single-element
         // InBound.  A `count > 1` check still needs the byte-range proof below.
-        if value.facts.in_bounds {
+        if value.facts.in_bounds && slice_len.is_none() {
             let count_one = property
                 .args()
                 .get(2)
@@ -206,6 +209,10 @@ impl PropertyChecker {
                     .get(2)
                     .and_then(|a| self.resolve_arg_term(vm_state, checkpoint, a))
                     .unwrap_or_else(|| Int::from_u64(vm_state.z3_ctx, 1));
+                let count_term = match &slice_len {
+                    Some(len) => Int::mul(vm_state.z3_ctx, &[&count_term, len]),
+                    None => count_term,
+                };
                 let zero = Int::from_u64(vm_state.z3_ctx, 0);
                 let covered = Int::add(vm_state.z3_ctx, &[&k, &count_term]);
                 solver.push();

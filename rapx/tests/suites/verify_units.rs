@@ -422,6 +422,19 @@ unsound_tests_multi! {
     ],
 }
 
+// The InBound check at `&*` of a slice pointer must cover the slice length,
+// not only the first element. Reuses the mixed-span fixture of #339.
+#[test]
+fn inbound_unsound_16() {
+    let output = run_with_args(
+        "verify_units/allocated_unsound_12",
+        &["verify", "--mode", "targeted", "--trait-impl-limit", "64"],
+    );
+    let block = extract_block_after(&output, "function: unsound_mixed_span");
+    assert_property_failed(block, "InBound", "unsound_mixed_span");
+    assert_function_result(&output, "sound_same_span", "SOUND");
+}
+
 // Init
 sound_tests! {
     init_std_sound_01: "verify_units/init_std_sound_01" => "sound_assume_init_read_after_write",
