@@ -15,29 +15,13 @@
 // Path enumeration
 // ─────────────────────────────────────────────────────────────────────────────
 
-use std::sync::atomic::{AtomicUsize, Ordering};
-
 /// Maximum number of paths collected per search — both whole-CFG enumeration
 /// and per-checkpoint prefix collection. Overridable via the `--path-limit`
 /// CLI flag.
 pub(crate) const PATH_LIMIT: usize = 256;
 
-/// Runtime override for [`PATH_LIMIT`], set from `--path-limit`. `0` means
-/// "not overridden" (the default above applies).
-static PATH_LIMIT_OVERRIDE: AtomicUsize = AtomicUsize::new(0);
-
-/// Set the `--path-limit` override; `0` restores [`PATH_LIMIT`].
-pub(crate) fn set_path_limit(n: usize) {
-    PATH_LIMIT_OVERRIDE.store(n, Ordering::Relaxed);
-}
-
-/// The effective path cap (override, or [`PATH_LIMIT`]).
-pub(crate) fn path_limit() -> usize {
-    match PATH_LIMIT_OVERRIDE.load(Ordering::Relaxed) {
-        0 => PATH_LIMIT,
-        n => n,
-    }
-}
+/// Path cap for MIR call-write tracing, independent of verify's `--path-limit`.
+pub(crate) const DATAFLOW_CALL_WRITE_PATH_LIMIT: usize = 256;
 
 /// Maximum DFS depth for whole-CFG path enumeration.
 pub(crate) const WHOLE_CFG_PATH_DEPTH_LIMIT: usize = 256;
@@ -75,23 +59,6 @@ pub(crate) const MAX_INLINE_DEPTH: usize = 5;
 /// Overridable via the `--trait-impl-limit` CLI flag. A call whose trait has
 /// more impls than this is truncated to the first `n` (an under-approximation).
 pub(crate) const TRAIT_IMPL_LIMIT: usize = 1;
-
-/// Runtime override for [`TRAIT_IMPL_LIMIT`], set from `--trait-impl-limit`.
-/// `0` means "not overridden" (the default above applies).
-static TRAIT_IMPL_LIMIT_OVERRIDE: AtomicUsize = AtomicUsize::new(0);
-
-/// Set the `--trait-impl-limit` override; `0` restores [`TRAIT_IMPL_LIMIT`].
-pub(crate) fn set_trait_impl_limit(n: usize) {
-    TRAIT_IMPL_LIMIT_OVERRIDE.store(n, Ordering::Relaxed);
-}
-
-/// The effective trait-impl cap (override, or [`TRAIT_IMPL_LIMIT`]).
-pub(crate) fn trait_impl_limit() -> usize {
-    match TRAIT_IMPL_LIMIT_OVERRIDE.load(Ordering::Relaxed) {
-        0 => TRAIT_IMPL_LIMIT,
-        n => n,
-    }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Loop sensitivity / postfix repeat

@@ -240,7 +240,8 @@ fn write_args_for_body<'tcx>(
 ) -> Option<HashSet<usize>> {
     let mut graph = PathGraph::new(tcx, callee);
     graph.find_scc();
-    let mut enumerator = PathEnumerator::new(&graph);
+    let mut enumerator = PathEnumerator::new(&graph)
+        .with_path_limit(crate::limit::DATAFLOW_CALL_WRITE_PATH_LIMIT);
     let paths = enumerator.enumerate_paths_repeat(0);
     if paths.is_truncated() {
         return None;

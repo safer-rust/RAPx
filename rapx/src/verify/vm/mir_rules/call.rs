@@ -22,7 +22,7 @@ use crate::def_ids::diagnostic_api;
 use crate::helpers::fn_info::{self, FnKind};
 use crate::helpers::mir_utils;
 use crate::verify::call_summary::CallEffect;
-use crate::verify::{api_classify, call_summary, constructor_policy};
+use crate::verify::{api_classify, call_summary, config::{constructor_result_has_invariant, effective_constructor_mir_mode}};
 
 #[derive(Clone, Copy)]
 struct CallSite<'a, 'z3, 'tcx> {
@@ -233,7 +233,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         }
         let ctor_mode = callee
             .filter(|id| fn_info::get_type(self.tcx, *id) == FnKind::Constructor)
-            .map(|id| constructor_policy::effective_mir_mode(self.tcx, id));
+            .map(|id| effective_constructor_mir_mode(self.tcx, id, self.constructor_mir_mode));
         let force_constructor_mir = matches!(ctor_mode, Some(ConstructorMirMode::True))
             && callee.is_some_and(|id| self.tcx.is_mir_available(id));
         if !force_constructor_mir {
@@ -345,7 +345,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
                 RuleFlow::Continue
             }
             CallModel::Constructor(callee) => {
-                let has_invariant = constructor_policy::constructor_result_has_invariant(self.tcx, callee);
+                let has_invariant = constructor_result_has_invariant(self.tcx, callee);
                 self.materialize_constructor_result(
                     destination,
                     arg_values,

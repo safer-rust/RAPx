@@ -181,6 +181,7 @@ fn rustc_src_contains(needle: &str) -> bool {
         "{}/lib/rustlib/rustc-src/rust/compiler/rustc_ast/src/ast.rs",
         sysroot
     );
+    println!("cargo::rerun-if-changed={ast}");
     std::fs::read_to_string(ast)
         .map(|s| s.contains(needle))
         .unwrap_or(false)
@@ -190,6 +191,7 @@ fn rustc_src_contains(needle: &str) -> bool {
 fn rustc_src_contains_path(relative_path: &str, needle: &str) -> bool {
     let sysroot = get_sysroot();
     let path = format!("{}/lib/rustlib/rustc-src/rust/{}", sysroot, relative_path);
+    println!("cargo::rerun-if-changed={path}");
     std::fs::read_to_string(path)
         .map(|s| s.contains(needle))
         .unwrap_or(false)
@@ -200,6 +202,7 @@ fn rustc_src_contains_path(relative_path: &str, needle: &str) -> bool {
 fn std_src_contains_path(relative_path: &str, needle: &str) -> bool {
     let sysroot = get_sysroot();
     let path = format!("{}/lib/rustlib/src/rust/{}", sysroot, relative_path);
+    println!("cargo::rerun-if-changed={path}");
     std::fs::read_to_string(path)
         .map(|s| s.contains(needle))
         .unwrap_or(false)

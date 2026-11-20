@@ -39,9 +39,9 @@ use crate::{
     analysis::{alias::mfp::MfpAliasAnalyzer, api_dependency, scan::ScanAnalysis},
     check::{opt::Opt, rcanary::rCanary, safedrop::SafeDrop},
     cli::{
-        AliasStrategyKind, AnalysisKind, CheckArgs, Commands, PostfixRepeat, RapxArgs, VerifyArgs,
+        AliasStrategyKind, AnalysisKind, CheckArgs, Commands, RapxArgs,
     },
-    verify::{PrepareTargets, RepeatStrategy, VerifyDriver},
+    verify::{PrepareTargets, VerifyConfig, VerifyDriver},
 };
 use analysis::{
     Analysis,
@@ -271,56 +271,12 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
             }
         },
 
-        Commands::Verify(VerifyArgs {
-            prepare_targets,
-            postfix_repeat,
-            mode,
-            skip_invariant,
-            constructor_mir,
-            crate_name,
-            module,
-            debug_contracts,
-            path_limit,
-            trait_impl_limit,
-            ..
-        }) => {
-            crate::verify::set_constructor_mir_mode(if *skip_invariant
-                && matches!(*constructor_mir, crate::cli::ConstructorMirMode::Default)
-            {
-                crate::cli::ConstructorMirMode::True
+        Commands::Verify(args) => {
+            let config = std::sync::Arc::new(VerifyConfig::from_args(args));
+            if config.prepare_targets {
+                PrepareTargets::new(tcx, config).run();
             } else {
-                *constructor_mir
-            });
-            if let Some(n) = path_limit {
-                crate::limit::set_path_limit(*n);
-            }
-            if let Some(n) = trait_impl_limit {
-                crate::limit::set_trait_impl_limit(*n);
-            }
-            if *prepare_targets {
-                PrepareTargets::new(
-                    tcx,
-                    *mode,
-                    *skip_invariant,
-                    crate_name.clone(),
-                    module.clone(),
-                )
-                .run();
-            } else {
-                let repeat_strategy = match postfix_repeat {
-                    PostfixRepeat::Auto => RepeatStrategy::Auto,
-                    PostfixRepeat::Fixed(n) => RepeatStrategy::Fixed(*n),
-                };
-                VerifyDriver::new(
-                    tcx,
-                    repeat_strategy,
-                    *mode,
-                    *skip_invariant,
-                    crate_name.clone(),
-                    module.clone(),
-                    *debug_contracts,
-                )
-                .run();
+                VerifyDriver::new(tcx, config).run();
             }
         }
     }

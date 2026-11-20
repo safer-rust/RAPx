@@ -12,6 +12,7 @@ use crate::analysis::path::CallArg;
 use crate::compat::FxHashMap;
 
 use super::{
+    config::VerifyConfig,
     contract::Property,
     slicer::{ProofGoal, RelevantItem},
     vm::VmState,
@@ -35,6 +36,7 @@ struct PrefixEdge<'tcx> {
 /// Symbolic states shared by properties that retain the same MIR and entry facts.
 pub(crate) struct VmCache<'z3, 'tcx> {
     context: &'z3 z3::Context,
+    config: Arc<VerifyConfig>,
     states: FxHashMap<Vec<GoalItemKey<'tcx>>, CachedGoal<'z3, 'tcx>>,
     prefix_edges: FxHashMap<PrefixEdge<'tcx>, usize>,
     prefix_states: Vec<Arc<Vec<VmState<'z3, 'tcx>>>>,
@@ -50,13 +52,14 @@ const VM_CACHE_MAX_ENTRIES: usize = 128;
 const VM_PREFIX_STRIDE: usize = 16;
 
 impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
-    pub(crate) fn new(context: &'z3 z3::Context) -> Self {
-        Self::new_with_capacity(context, VM_CACHE_MAX_ENTRIES)
+    pub(crate) fn new(context: &'z3 z3::Context, config: Arc<VerifyConfig>) -> Self {
+        Self::new_with_capacity(context, VM_CACHE_MAX_ENTRIES, config)
     }
 
-    pub(crate) fn new_with_capacity(context: &'z3 z3::Context, max_entries: usize) -> Self {
+    pub(crate) fn new_with_capacity(context: &'z3 z3::Context, max_entries: usize, config: Arc<VerifyConfig>) -> Self {
         Self {
             context,
+            config,
             states: FxHashMap::default(),
             prefix_edges: FxHashMap::default(),
             prefix_states: Vec::new(),
@@ -104,6 +107,7 @@ impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
                     tcx,
                     caller_def_id,
                     instance_body,
+                    self.config.constructor_mir_mode,
                 )
                 .execute_items(&[]),
             )

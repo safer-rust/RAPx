@@ -6,7 +6,8 @@ use crate::def_ids::lang_api::{self, LangItem};
 use crate::helpers::fn_info::{self, FnKind};
 use crate::helpers::{mir_utils, name::get_adt_self_ty};
 use crate::limit::{HINTED_CALLEE_BLOCK_LIMIT, LOCAL_CALLEE_BLOCK_LIMIT};
-use crate::verify::{constructor_policy, contract::ensures::has_slice_offset_ensures};
+use crate::verify::{config::{VerifyConfig, effective_constructor_mir_mode}, contract::ensures::has_slice_offset_ensures};
+use std::sync::Arc;
 #[cfg(rapx_has_attr_ir)]
 use rustc_attr_ir::InlineAttr;
 #[cfg(not(rapx_has_attr_ir))]
@@ -22,6 +23,7 @@ pub(crate) type EntryBodies<'tcx> = FxHashMap<usize, &'tcx Body<'tcx>>;
 /// Maps callsites to callee block identities and argument bindings.
 pub(crate) struct CallSiteIndex<'tcx> {
     tcx: TyCtxt<'tcx>,
+    config: Arc<VerifyConfig>,
     blocks: Vec<(DefId, usize)>,
     bodies: FxHashMap<usize, Body<'tcx>>,
     instances: FxHashMap<usize, Instance<'tcx>>,
@@ -34,6 +36,7 @@ pub(crate) struct CallSiteIndex<'tcx> {
 impl<'tcx> CallSiteIndex<'tcx> {
     pub(crate) fn new(
         tcx: TyCtxt<'tcx>,
+        config: Arc<VerifyConfig>,
         root: DefId,
         body: Option<Body<'tcx>>,
         callee_bodies: CalleeBodies<'tcx>,
@@ -51,6 +54,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
         }
         Self {
             tcx,
+            config,
             blocks,
             bodies,
             instances: FxHashMap::default(),
@@ -209,7 +213,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                 };
                 if fn_info::get_type(self.tcx, callee) == FnKind::Constructor
                     && matches!(
-                        constructor_policy::effective_mir_mode(self.tcx, callee),
+                        effective_constructor_mir_mode(self.tcx, callee, self.config.constructor_mir_mode),
                         ConstructorMirMode::False
                     )
                 {
@@ -239,12 +243,12 @@ impl<'tcx> CallSiteIndex<'tcx> {
                     if is_virtual {
                         if !effect_modeled {
                             let candidates = mir_utils::trait_impl_candidates(self.tcx, base_callee);
-                            if candidates.len() > crate::limit::trait_impl_limit() {
+                            if candidates.len() > self.config.trait_impl_limit {
                                 self.trait_impl_limited = true;
                             }
                             for candidate in candidates
                                 .into_iter()
-                                .take(crate::limit::trait_impl_limit())
+                                .take(self.config.trait_impl_limit)
                             {
                                 if self.tcx.is_mir_available(candidate)
                                     && !expanded.contains(&candidate)
@@ -339,7 +343,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                     });
                 let ctor_mode =
                     (fn_info::get_type(self.tcx, callee) == FnKind::Constructor)
-                        .then(|| constructor_policy::effective_mir_mode(self.tcx, callee));
+                        .then(|| effective_constructor_mir_mode(self.tcx, callee, self.config.constructor_mir_mode));
                 if crate::def_ids::intrinsic_api::is_intrinsic(self.tcx, callee)
                     || !self.tcx.is_mir_available(callee)
                     || expanded.contains(&callee)

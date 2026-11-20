@@ -32,6 +32,7 @@ use rustc_middle::{
 use z3::{Context, ast::Int};
 
 use crate::compat::{FxHashMap, FxHashSet};
+use crate::cli::ConstructorMirMode;
 
 use self::{
     diagnostics::Diagnostics,
@@ -59,6 +60,8 @@ pub(crate) struct VmState<'z3, 'tcx> {
     pub(crate) z3_ctx: &'z3 Context,
     /// Compiler type context.
     pub(crate) tcx: TyCtxt<'tcx>,
+    /// Constructor MIR mode selected for this verification run.
+    constructor_mir_mode: ConstructorMirMode,
     /// Currently executing MIR frame and its local allocation bindings.
     pub(crate) current_frame: FrameState<'tcx>,
     /// Caller frames saved by path-replay inlining.
@@ -93,6 +96,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         tcx: TyCtxt<'tcx>,
         target_def_id: DefId,
         instantiated_target_body: Option<&'tcx Body<'tcx>>,
+        constructor_mir_mode: ConstructorMirMode,
     ) -> Self {
         // The `UNINIT` sentinel is created once and shared by every byte array:
         // an unwritten offset reads it back, so `select != UNINIT` decides
@@ -106,6 +110,7 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             instantiated_target_body,
             z3_ctx,
             tcx,
+            constructor_mir_mode,
             current_frame: FrameState {
                 current_def_id: target_def_id,
                 instantiated_body: instantiated_target_body,

@@ -1800,6 +1800,7 @@ impl ConstraintHash {
 /// verification composes paths across calls.
 pub struct PathEnumerator<'g, 'tcx> {
     graph: &'g PathGraph<'tcx>,
+    path_limit: usize,
     scc_paths: FxHashMap<(usize, usize), Rc<Vec<SccPath>>>,
     visited_sccs: FxHashSet<(usize, ConstraintHash)>,
     coverage_targets: FxHashSet<usize>,
@@ -1812,12 +1813,18 @@ impl<'g, 'tcx> PathEnumerator<'g, 'tcx> {
     pub fn new(graph: &'g PathGraph<'tcx>) -> Self {
         PathEnumerator {
             graph,
+            path_limit: crate::limit::PATH_LIMIT,
             scc_paths: FxHashMap::default(),
             visited_sccs: FxHashSet::default(),
             coverage_targets: FxHashSet::default(),
             terminal_target: None,
             covered_prefixes: FxHashSet::default(),
         }
+    }
+
+    pub fn with_path_limit(mut self, limit: usize) -> Self {
+        self.path_limit = limit;
+        self
     }
 
     pub fn with_coverage_targets(mut self, targets: impl IntoIterator<Item = usize>) -> Self {
@@ -1832,7 +1839,7 @@ impl<'g, 'tcx> PathEnumerator<'g, 'tcx> {
     }
 
     fn coverage_limit_reached(&self, tree: &PathTree) -> bool {
-        let limit = crate::limit::path_limit();
+        let limit = self.path_limit;
         if self.coverage_targets.is_empty() {
             tree.len() >= limit
         } else {
@@ -1862,7 +1869,7 @@ impl<'g, 'tcx> PathEnumerator<'g, 'tcx> {
     /// up to `postfix_repeat` additional times. `postfix_repeat = 0` gives
     /// the same result as `enumerate_paths`.
     ///
-    /// Enumeration uses `crate::limit::path_limit` to bound the result and
+    /// Enumeration uses the configured path limit to bound the result and
     /// marks the tree truncated when that bound is reached.
     pub fn enumerate_paths_repeat(&mut self, postfix_repeat: usize) -> PathTree {
         let mut tree = PathTree::new();

@@ -30,8 +30,10 @@ use rustc_middle::{
 };
 use rustc_span::Span;
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 
 use super::{
+    config::VerifyConfig,
     contract::{
         ContractExpr, ContractPlace, PlaceBase, Property, PropertyArg, PropertyKind,
         attr::{collect_properties_from_named_attrs, is_rapx_named_attr, parse_rapx_attr},
@@ -442,11 +444,8 @@ fn resolve_chain_contracts<'tcx>(
 /// Visitor that collects targets annotated with `#[rapx::verify]`.
 pub(crate) struct VerifyTargetCollector<'tcx> {
     tcx: TyCtxt<'tcx>,
-    mode: VerifyMode,
-    skip_invariant: bool,
-    crate_filter: Option<String>,
+    config: Arc<VerifyConfig>,
     crate_filter_matched: bool,
-    module_filter: Option<String>,
     module_filter_matched: bool,
     /// All function targets to verify collected from the current crate.
     pub function_targets: Vec<FunctionTarget<'tcx>>,
@@ -461,46 +460,20 @@ pub(crate) struct VerifyTargetCollector<'tcx> {
 
 impl<'tcx> VerifyTargetCollector<'tcx> {
     /// Collect verification targets from the crate currently being compiled.
-    pub(crate) fn collect_all(
-        tcx: TyCtxt<'tcx>,
-        mode: VerifyMode,
-        skip_invariant: bool,
-        crate_filter: Option<String>,
-        module_filter: Option<String>,
-    ) -> Self {
-        let mut collector = Self::new(
+    pub(crate) fn collect_all(tcx: TyCtxt<'tcx>, config: Arc<VerifyConfig>) -> Self {
+        let mut collector = Self {
             tcx,
-            mode,
-            skip_invariant,
-            crate_filter,
-            module_filter,
-        );
-        tcx.hir_visit_all_item_likes_in_crate(&mut collector);
-        collector.check_module_filter_result();
-        collector
-    }
-
-    /// Creates a new collector for the current type context.
-    pub(crate) fn new(
-        tcx: TyCtxt<'tcx>,
-        mode: VerifyMode,
-        skip_invariant: bool,
-        crate_filter: Option<String>,
-        module_filter: Option<String>,
-    ) -> Self {
-        VerifyTargetCollector {
-            tcx,
-            mode,
-            skip_invariant,
-            crate_filter,
+            config,
             crate_filter_matched: false,
-            module_filter,
             module_filter_matched: false,
             function_targets: Vec::new(),
             struct_targets: HashMap::new(),
             trait_targets: Vec::new(),
             fn_contract_cache: HashMap::new(),
-        }
+        };
+        tcx.hir_visit_all_item_likes_in_crate(&mut collector);
+        collector.check_module_filter_result();
+        collector
     }
 
     /// Resolve and cache preconditions for a callee.
@@ -754,7 +727,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         let instances = crate::helpers::mir_utils::enumerate_mono_instances(
             self.tcx,
             def_id,
-            crate::limit::trait_impl_limit(),
+            self.config.trait_impl_limit,
         );
         let mut targets = Vec::new();
         let mut needs_generic = instances.is_empty();
@@ -794,9 +767,9 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
     }
 
     fn crate_name_matches(&self, def_id: DefId) -> bool {
-        match self.crate_filter {
+        match &self.config.crate_filter {
             None => true,
-            Some(ref filter) => {
+            Some(filter) => {
                 let crate_name = self.tcx.crate_name(def_id.krate);
                 if crate_name.as_str() == *filter {
                     return true;
@@ -812,7 +785,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
     }
 
     fn module_path_matches(&self, def_id: DefId) -> bool {
-        let Some(ref filter) = self.module_filter else {
+        let Some(ref filter) = self.config.module_filter else {
             return true;
         };
         let crate_name = self.tcx.crate_name(def_id.krate);
@@ -835,12 +808,12 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
     }
 
     pub(crate) fn check_module_filter_result(&self) {
-        if let Some(ref filter) = self.crate_filter
+        if let Some(ref filter) = self.config.crate_filter
             && !self.crate_filter_matched
         {
             rap_warn!("[rapx::verify] --crate \"{filter}\" matched no targets");
         }
-        if let Some(ref filter) = self.module_filter
+        if let Some(ref filter) = self.config.module_filter
             && !self.module_filter_matched
         {
             rap_warn!("[rapx::verify] --module \"{filter}\" matched no functions in the crate");
@@ -876,7 +849,7 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
         if let ItemKind::Impl(rustc_hir::Impl { of_trait, .. }) = &item.kind
             && of_trait.is_some()
         {
-            if matches!(self.mode, VerifyMode::Targeted)
+            if matches!(self.config.mode, VerifyMode::Targeted)
                 && !has_rapx_verify_attr(self.tcx, item.owner_id.def_id)
             {
                 rustc_hir::intravisit::walk_item(self, item);
@@ -942,7 +915,7 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
         _: Span,
         id: LocalDefId,
     ) -> Self::Result {
-        if matches!(self.mode, VerifyMode::Targeted) && !has_rapx_verify_attr(self.tcx, id) {
+        if matches!(self.config.mode, VerifyMode::Targeted) && !has_rapx_verify_attr(self.tcx, id) {
             return;
         }
 
@@ -958,7 +931,7 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
             }
         }
 
-        if !matches!(self.mode, VerifyMode::Targeted)
+        if !matches!(self.config.mode, VerifyMode::Targeted)
             && !hir_contains_unsafe(self.tcx, body_id)
             && !function_has_rapx_struct_invariant(self.tcx, def_id)
             && !function_has_trait_ensurance(self.tcx, def_id)
@@ -978,7 +951,7 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
 
         let function_targets = self.build_function_targets(def_id);
 
-        match self.mode {
+        match self.config.mode {
             VerifyMode::Targeted => {}
             VerifyMode::Scan => {
                 if let Some(first) = function_targets.first()
@@ -987,7 +960,7 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
                     && first.static_mut_checks.is_empty()
                 {
                     if !first.struct_invariants.is_empty() {
-                        if self.skip_invariant {
+                        if self.config.skip_invariant {
                             return;
                         }
                     } else {
@@ -1012,21 +985,12 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
 /// resulting functions, structs, trait impls, and their obligations.
 pub(crate) struct PrepareTargets<'tcx> {
     tcx: TyCtxt<'tcx>,
-    mode: VerifyMode,
-    skip_invariant: bool,
-    crate_filter: Option<String>,
-    module_filter: Option<String>,
+    config: Arc<VerifyConfig>,
 }
 
 impl<'tcx> Analysis for PrepareTargets<'tcx> {
     fn run(&mut self) {
-        let collector = VerifyTargetCollector::collect_all(
-            self.tcx,
-            self.mode,
-            self.skip_invariant,
-            self.crate_filter.clone(),
-            self.module_filter.clone(),
-        );
+        let collector = VerifyTargetCollector::collect_all(self.tcx, Arc::clone(&self.config));
 
         let free_targets: Vec<_> = collector
             .function_targets
@@ -1120,20 +1084,8 @@ impl<'tcx> Analysis for PrepareTargets<'tcx> {
 }
 
 impl<'tcx> PrepareTargets<'tcx> {
-    pub(crate) fn new(
-        tcx: TyCtxt<'tcx>,
-        mode: VerifyMode,
-        skip_invariant: bool,
-        crate_filter: Option<String>,
-        module_filter: Option<String>,
-    ) -> Self {
-        PrepareTargets {
-            tcx,
-            mode,
-            skip_invariant,
-            crate_filter,
-            module_filter,
-        }
+    pub(crate) fn new(tcx: TyCtxt<'tcx>, config: Arc<VerifyConfig>) -> Self {
+        Self { tcx, config }
     }
 
     fn log_struct_invariants(&self, struct_target: &StructTarget<'tcx>) {
@@ -1300,7 +1252,7 @@ impl<'tcx> PrepareTargets<'tcx> {
             return path_map;
         }
 
-        let tree = PathExtractor::new_with_body(self.tcx, target.def_id, 0, target.body)
+        let tree = PathExtractor::new_with_body(self.tcx, Arc::clone(&self.config), target.def_id, 0, target.body)
             .with_callee_bodies(target.callee_bodies.clone())
             .run();
 

@@ -10,7 +10,7 @@
 //!
 //! # Path limit
 //!
-//! Path enumeration and composition are bounded by [`crate::limit::path_limit`].
+//! Path enumeration and composition use the configured path limit.
 //! The tree is marked truncated when the budget is exhausted.
 
 mod call_index;
@@ -30,9 +30,9 @@ use crate::analysis::path::{
 };
 use crate::compat::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
-use std::rc::Rc;
+use std::{rc::Rc, sync::Arc};
 
-use crate::verify::checkpoint::CheckpointLocation;
+use crate::verify::{checkpoint::CheckpointLocation, config::VerifyConfig};
 
 /// Instantiated MIR bodies for direct generic callees.
 pub(crate) type CalleeBodies<'tcx> = FxHashMap<DefId, &'tcx Body<'tcx>>;
@@ -44,11 +44,12 @@ pub(crate) type CalleeBodies<'tcx> = FxHashMap<DefId, &'tcx Body<'tcx>>;
 /// paths at callsites. Checkpoint checks use prefixes of the resulting
 /// [`PathTree`]; exit checks use its paths to return or unwind blocks.
 ///
-/// Enumeration is capped at [`crate::limit::path_limit`] to avoid exponential
+/// Enumeration is capped at the configured path limit to avoid exponential
 /// blow-up.
 pub(crate) struct PathExtractor<'tcx> {
     /// Compiler type context used for MIR access and name resolution.
     tcx: TyCtxt<'tcx>,
+    config: Arc<VerifyConfig>,
     /// The function whose MIR body is being analyzed.
     def_id: DefId,
     /// Number of extra SCC postfix repetitions allowed (default 0).
@@ -71,12 +72,14 @@ impl<'tcx> PathExtractor<'tcx> {
     /// is allowed beyond the first occurrence. Default is 0 (no extra repeats).
     pub(crate) fn new_with_body(
         tcx: TyCtxt<'tcx>,
+        config: Arc<VerifyConfig>,
         def_id: DefId,
         allow_repeat: usize,
         body: Option<&'tcx rustc_middle::mir::Body<'tcx>>,
     ) -> Self {
         Self {
             tcx,
+            config,
             def_id,
             allow_repeat,
             body,
@@ -119,11 +122,13 @@ impl<'tcx> PathExtractor<'tcx> {
         };
         caller_graph.find_scc();
         let caller_paths = PathEnumerator::new(&caller_graph)
+            .with_path_limit(self.config.path_limit)
             .with_coverage_targets(self.coverage_targets)
             .with_terminal_target(self.terminal_target)
             .enumerate_paths_repeat(self.allow_repeat);
         let mut call_index = CallSiteIndex::new(
             self.tcx,
+            Arc::clone(&self.config),
             self.def_id,
             self.body.cloned(),
             self.callee_bodies,
@@ -131,7 +136,7 @@ impl<'tcx> PathExtractor<'tcx> {
         call_index.collect();
         let bodies = call_index.unambiguous_bodies();
         let entry_bodies = call_index.entry_bodies();
-        let mut tree = PathComposer::new(&call_index, self.allow_repeat).compose(&caller_paths);
+        let mut tree = PathComposer::new(&call_index, self.allow_repeat, self.config.path_limit).compose(&caller_paths);
         tree.mark_structural();
         call_index.attach_metadata(&mut tree);
         (tree, bodies, entry_bodies)
@@ -147,11 +152,11 @@ struct PathComposer<'g, 'tcx> {
 }
 
 impl<'g, 'tcx> PathComposer<'g, 'tcx> {
-    fn new(call_index: &'g CallSiteIndex<'tcx>, allow_repeat: usize) -> Self {
+    fn new(call_index: &'g CallSiteIndex<'tcx>, allow_repeat: usize, path_limit: usize) -> Self {
         Self {
             call_index,
             allow_repeat,
-            limit: crate::limit::path_limit(),
+            limit: path_limit,
             cache: FxHashMap::default(),
             truncated: false,
         }
@@ -247,7 +252,9 @@ impl<'g, 'tcx> PathComposer<'g, 'tcx> {
             PathGraph::new(self.call_index.tcx(), callee)
         };
         local_graph.find_scc();
-        let local_paths = PathEnumerator::new(&local_graph).enumerate_paths_repeat(self.allow_repeat);
+        let local_paths = PathEnumerator::new(&local_graph)
+            .with_path_limit(self.limit)
+            .enumerate_paths_repeat(self.allow_repeat);
         self.truncated |= local_paths.is_truncated();
         let mut result = Vec::new();
         for path in local_paths.to_vecs() {

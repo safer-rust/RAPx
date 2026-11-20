@@ -4,8 +4,6 @@ use crate::def_ids::{
     lang_api::{self, LangItem},
     type_ids,
 };
-#[cfg(rapx_caller_bounds_accessor)]
-use rustc_type_ir::CallerBoundsIterator;
 use rustc_hir::{
     ItemKind,
     def::DefKind,
@@ -23,8 +21,8 @@ use rustc_middle::{
         TerminatorKind,
     },
     ty::{
-        Const, ConstKind, FieldDef, GenericArgKind, GenericArgs, GenericParamDefKind, Instance,
-        InstanceKind, PseudoCanonicalInput, ScalarInt, Ty, TyCtxt, TyKind, TypeFlags,
+        Const, ConstKind, FieldDef, GenericArgKind, GenericArgs, GenericParamDefKind,
+        Instance, InstanceKind, PseudoCanonicalInput, ScalarInt, Ty, TyCtxt, TyKind, TypeFlags,
         TypeSuperVisitable, TypeVisitable, TypeVisitableExt, TypeVisitor, TypingEnv,
     },
 };
@@ -294,10 +292,12 @@ pub(crate) fn type_param_impl_tys<'tcx>(
     if !matches!(param_ty.kind(), TyKind::Param(_)) {
         return Vec::new();
     }
+    #[cfg(not(rapx_caller_bounds_accessor))]
     let param_env = tcx.param_env(def_id);
     let mut bounds = Vec::new();
     #[cfg(rapx_caller_bounds_accessor)]
-    let clauses = param_env.caller_bounds().all_clauses(tcx).iter();
+    let clauses = std::iter::successors(Some(def_id), |&did| tcx.clauses_of(did).parent)
+        .flat_map(|did| tcx.clauses_of(did).clauses.iter().map(|(clause, _)| clause));
     #[cfg(not(rapx_caller_bounds_accessor))]
     let clauses = param_env.caller_bounds();
     for clause in clauses {
@@ -1306,10 +1306,12 @@ fn generic_param_impl_layouts<'tcx>(
     if !matches!(ty.kind(), TyKind::Param(_)) {
         return Vec::new();
     }
+    #[cfg(not(rapx_caller_bounds_accessor))]
     let param_env = tcx.param_env(caller);
     let typing_env = TypingEnv::post_analysis(tcx, caller);
     #[cfg(rapx_caller_bounds_accessor)]
-    let clauses = param_env.caller_bounds().all_clauses(tcx).iter();
+    let clauses = std::iter::successors(Some(caller), |&did| tcx.clauses_of(did).parent)
+        .flat_map(|did| tcx.clauses_of(did).clauses.iter().map(|(clause, _)| clause));
     #[cfg(not(rapx_caller_bounds_accessor))]
     let clauses = param_env.caller_bounds();
     for clause in clauses {
@@ -1336,7 +1338,9 @@ fn generic_param_impl_layouts<'tcx>(
             };
             layouts.push(layout);
         }
-        return layouts;
+        if !layouts.is_empty() {
+            return layouts;
+        }
     }
     Vec::new()
 }
