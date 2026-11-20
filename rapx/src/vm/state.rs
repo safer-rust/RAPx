@@ -21,6 +21,7 @@ use z3::{
 use crate::compat::{FxHashMap, FxHashSet};
 pub(crate) use super::VmExecutor;
 use super::diagnostics::ActiveMirLocation;
+use super::integer::{self, IntLayout};
 use crate::util::def_use::PlaceKey;
 
 pub(crate) const REPEATED_ARRAY_ELEMENT: usize = usize::MAX;
@@ -723,56 +724,38 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         }
     }
 
+    /// Resolve integer width from the analysis target, including `isize`/`usize`.
+    pub(crate) fn integer_layout(&self, ty: Ty<'tcx>) -> Option<IntLayout> {
+        let signed = match ty.kind() {
+            TyKind::Int(_) => true,
+            TyKind::Uint(_) => false,
+            _ => return None,
+        };
+        let (_, bytes) = mir_utils::type_layout(self.tcx, self.path_state.current_frame.current_def_id, ty)?;
+        let bits = u16::try_from(bytes.checked_mul(8)?).ok()?;
+        IntLayout::new(bits, signed)
+    }
+
     pub(crate) fn scalar_bits_term(&self, ty: Ty<'tcx>, bits: u128) -> Option<Int<'z3>> {
+        if matches!(ty.kind(), TyKind::Int(_) | TyKind::Uint(_)) {
+            return self
+                .integer_layout(ty)
+                .map(|layout| layout.from_bits(self.z3_ctx, bits));
+        }
         let bytes = self.size_of_ty(ty);
         if bytes == 0 || bytes > 16 {
             return None;
         }
         if bytes == 16 {
-            let two_64 = Int::add(
-                self.z3_ctx,
-                &[
-                    &Int::from_u64(self.z3_ctx, u64::MAX),
-                    &Int::from_u64(self.z3_ctx, 1),
-                ],
-            );
-            let unsigned = self.u128_term(bits);
-            return if matches!(ty.kind(), TyKind::Int(_)) && bits >> 127 != 0 {
-                let two_128 = Int::mul(self.z3_ctx, &[&two_64, &two_64]);
-                Some(Int::sub(self.z3_ctx, &[&unsigned, &two_128]))
-            } else {
-                Some(unsigned)
-            };
+            return Some(self.u128_term(bits));
         }
-        let width = bytes * 8;
-        if matches!(ty.kind(), TyKind::Int(_)) {
-            let shift = 64 - width;
-            let signed = ((bits as u64) << shift) as i64 >> shift;
-            Some(Int::from_i64(self.z3_ctx, signed))
-        } else {
-            u64::try_from(bits)
-                .ok()
-                .map(|unsigned| Int::from_u64(self.z3_ctx, unsigned))
-        }
+        u64::try_from(bits)
+            .ok()
+            .map(|unsigned| Int::from_u64(self.z3_ctx, unsigned))
     }
 
     pub(crate) fn u128_term(&self, value: u128) -> Int<'z3> {
-        let low = Int::from_u64(self.z3_ctx, value as u64);
-        if value <= u64::MAX as u128 {
-            return low;
-        }
-        let high = Int::from_u64(self.z3_ctx, (value >> 64) as u64);
-        let two_64 = Int::add(
-            self.z3_ctx,
-            &[
-                &Int::from_u64(self.z3_ctx, u64::MAX),
-                &Int::from_u64(self.z3_ctx, 1),
-            ],
-        );
-        Int::add(
-            self.z3_ctx,
-            &[&Int::mul(self.z3_ctx, &[&high, &two_64]), &low],
-        )
+        integer::u128_term(self.z3_ctx, value)
     }
 
     pub(crate) fn enum_discriminant_term(

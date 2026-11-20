@@ -332,66 +332,25 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         &self,
         ty: Ty<'tcx>,
     ) -> Option<(Int<'z3>, Int<'z3>, Int<'z3>, bool)> {
-        let signed = match ty.kind() {
-            TyKind::Int(_) => true,
-            TyKind::Uint(_) => false,
-            _ => return None,
-        };
-        let (_, bytes) = mir_utils::type_layout(self.tcx, self.path_state.current_frame.current_def_id, ty)?;
-        let bits = bytes.checked_mul(8)?;
-        if bits == 0 || bits > 128 {
-            return None;
-        }
-        let unsigned_max = if bits == 128 {
-            u128::MAX
-        } else {
-            (1u128 << bits) - 1
-        };
-        let modulus = Int::add(
-            self.z3_ctx,
-            &[
-                &Int::from_str(self.z3_ctx, &unsigned_max.to_string())?,
-                &Int::from_u64(self.z3_ctx, 1),
-            ],
-        );
-        let (min, max) = if signed {
-            let signed_max = if bits == 128 {
-                i128::MAX
-            } else {
-                (1i128 << (bits - 1)) - 1
-            };
-            let signed_min = if bits == 128 {
-                i128::MIN
-            } else {
-                -(1i128 << (bits - 1))
-            };
-            (signed_min.to_string(), signed_max.to_string())
-        } else {
-            ("0".to_string(), unsigned_max.to_string())
-        };
+        let layout = self.integer_layout(ty)?;
         Some((
-            Int::from_str(self.z3_ctx, &min)?,
-            Int::from_str(self.z3_ctx, &max)?,
-            modulus,
-            signed,
+            layout.min(self.z3_ctx),
+            layout.max(self.z3_ctx),
+            layout.modulus(self.z3_ctx),
+            layout.signed,
         ))
     }
 
     pub(crate) fn wrap_integer_term(&self, ty: Ty<'tcx>, raw: &Int<'z3>) -> Int<'z3> {
-        let Some((min, max, modulus, signed)) = self.integer_limits(ty) else {
+        let Some(layout) = self.integer_layout(ty) else {
             return raw.clone();
         };
+        let min = layout.min(self.z3_ctx);
+        let max = layout.max(self.z3_ctx);
         if self.path_implies(&raw.ge(&min)) && self.path_implies(&raw.le(&max)) {
             return raw.clone();
         }
-        let wrapped = raw.modulo(&modulus);
-        if signed {
-            wrapped
-                .gt(&max)
-                .ite(&Int::sub(self.z3_ctx, &[&wrapped, &modulus]), &wrapped)
-        } else {
-            wrapped
-        }
+        layout.normalize(self.z3_ctx, raw)
     }
 
     /// Compute the preserved alignment when doing `base + offset * stride`.
