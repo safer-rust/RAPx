@@ -370,37 +370,27 @@ impl PropertyChecker {
                 {
                     return CheckResult::Failed;
                 }
-                // A property whose target value (or a checkpoint argument it
-                // reads) depends on a truncated inline cannot be decided:
-                // report `Unknown` instead of failing on the placeholder term.
-                for (terms, reason) in [
-                    (
-                        &vm_state.inline.inline_truncated_terms,
-                        UnknownReason::InlineDepthExceeded,
-                    ),
-                    (
-                        &vm_state.inline.inline_branch_terms,
-                        UnknownReason::IncompleteInlineBranch,
-                    ),
-                    (
-                        &vm_state.inline.opaque_intrinsic_terms,
-                        UnknownReason::UnmodeledIntrinsic("opaque intrinsic result".to_string()),
-                    ),
-                ] {
-                    if vm_state.atom_depends_on_inline_terms(checkpoint, property, terms) {
-                        return CheckResult::Unknown(reason);
-                    }
+                // An incomplete inline may leave the target or an argument as
+                // a placeholder; such a property cannot be decided.
+                if [&vm_state.inline.inline_truncated_terms, &vm_state.inline.inline_branch_terms]
+                    .into_iter()
+                    .any(|terms| vm_state.atom_depends_on_inline_terms(checkpoint, property, terms))
+                {
+                    return CheckResult::Unknown(UnknownReason::IncompleteInline);
+                }
+                if vm_state.atom_depends_on_inline_terms(checkpoint, property, &vm_state.inline.opaque_intrinsic_terms) {
+                    return CheckResult::Unknown(UnknownReason::UnmodeledIntrinsic("opaque intrinsic result".to_string()));
                 }
                 if vm_state.diagnostics.has_incomplete_inline_branch()
                     && (checkpoint.callee.is_some() || !checkpoint.args.is_empty())
                 {
-                    return CheckResult::Unknown(UnknownReason::IncompleteInlineBranch);
+                    return CheckResult::Unknown(UnknownReason::IncompleteInline);
                 }
                 let rule = PROPERTY_RULES.iter().find(|r| r.kind == atom.kind).unwrap_or(&UNKNOWN_RULE);
                 crate::rap_debug!("property rule: {}", rule.name);
                 let result = (rule.apply)(self, vm_state, checkpoint, property);
                 if vm_state.diagnostics.has_incomplete_inline_branch() && result == CheckResult::Failed {
-                    CheckResult::Unknown(UnknownReason::IncompleteInlineBranch)
+                    CheckResult::Unknown(UnknownReason::IncompleteInline)
                 } else {
                     result
                 }

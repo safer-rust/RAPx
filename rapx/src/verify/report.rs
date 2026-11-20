@@ -14,23 +14,38 @@ pub(crate) const PATH_LIMIT_DESCRIPTION: &str = "[not enumerated: path limit rea
 /// Why a [`CheckResult::Unknown`] could not be discharged.
 ///
 /// Carried by the `Unknown` variant so the report can identify incomplete proofs.
+///
+/// # Agent Rules
+/// Do not add new variants or fields without human approval.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum UnknownReason {
+    /// The SMT solver could not decide the query and returned this reason.
     SmtUnknown(String),
-    /// The inline recursion limit was reached, so the callee's body was not
-    /// executed and the memory state is incomplete.
-    InlineDepthExceeded,
-    UnsupportedMir(Vec<String>),
-    UnsupportedEffect(Vec<String>),
+
+    /// A callee's MIR body was unavailable.
     MissingMir(Vec<String>),
-    OpaqueControlFlow(Vec<String>),
-    IncompleteInlineBranch,
+    /// The VM could not model one or more MIR operations.
+    UnsupportedMir(Vec<String>),
+    /// The VM could not model one or more call effects.
+    UnsupportedEffect(Vec<String>),
+    /// An intrinsic result was left opaque because its effect was not modeled.
     UnmodeledIntrinsic(String),
+
+    /// An inlined callee stopped at the depth limit or an incomplete branch.
+    IncompleteInline,
+    /// An opaque value influenced a control-flow decision.
+    OpaqueControlFlow(Vec<String>),
+    /// An unsafe call's callee could not be resolved.
     UnresolvedUnsafeCall,
+
+    /// A required safety contract was not found for this callee.
     MissingContract(String),
+    /// The checker cannot prove this property with its supported rules.
     UnsupportedProperty,
-    /// A checker cannot resolve a value or supported property shape.
+    /// A checker could not resolve a value or handle this property shape.
     Unimplemented,
+
+    /// Several independent reasons contributed to the unknown result.
     Multiple(Vec<UnknownReason>),
 }
 
@@ -39,13 +54,12 @@ impl UnknownReason {
         match self {
             Self::SmtUnknown(reason) if reason == "timeout" => out.push("smt_timeout"),
             Self::SmtUnknown(_) => out.push("smt_unknown"),
-            Self::InlineDepthExceeded => out.push("inline_depth"),
+            Self::MissingMir(_) => out.push("missing_mir"),
             Self::UnsupportedMir(_) => out.push("unsupported_mir"),
             Self::UnsupportedEffect(_) => out.push("unsupported_effect"),
-            Self::MissingMir(_) => out.push("missing_mir"),
-            Self::OpaqueControlFlow(_) => out.push("opaque_control_flow"),
-            Self::IncompleteInlineBranch => out.push("incomplete_inline_branch"),
             Self::UnmodeledIntrinsic(_) => out.push("unmodeled_intrinsic"),
+            Self::IncompleteInline => out.push("incomplete_inline"),
+            Self::OpaqueControlFlow(_) => out.push("opaque_control_flow"),
             Self::UnresolvedUnsafeCall => out.push("unresolved_unsafe_call"),
             Self::MissingContract(_) => out.push("missing_contract"),
             Self::UnsupportedProperty => out.push("unsupported_property"),
@@ -70,13 +84,12 @@ impl UnknownReason {
         match self {
             Self::SmtUnknown(reason) if reason == "timeout" => "timeout".to_string(),
             Self::SmtUnknown(reason) => format!("SMT: {reason}"),
-            Self::InlineDepthExceeded => "inline depth".to_string(),
+            Self::MissingMir(_) => "MIR unavailable".to_string(),
             Self::UnsupportedMir(_) => "unsupported MIR".to_string(),
             Self::UnsupportedEffect(_) => "unsupported call effect".to_string(),
-            Self::MissingMir(_) => "MIR unavailable".to_string(),
-            Self::OpaqueControlFlow(_) => "opaque call controls branch".to_string(),
-            Self::IncompleteInlineBranch => "incomplete inline branch".to_string(),
             Self::UnmodeledIntrinsic(_) => "unmodeled intrinsic".to_string(),
+            Self::IncompleteInline => "incomplete inline".to_string(),
+            Self::OpaqueControlFlow(_) => "opaque call controls branch".to_string(),
             Self::UnresolvedUnsafeCall => "unresolved unsafe call".to_string(),
             Self::MissingContract(callee) => format!("missing safety contract: {callee}"),
             Self::UnsupportedProperty => "unsupported property".to_string(),
