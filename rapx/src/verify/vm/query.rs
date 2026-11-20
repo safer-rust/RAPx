@@ -382,6 +382,26 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
             }
     }
 
+    /// Element count of one object when the access is to an unsized `[T]`:
+    /// the slice length from the pointer's metadata. An unknown length stays
+    /// unknown. Other objects return `None`.
+    pub(crate) fn unsized_slice_len(
+        &self,
+        value: &VmValue<'z3, 'tcx>,
+        required_ty: Option<Ty<'tcx>>,
+    ) -> Option<Int<'z3>> {
+        let accessed = required_ty
+            .filter(|ty| !matches!(ty.kind(), TyKind::Alias(..)))
+            .or_else(|| mir_utils::pointee_ty(value.ty))?;
+        if !matches!(accessed.kind(), TyKind::Slice(_)) {
+            return None;
+        }
+        Some(
+            self.slice_len_from_value(value)
+                .unwrap_or_else(|| self.fresh_int("slice_access_len")),
+        )
+    }
+
     /// Byte span requested by a pointer property, using the VM's element-size
     /// model for concrete and generic pointee types.
     pub(crate) fn access_bytes(
@@ -401,6 +421,10 @@ impl<'z3, 'tcx> VmState<'z3, 'tcx> {
         let elem_size = elem_ty
             .map(|ty| self.size_sym_read(ty))
             .unwrap_or_else(|| Int::from_u64(self.z3_ctx, 1));
+        let count = match self.unsized_slice_len(value, required_ty) {
+            Some(len) => Int::mul(self.z3_ctx, &[&count, &len]),
+            None => count,
+        };
         if let (Some(elem), Some(count)) =
             (elem_size.simplify().as_u64(), count.simplify().as_u64())
         {
