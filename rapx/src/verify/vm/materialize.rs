@@ -461,7 +461,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 let (fa, _fb) = self.allocate_external(max_size, field_align, Some(pointee));
                 self.content_mut(fa).facts.initialized = true;
                 let term = self.fresh_int(&format!("pointee_nn_{}_{}", local_idx, idx));
-                self.path_state.units[alloc_id.0].content.values.insert(
+                self.path_state.mem_units[alloc_id.0].content.values.insert(
                     (root_ty, path.clone()),
                     VmValue {
                         z3_term: term,
@@ -509,7 +509,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 let field_term = self
                     .field_term_from_bytes(alloc_id, field_off, field_size)
                     .unwrap_or_else(|| self.fresh_int(&format!("pointee_field_{}_{}", local_idx, idx)));
-                self.path_state.units[alloc_id.0].content.values.insert(
+                self.path_state.mem_units[alloc_id.0].content.values.insert(
                     (root_ty, path.clone()),
                     VmValue {
                         z3_term: field_term,
@@ -537,7 +537,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     Some(*elem_ty),
                 );
                 self.content_mut(fa).facts.initialized = true;
-                self.path_state.units[alloc_id.0].content.values.insert(
+                self.path_state.mem_units[alloc_id.0].content.values.insert(
                     (root_ty, path.clone()),
                     VmValue {
                         z3_term: fb,

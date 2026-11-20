@@ -507,7 +507,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 let base_val = self.local_value(local)?;
                 let alloc_id = base_val.provenance_alloc_id()?;
                 let view_ty = mir_utils::pointee_ty(base_val.ty).unwrap_or(base_val.ty);
-                self.path_state.units[alloc_id.0]
+                self.path_state.mem_units[alloc_id.0]
                     .content
                     .values
                     .get(&(view_ty, path))

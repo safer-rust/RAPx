@@ -65,30 +65,30 @@ pub(crate) struct VmExecutor<'z3, 'tcx> {
 #[derive(Clone)]
 pub(crate) struct VmState<'z3, 'tcx> {
     /// Currently executing MIR frame and its local allocation bindings.
-    pub(crate) current_frame: FrameState<'tcx>,
+    pub(in crate::verify) current_frame: FrameState<'tcx>,
     /// Caller frames saved by path-replay inlining.
     caller_frames: Vec<SavedCallerFrame<'z3, 'tcx>>,
     /// Allocation units indexed by `AllocId`.
-    units: Vec<MemoryUnit<'z3, 'tcx>>,
+    mem_units: Vec<MemoryUnit<'z3, 'tcx>>,
     /// Ownership transfers shared by copies of the same raw pointer.
     ownership_transfers: Vec<OwnershipTransfer>,
     /// Stable allocation for each static across MIR locals and frames.
     static_allocs: FxHashMap<DefId, AllocId>,
     /// Path conditions and term caches.
-    pub(crate) constraints: Constraints<'z3, 'tcx>,
+    pub(in crate::verify) constraints: Constraints<'z3, 'tcx>,
     /// Scratch state for recursive inlining.
-    pub(crate) inline: InlineCtx<'z3, 'tcx>,
+    pub(in crate::verify) inline: InlineCtx<'z3, 'tcx>,
     /// Stable `&self` results reused by contracts only when the method, caller,
     /// receiver allocation and offset, fields, and slice length still match.
     method_result_cache: Vec<CachedMethodResult<'z3, 'tcx>>,
     /// Allocation roots licensed by declared `Alias` contract sources.
     alias_hazard_allocs: FxHashSet<AllocId>,
     /// Slice and index terms with their originating MIR locals.
-    pub(crate) index_access_facts: Vec<(Int<'z3>, Int<'z3>, Local, Local)>,
+    pub(in crate::verify) index_access_facts: Vec<(Int<'z3>, Int<'z3>, Local, Local)>,
     /// Optional SafeDrop log of drops, use-after-free, and dangling pointers.
     pub(crate) safedrop_events: SafeDropEventLog,
     /// Path diagnostics and the MIR location used to attribute new records.
-    pub(crate) diagnostics: Diagnostics,
+    pub(in crate::verify) diagnostics: Diagnostics,
 }
 
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
@@ -121,7 +121,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     pending_enum_fields: FxHashMap::default(),
                 },
                 caller_frames: Vec::default(),
-                units: Vec::default(),
+                mem_units: Vec::default(),
                 ownership_transfers: Vec::new(),
                 static_allocs: FxHashMap::default(),
                 constraints,

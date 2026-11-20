@@ -125,7 +125,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         {
             let mut path = prefix.to_vec();
             path.push(len_idx);
-            return self.path_state.units[alloc_id.0].content.values
+            return self.path_state.mem_units[alloc_id.0].content.values
                 .get(&(root_ty, path))
                 .map(|v| v.z3_term.clone());
         }
@@ -156,12 +156,12 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let alloc_id = val.provenance_alloc_id()?;
         let view_ty = mir_utils::pointee_ty(val.ty).unwrap_or(val.ty);
         let start = self.path_state
-            .units[alloc_id.0].content.values
+            .mem_units[alloc_id.0].content.values
             .get(&(view_ty, vec![0]))?
             .z3_term
             .clone();
         let end = self.path_state
-            .units[alloc_id.0].content.values
+            .mem_units[alloc_id.0].content.values
             .get(&(view_ty, vec![1]))?
             .z3_term
             .clone();
@@ -253,7 +253,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             .fields
             .iter()
             .position(|f| f.ident(self.tcx).name.to_string() == "len")?;
-        self.path_state.units[alloc_id.0].content.values
+        self.path_state.mem_units[alloc_id.0].content.values
             .get(&(pointee, vec![len_idx]))
             .map(|v| v.z3_term.clone())
     }
@@ -488,7 +488,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     /// `head`/`tail`) is ambiguous, so fall back to `None` rather than guess.
     fn header_data_alloc(&self, header: AllocId) -> Option<AllocId> {
         let mut result = None;
-        for ((_, p), v) in self.path_state.units[header.0].content.values.iter() {
+        for ((_, p), v) in self.path_state.mem_units[header.0].content.values.iter() {
             if p.is_empty() {
                 continue;
             }
@@ -531,7 +531,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let borrowed = value.z3_term.simplify();
         let mut targets = Vec::new();
         let mut backing = None;
-        for (index, unit) in self.path_state.units.iter().enumerate() {
+        for (index, unit) in self.path_state.mem_units.iter().enumerate() {
             for ((view_ty, path), field) in &unit.content.values {
                 if path != fields
                     || field.ty != *inner

@@ -135,7 +135,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(crate) fn forget_memory_values(&mut self, alloc_id: AllocId) {
         let root = self.root_alloc(alloc_id);
         self.clear_write_evidence(root);
-        let aliases: Vec<_> = (0..self.path_state.units.len())
+        let aliases: Vec<_> = (0..self.path_state.mem_units.len())
             .map(AllocId)
             .filter(|id| self.root_alloc(*id) == root)
             .collect();
@@ -203,14 +203,14 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
 
     pub(crate) fn clear_write_evidence(&mut self, alloc_id: AllocId) {
         let root = self.root_alloc(alloc_id);
-        let aliases: crate::compat::FxHashSet<_> = (0..self.path_state.units.len())
+        let aliases: crate::compat::FxHashSet<_> = (0..self.path_state.mem_units.len())
             .map(AllocId)
             .filter(|id| self.root_alloc(*id) == root)
             .collect();
         for id in aliases {
-            self.path_state.units[id.0].content.typed_facts.clear();
-            self.path_state.units[id.0].content.copied_prefix = None;
-            self.path_state.units[id.0].content.facts.written_pointee_ty = None;
+            self.path_state.mem_units[id.0].content.typed_facts.clear();
+            self.path_state.mem_units[id.0].content.copied_prefix = None;
+            self.path_state.mem_units[id.0].content.facts.written_pointee_ty = None;
         }
     }
 
@@ -604,7 +604,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                             // `&(*leaf).keys` keeps `len = N` for downstream InBound.
                             let alloc = provenance.as_ref().map(|p| p.alloc_id);
                             alloc.and_then(|a| {
-                                self.path_state.units[a.0].content.values
+                                self.path_state.mem_units[a.0].content.values
                                     .get(&(view_ty, field_path.clone()))
                                     .and_then(|fv| {
                                         fv.provenance.clone().map(|p| (fv.z3_term.clone(), p))
@@ -668,7 +668,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let align = self.align_sym(ty);
         let name = format!("addr__{}", local.as_usize());
         let base = Int::new_const(self.z3_ctx, name.as_str());
-        let id = AllocId(self.path_state.units.len());
+        let id = AllocId(self.path_state.mem_units.len());
         // For arrays, track the element type (not the array type) so that
         // len() computes `size / elem_size` correctly.  When the element size
         // is unknown (a generic `T`), `size_of::<[T; N]>()` collapses to 0, so
@@ -704,7 +704,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         if let Some(len) = slice_len {
             alloc.set_slice_len(len);
         }
-        self.path_state.units.push(MemoryUnit {
+        self.path_state.mem_units.push(MemoryUnit {
             allocation: alloc,
             content: MemoryContent::default(),
         });
@@ -999,7 +999,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     /// byte value when `i` is concrete, rather than leaking the nested
     /// `select`/`store` expression into downstream SMT obligations.
     pub(crate) fn byte_read(&self, alloc_id: AllocId, i: &Int<'z3>) -> Int<'z3> {
-        match &self.path_state.units[alloc_id.0].content.byte_array {
+        match &self.path_state.mem_units[alloc_id.0].content.byte_array {
             Some(arr) => arr.select(i).as_int().expect("byte array range is Int").simplify(),
             None => self.uninit_byte(),
         }
@@ -1083,12 +1083,12 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(crate) fn byte_write(&mut self, alloc_id: AllocId, i: &Int<'z3>, v: &Int<'z3>) {
         self.clear_write_evidence(alloc_id);
         let offset = i.simplify();
-        let arr = self.path_state.units[alloc_id.0].content.byte_array.clone();
+        let arr = self.path_state.mem_units[alloc_id.0].content.byte_array.clone();
         let updated = match arr {
             Some(a) => a.store(&offset, v),
             None => self.fresh_byte_array().store(&offset, v),
         };
-        let unit = &mut self.path_state.units[alloc_id.0];
+        let unit = &mut self.path_state.mem_units[alloc_id.0];
         unit.content.byte_array = Some(updated);
         if let Some(off) = offset.as_u64() {
             unit.content.byte_written.insert(off as usize);
@@ -1131,7 +1131,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     /// Enumerate `(offset, term)` pairs for the *written* bytes of an allocation,
     /// in ascending offset order.
     pub(crate) fn alloc_byte_values(&self, alloc_id: AllocId) -> Vec<(usize, Int<'z3>)> {
-        let mut offs: Vec<usize> = self.path_state.units[alloc_id.0]
+        let mut offs: Vec<usize> = self.path_state.mem_units[alloc_id.0]
             .content
             .byte_written
             .iter()
@@ -1145,7 +1145,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
 
     /// Offsets known to be NUL.
     pub(crate) fn alloc_nul_offsets(&self, alloc_id: AllocId) -> Vec<usize> {
-        let mut offs: Vec<usize> = self.path_state.units[alloc_id.0]
+        let mut offs: Vec<usize> = self.path_state.mem_units[alloc_id.0]
             .content
             .byte_written
             .iter()
@@ -1158,7 +1158,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
 
     /// Offsets known to be non-NUL.
     pub(crate) fn alloc_non_nul_offsets(&self, alloc_id: AllocId) -> Vec<usize> {
-        let mut offs: Vec<usize> = self.path_state.units[alloc_id.0]
+        let mut offs: Vec<usize> = self.path_state.mem_units[alloc_id.0]
             .content
             .byte_written
             .iter()
@@ -1172,7 +1172,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     /// Copy the per-byte state (values + written-offset bound) of one allocation
     /// to another, shifting by `src_offset` so `dst[i] = src[i + src_offset]`.
     pub(crate) fn copy_byte_tracking(&mut self, src: AllocId, src_offset: usize, dst: AllocId) {
-        let written: Vec<usize> = self.path_state.units[src.0]
+        let written: Vec<usize> = self.path_state.mem_units[src.0]
             .content
             .byte_written
             .iter()
@@ -1200,7 +1200,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         view_ty: Ty<'tcx>,
         path: &[usize],
     ) -> Option<&VmValue<'z3, 'tcx>> {
-        self.path_state.units[alloc_id.0]
+        self.path_state.mem_units[alloc_id.0]
             .content
             .values
             .get(&(view_ty, path.to_vec()))
@@ -1218,7 +1218,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         path: Vec<usize>,
         value: VmValue<'z3, 'tcx>,
     ) {
-        self.path_state.units[alloc_id.0]
+        self.path_state.mem_units[alloc_id.0]
             .content
             .values
             .insert((view_ty, path), value);
@@ -1329,7 +1329,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     /// the materialized field values.
     pub(crate) fn find_local_by_address(&self, term: &Int<'z3>) -> Option<Local> {
         for (local, id) in &self.path_state.current_frame.local_alloc {
-            if self.path_state.units[id.0].allocation.base == *term {
+            if self.path_state.mem_units[id.0].allocation.base == *term {
                 return Some(*local);
             }
         }

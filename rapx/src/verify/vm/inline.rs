@@ -332,7 +332,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 .any(|state| state.local_value(Local::from_usize(0)).is_none())
         }) {
             let witnessed: Vec<_> = self.path_state
-                .units
+                .mem_units
                 .iter()
                 .enumerate()
                 .filter_map(|(index, unit)| {
@@ -342,7 +342,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             let explored_diagnostics = self.path_state.diagnostics.clone();
             *self = before_inline;
             for id in witnessed {
-                if let Some(unit) = self.path_state.units.get_mut(id.0) {
+                if let Some(unit) = self.path_state.mem_units.get_mut(id.0) {
                     unit.content.facts.may_be_uninit = true;
                 }
             }

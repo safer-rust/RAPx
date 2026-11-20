@@ -867,7 +867,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             ContractExpr::AlignOf(ty) => Some(self.align_sym_read(*ty)),
             ContractExpr::Place(cp) => {
                 let path = cp.plain_field_path()?;
-                self.path_state.units[alloc_id.0]
+                self.path_state.mem_units[alloc_id.0]
                     .content
                     .values
                     .get(&(view_ty, path))
@@ -898,7 +898,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             return None;
         };
         let path = cp.plain_field_path()?;
-        self.path_state.units[alloc_id.0]
+        self.path_state.mem_units[alloc_id.0]
             .content
             .values
             .get(&(view_ty, path))

@@ -260,7 +260,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                         })
                     });
                 if !mask_is_zero {
-                    for index in 0..self.path_state.units.len() {
+                    for index in 0..self.path_state.mem_units.len() {
                         self.forget_memory_values(AllocId(index));
                     }
                 }

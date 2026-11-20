@@ -91,7 +91,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     .map(|id| self.root_alloc(id))
             })
             .collect();
-        let mut affected: Vec<_> = (0..self.path_state.units.len())
+        let mut affected: Vec<_> = (0..self.path_state.mem_units.len())
             .map(AllocId)
             .filter(|id| !private.contains(id))
             .collect();
@@ -115,7 +115,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 self.alloc_mut(id).facts.function_var_may_drop = true;
             }
             self.forget_memory_values(id);
-            for alias in 0..self.path_state.units.len() {
+            for alias in 0..self.path_state.mem_units.len() {
                 let alias = AllocId(alias);
                 if self.root_alloc(alias) == id {
                     let facts = &mut self.alloc_mut(alias).facts;

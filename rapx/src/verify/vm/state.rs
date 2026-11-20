@@ -984,7 +984,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(crate) fn local_address(&mut self, local: Local) -> Int<'z3> {
         self.ensure_local_allocation(local);
         let id = self.path_state.current_frame.local_alloc[&local];
-        self.path_state.units[id.0].allocation.base.clone()
+        self.path_state.mem_units[id.0].allocation.base.clone()
     }
 
     /// Allocate a fresh symbolic object and return its ID and base address.
@@ -1033,7 +1033,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         element_ty: Option<Ty<'tcx>>,
         kind: AllocKind<'z3>,
     ) -> (AllocId, Int<'z3>) {
-        let id = AllocId(self.path_state.units.len());
+        let id = AllocId(self.path_state.mem_units.len());
         let base = {
             let name = format!(
                 "{}_{}",
@@ -1047,7 +1047,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             Int::new_const(self.z3_ctx, name.as_str())
         };
         let alloc = Allocation::new(base.clone(), size, align, element_ty, kind);
-        self.path_state.units.push(MemoryUnit {
+        self.path_state.mem_units.push(MemoryUnit {
             allocation: alloc,
             content: MemoryContent::default(),
         });
@@ -1056,22 +1056,22 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
 
     /// Indexed access to an allocation by its `AllocId` (the id is the index).
     pub(crate) fn alloc(&self, id: AllocId) -> &Allocation<'z3, 'tcx> {
-        &self.path_state.units[id.0].allocation
+        &self.path_state.mem_units[id.0].allocation
     }
 
     /// Mutable indexed access to an allocation by its `AllocId`.
     pub(crate) fn alloc_mut(&mut self, id: AllocId) -> &mut Allocation<'z3, 'tcx> {
-        &mut self.path_state.units[id.0].allocation
+        &mut self.path_state.mem_units[id.0].allocation
     }
 
     /// Indexed access to an allocation's contents by its `AllocId`.
     pub(crate) fn content(&self, id: AllocId) -> &MemoryContent<'z3, 'tcx> {
-        &self.path_state.units[id.0].content
+        &self.path_state.mem_units[id.0].content
     }
 
     /// Mutable indexed access to an allocation's contents by its `AllocId`.
     pub(crate) fn content_mut(&mut self, id: AllocId) -> &mut MemoryContent<'z3, 'tcx> {
-        &mut self.path_state.units[id.0].content
+        &mut self.path_state.mem_units[id.0].content
     }
 
     /// Whether `id` was asserted a valid C string via a `ValidCStr` contract
@@ -1096,7 +1096,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             guard += 1;
             // A parent chain as long as the total allocation count means a
             // cycle; stop rather than loop forever.
-            if guard >= self.path_state.units.len() {
+            if guard >= self.path_state.mem_units.len() {
                 break;
             }
         }
@@ -1148,7 +1148,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             return Vec::new();
         };
         let view_ty = self.body().local_decls[local].ty;
-        self.path_state.units[alloc_id.0]
+        self.path_state.mem_units[alloc_id.0]
             .content
             .values
             .keys()
@@ -1182,7 +1182,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             return Vec::new();
         };
         let view_ty = self.frame_local_ty(frame, local);
-        self.path_state.units[alloc_id.0]
+        self.path_state.mem_units[alloc_id.0]
             .content
             .values
             .keys()
@@ -1336,7 +1336,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(crate) fn assert_all(&self, solver: &z3::Solver<'z3>) {
         self.assert_path_constraints(solver);
         let zero = Int::from_u64(self.z3_ctx, 0);
-        for unit in &self.path_state.units {
+        for unit in &self.path_state.mem_units {
             let alloc = &unit.allocation;
             if !alloc.is_external() {
                 solver.assert(&alloc.base._eq(&zero).not());
@@ -1413,7 +1413,7 @@ impl std::fmt::Debug for VmExecutor<'_, '_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VmExecutor")
             .field("locals_count", &self.path_state.current_frame.local_alloc.len())
-            .field("allocations_count", &self.path_state.units.len())
+            .field("allocations_count", &self.path_state.mem_units.len())
             .field("assertions", &self.path_state.constraints.assertions.len())
             .finish()
     }
@@ -1947,7 +1947,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             && size != 0
             && offset % size == 0
         {
-            let value = self.path_state.units[provenance.alloc_id.0]
+            let value = self.path_state.mem_units[provenance.alloc_id.0]
                 .content
                 .values
                 .iter()
@@ -2232,7 +2232,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     // `UNINIT` (e.g. a struct whose fields were written in
                     // the value layer only), so also fall through to the
                     // field→byte materialization in that case.
-                    if self.path_state.units[alloc_id.0].content.byte_array.is_some() {
+                    if self.path_state.mem_units[alloc_id.0].content.byte_array.is_some() {
                         let term = self.byte_read(alloc_id, &offset);
                         let is_uninit = offset
                             .simplify()
