@@ -10,6 +10,7 @@ pub(crate) mod diagnostics;
 pub(crate) mod display;
 pub(crate) mod exec;
 pub(crate) mod inline;
+pub(crate) mod integer;
 mod inspection;
 mod iterator;
 pub(crate) mod materialize;
