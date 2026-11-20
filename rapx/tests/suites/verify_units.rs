@@ -38,6 +38,47 @@ fn vm_state_precision_01() {
 }
 
 #[test]
+fn vm_numeric_semantics_01() {
+    let modes: [&[&str]; 2] = [
+        CMD_VERIFY_TARGETED,
+        &["verify", "--mode", "targeted", "--", "--release"],
+    ];
+    for mode in modes {
+        let output = run_with_args("verify_units/vm_numeric_semantics_01", mode);
+        assert_result_counts(&output, [24, 24, 0]);
+        for case in [
+            "short_circuit_guard",
+            "add_overflow_tuple",
+            "sub_overflow_tuple",
+            "mul_overflow_tuple",
+            "add_no_overflow",
+            "signed_add_overflow",
+            "signed_sub_overflow",
+            "signed_mul_overflow",
+            "narrow_cast",
+            "sign_extend",
+            "zero_extend",
+            "signed_to_unsigned",
+            "unsigned_to_signed",
+            "signed_div_rem",
+            "negative_divisor",
+            "positive_dividend",
+            "unsigned_not",
+            "signed_not",
+            "boolean_not",
+            "arbitrary_mask",
+            "bitwise_or_xor",
+            "signed_ctlz",
+            "signed_cttz",
+            "zero_result_drops_pointer_facts",
+        ] {
+            assert_function_result(&output, &format!("sound_{case}"), "SOUND");
+            assert_unproved(&output, &format!("unsound_{case}"), "ValidPtr");
+        }
+    }
+}
+
+#[test]
 fn vm_integer_domain_01() {
     let modes: [&[&str]; 2] = [
         CMD_VERIFY_TARGETED,
@@ -59,6 +100,55 @@ fn vm_integer_domain_01() {
             assert_function_result(&output, case, "UNSOUND");
             assert_unproved(&output, case, "ValidNum");
         }
+    }
+}
+
+#[test]
+fn vm_numeric_path_limit_01() {
+    let output = run_with_args(
+        "verify_units/vm_numeric_semantics_01",
+        &["verify", "--mode", "targeted", "--path-limit", "1"],
+    );
+    assert_contain(&output, "path limit");
+    let mut unknown_limited = 0;
+    for block in output.split("[rapx::verify] function: ").skip(1) {
+        if block.contains("result: UNKNOWN (path limit") {
+            assert_not_contain(block, "result: SOUND");
+            unknown_limited += 1;
+        }
+    }
+    assert!(
+        unknown_limited > 0,
+        "Expected a path-limited UNKNOWN function\n{output}"
+    );
+}
+
+#[test]
+fn vm_loop_exit_01() {
+    let output = run_with_args("verify_units/vm_loop_exit_01", CMD_VERIFY_TARGETED);
+    assert_result_counts(&output, [1, 1, 0]);
+    assert_function_result(&output, "sound_after_two_iterations", "SOUND");
+    assert_function_result(&output, "unsound_after_two_iterations", "UNSOUND");
+    assert_unproved(&output, "unsound_after_two_iterations", "ValidPtr");
+}
+
+#[test]
+fn vm_numeric_scc_limit_01() {
+    let output = run_with_args(
+        "verify_units/validcstring_std_unsound_07",
+        &["verify", "--mode", "targeted", "--path-limit", "1024"],
+    );
+    let block = extract_block_after(
+        &output,
+        "function: unsound_loop_writes_interior_nul",
+    );
+    assert_not_contain(block, "result: SOUND");
+    assert!(
+        block.contains("result: UNSOUND") || block.contains("result: UNKNOWN"),
+        "Expected the interior NUL to remain unproved with an SCC path limit\n{output}"
+    );
+    if block.contains("result: UNKNOWN") {
+        assert_contain(block, "path limit");
     }
 }
 
@@ -315,9 +405,8 @@ fn validptr_unsound_01_constructor_summary() {
     assert_contain(&output, "ValidPtr | Failed");
 }
 
-// Regression for #337: keep the intended result while the cast bug is open.
+// Regression for #337: narrowing must preserve the feasible out-of-bounds branch.
 #[test]
-#[ignore = "issue #337: integer cast semantics prune the out-of-bounds branch"]
 fn validptr_unsound_06() {
     let output = run_with_args("verify_units/validptr_unsound_06", CMD_VERIFY_TARGETED);
     assert_unproved(&output, "unsound_narrow_cast_selects_out_of_bounds_read", "ValidPtr");

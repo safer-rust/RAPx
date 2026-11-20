@@ -120,6 +120,7 @@ impl<'tcx> PathExtractor<'tcx> {
             Some(body) => PathGraph::new_with_body(self.tcx, self.def_id, body),
             None => PathGraph::new(self.tcx, self.def_id),
         };
+        caller_graph.conservative_origins = true;
         caller_graph.find_scc();
         let caller_paths = PathEnumerator::new(&caller_graph)
             .with_path_limit(self.config.path_limit())
@@ -250,6 +251,7 @@ impl<'g, 'tcx> PathComposer<'g, 'tcx> {
         } else {
             PathGraph::new(self.call_index.tcx(), callee)
         };
+        local_graph.conservative_origins = true;
         local_graph.find_scc();
         let local_paths = PathEnumerator::new(&local_graph)
             .with_path_limit(self.limit)

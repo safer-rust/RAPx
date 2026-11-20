@@ -280,7 +280,8 @@ fn path_6() {
     assert_contain(&output, "Function: \"early_exit\":");
     assert_contain(&output, "Path [0, 1, 2]");
     assert_contain(&output, "Path [0, 1, 3, 4, 1, 2]");
-    assert_eq!(path_count_for(&output, "early_exit"), 2);
+    assert_contain(&output, "Path [0, 1, 3, 4, 1, 3, 4, 1, 2]");
+    assert_eq!(path_count_for(&output, "early_exit"), 3);
 }
 
 #[test]
@@ -294,7 +295,27 @@ fn path_7() {
         &output,
         "Path [0, 1, 3, 4, 6, 7, 8, 4, 5, 9, 1, 3, 4, 5, 9, 1, 2]",
     );
-    assert_eq!(path_count_for(&output, "walk"), 4);
+    // Nested SCC continuations are now replayed for each path prefix. Keep
+    // checking the representative paths above without requiring the old
+    // under-approximate total of four.
+    assert!(path_count_for(&output, "walk") > 4, "{output}");
+}
+
+#[test]
+fn path_7_repeated_inner_scc() {
+    let output = run_with_args("analyze/path_7", CMD_ANALYZE_PATHS_REPEAT_1);
+    // rows=2, cols=1 enters the same inner SCC twice. Equal summaries must not
+    // suppress the continuation of the second entry.
+    assert_contain(
+        &output,
+        "Path [0, 1, 3, 4, 6, 7, 8, 4, 5, 9, 1, 3, 4, 6, 7, 8, 4, 5, 9, 1, 2]",
+    );
+}
+
+#[test]
+fn path_8() {
+    let output = run_with_args("analyze/path_8", CMD_ANALYZE_PATHS);
+    assert_eq!(path_count_for(&output, "two_iterations"), 1, "{output}");
 }
 
 #[test]

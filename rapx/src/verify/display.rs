@@ -386,23 +386,26 @@ pub(crate) fn emit_verify_summary<'tcx>(
 /// Print checkpoint results, the overall verdict, and any unknown diagnostics.
 pub(crate) fn emit_results_and_verdict<'tcx>(all_results: &[PropertyCheckResult<'tcx>], limits: VerificationLimits) {
     let (failed, unknown) = emit_results_counts_and_checkpoints(all_results);
-    if failed == 0 && unknown == 0 {
-        let mut labels = Vec::new();
+    if failed > 0 {
+        rap_warn!("  result: UNSOUND ({failed} failed, {unknown} unknown)");
+    } else if unknown > 0 || limits.path_limited {
+        let mut reasons = Vec::new();
+        if unknown > 0 {
+            reasons.push(format!("{unknown} unproved"));
+        }
         if limits.path_limited {
-            labels.push("path limit");
+            reasons.push("path limit".to_string());
         }
         if limits.mono_limited {
-            labels.push("mono limit");
+            reasons.push("mono limit".to_string());
         }
-        if labels.is_empty() {
-            rap_info!(green, "  result: SOUND");
-        } else {
-            rap_info!(green, "  result: SOUND (with {})", labels.join(", "));
-        }
-    } else if failed > 0 {
-        rap_warn!("  result: UNSOUND ({failed} failed, {unknown} unknown)");
+        rap_warn!("  result: UNKNOWN ({})", reasons.join(", "));
     } else {
-        rap_warn!("  result: UNKNOWN ({unknown} unproved)");
+        if limits.mono_limited {
+            rap_info!(green, "  result: SOUND (with mono limit)");
+        } else {
+            rap_info!(green, "  result: SOUND");
+        }
     }
 
     let mut unsupported = Vec::new();
