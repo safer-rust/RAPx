@@ -19,7 +19,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         callee: DefId,
     ) {
         let ty = self.body().local_decls[dest].ty;
-        if !crate::call_summary::function_var::supports_result(ty) {
+        if !crate::analysis::dataflow::call_summary::function_var::supports_result(ty) {
             self.record_missing_mir(callee);
             return;
         }

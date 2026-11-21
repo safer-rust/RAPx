@@ -20,8 +20,8 @@ use crate::compat::Spanned;
 use crate::def_ids::diagnostic_api;
 use crate::helpers::fn_info::{self, FnKind};
 use crate::helpers::mir_utils;
-use crate::call_summary::CallEffect;
-use crate::{api_classify, call_summary, vm::constructor_policy::{constructor_result_has_invariant, effective_constructor_mir_mode}};
+use crate::analysis::dataflow::call_summary::CallEffect;
+use crate::{analysis::dataflow::call_summary, def_ids::api_classify, vm::constructor_policy::{constructor_result_has_invariant, effective_constructor_mir_mode}};
 
 #[derive(Clone, Copy)]
 struct CallSite<'a, 'z3, 'tcx> {
@@ -405,7 +405,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     ) {
         let callee = site.callee;
         if let Some(owner) = callee
-            .and_then(|id| crate::call_summary::shared_owner::shared_raw_owner_type(self.tcx, id))
+            .and_then(|id| crate::analysis::alias::shared_owner::shared_raw_owner_type(self.tcx, id))
         {
             self.begin_ownership_transfer(site.destination, owner);
         }

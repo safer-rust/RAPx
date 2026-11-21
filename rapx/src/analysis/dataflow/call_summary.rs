@@ -1,9 +1,8 @@
-//! Call effects and verifier semantics for dataflow dependency queries.
+//! Call-effect summaries shared by VM execution and dataflow analysis.
 mod dependency_semantics;
 pub(crate) mod effects;
 pub(crate) mod function_var;
 pub(crate) mod pointer_semantics;
-pub(crate) mod shared_owner;
 
 use rustc_middle::{
     mir::Operand,

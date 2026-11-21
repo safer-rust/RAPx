@@ -14,7 +14,7 @@ use super::super::super::state::{
 use crate::def_ids::type_ids;
 use crate::compat::Spanned;
 use crate::helpers::mir_utils;
-use crate::call_summary::{
+use crate::analysis::dataflow::call_summary::{
     BoundedArithmeticOp, CallEffect, OverflowOp, SimdArithOp, SimdCmpOp,
 };
 
@@ -71,7 +71,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             CallEffect::ReturnFloatToIntUnchecked => {
                 let dest_ty = self.body().local_decls[dest].ty;
                 let result = call_args.first()
-                    .and_then(|arg| crate::call_summary::constant_float_to_int(self.tcx, &arg.node, dest_ty))
+                    .and_then(|arg| crate::analysis::dataflow::call_summary::constant_float_to_int(self.tcx, &arg.node, dest_ty))
                     .and_then(|bits| self.scalar_bits_term(dest_ty, bits));
                 if let Some(term) = result {
                     self.set_local(dest, VmValue::new(term, dest_ty));
@@ -395,7 +395,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             CallEffect::ReturnVecFromSlice => {
                 self.ensure_local_allocation(dest);
                 let dest_ty = self.body().local_decls[dest].ty;
-                let elem_ty = crate::call_summary::effects::vec_elem_ty(dest_ty);
+                let elem_ty = crate::analysis::dataflow::call_summary::effects::vec_elem_ty(dest_ty);
                 let heap_align = elem_ty
                     .map(|ty| self.align_sym(ty))
                     .unwrap_or_else(|| Int::from_u64(self.z3_ctx, 1));

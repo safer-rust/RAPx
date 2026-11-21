@@ -43,7 +43,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         }
         let ty = result.ty;
         let invariants =
-            crate::type_invariants::build_type_invariants_for_ty(self.tcx, callee, ty);
+            crate::contract::type_invariants::build_type_invariants_for_ty(self.tcx, callee, ty);
         for mut invariant in invariants {
             rebind_property_place(&mut invariant, destination);
             self.assert_contract_fact(&invariant);

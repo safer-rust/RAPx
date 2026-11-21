@@ -1,8 +1,9 @@
-pub(crate) mod hazard;
-pub(crate) mod tree;
 pub mod default;
+pub(crate) mod hazard;
 pub mod mfp;
 pub mod observer;
+pub(crate) mod shared_owner;
+pub(crate) mod tree;
 use crate::helpers::mir_utils;
 use crate::utils::source::get_fn_name_byid;
 

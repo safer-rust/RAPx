@@ -8,6 +8,7 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 
+pub(crate) mod api_classify;
 pub(crate) mod diagnostic_api;
 pub(crate) mod intrinsic_api;
 pub(crate) mod lang_api;

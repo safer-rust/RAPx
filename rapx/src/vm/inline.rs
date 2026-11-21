@@ -301,7 +301,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             .iter()
             .flatten()
             .filter(|local| {
-                crate::api_classify::strips_to_maybe_uninit(before_inline.body().local_decls[**local].ty)
+                crate::def_ids::api_classify::strips_to_maybe_uninit(before_inline.body().local_decls[**local].ty)
             })
             .filter_map(|local| before_inline.path_state.current_frame.local_alloc.get(local).copied())
             .filter(|id| before_inline.allocation_needs_write(*id))

@@ -330,7 +330,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             }
             self.set_local(Local::from_usize(dest), v);
             if let Some(owner) =
-                crate::call_summary::shared_owner::shared_raw_owner_type(self.tcx, callee)
+                crate::analysis::alias::shared_owner::shared_raw_owner_type(self.tcx, callee)
             {
                 self.begin_ownership_transfer(Local::from_usize(dest), owner);
             }

@@ -4,9 +4,9 @@
 //! targets and contracts, extract SCC-aware paths, slice them backward, execute
 //! the relevant MIR symbolically, and discharge each property with Z3.
 
-pub(crate) use crate::api_classify;
+pub(crate) use crate::def_ids::api_classify;
 mod auto_trait;
-pub(crate) use crate::call_summary;
+pub(crate) use crate::analysis::dataflow::call_summary;
 mod checkpoint;
 pub(crate) mod config;
 pub(crate) use crate::contract;
@@ -21,7 +21,7 @@ mod report;
 mod slicer;
 mod target;
 mod trait_ensurance;
-pub(crate) use crate::type_invariants;
+pub(crate) use crate::contract::type_invariants;
 mod vm;
 
 pub(crate) use self::{

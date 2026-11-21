@@ -4,8 +4,8 @@ use crate::def_ids::type_ids;
 use crate::analysis::dataflow::{call_read, call_write, pointer_copy};
 use crate::analysis::dataflow::pointer_flow::{self, trace_source_arg};
 use crate::helpers::mir_utils;
-use crate::call_summary::VerifierCallSemantics;
-use crate::call_summary::pointer_semantics;
+use crate::analysis::dataflow::call_summary::VerifierCallSemantics;
+use crate::analysis::dataflow::call_summary::pointer_semantics;
 use crate::contract::PropertyKind;
 use std::collections::{HashMap, HashSet};
 
@@ -171,7 +171,7 @@ fn ownership_transfer_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Option<usize
         return None;
     };
     let invariants =
-        crate::type_invariants::build_type_invariants_for_ty(tcx, callee, output);
+        crate::contract::type_invariants::build_type_invariants_for_ty(tcx, callee, output);
     let mut paths: Vec<_> = invariants
         .iter()
         .filter(|invariant| invariant.kind() == Some(PropertyKind::Owning))
@@ -1498,7 +1498,7 @@ fn terminator_writes_origin<'tcx>(
         return false;
     };
     let callee = mir_utils::dep_callee_def_id(func);
-    if !crate::api_classify::is_ptr_write(tcx, callee) {
+    if !crate::def_ids::api_classify::is_ptr_write(tcx, callee) {
         return false;
     }
     let Some(arg0) = args.first() else {

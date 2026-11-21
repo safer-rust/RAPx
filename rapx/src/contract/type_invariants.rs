@@ -14,7 +14,7 @@ use crate::def_ids::type_ids;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{self, Ty, TyCtxt};
 
-use super::contract::{
+use crate::contract::{
     json::AnyItem, place::projected_field_ty, ContractExpr, ContractPlace, ContractProjection, NumericPredicate, PlaceBase,
     Property, PropertyArg, PropertyKind,
 };

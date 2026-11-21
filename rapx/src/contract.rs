@@ -1,8 +1,10 @@
-//! Contract parsing, resolution, lookup, and rendering.
+//! Contract IR and type invariants.
 //!
 //! Inline attributes, embedded JSON, and `pred!`-style compound properties
 //! produce the contract IR defined here. Attribute and JSON arguments are parsed
 //! as `syn` expressions; compound bodies use the pest grammar.
+//!
+//! `type_invariants` synthesizes properties for known types.
 //!
 //! ## Layering
 //!
@@ -34,6 +36,7 @@ pub(crate) mod place;
 pub(crate) mod render;
 pub(crate) mod resolve;
 pub(crate) mod spec;
+pub(crate) mod type_invariants;
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::{mir::Local, ty::{Region, Ty}};
