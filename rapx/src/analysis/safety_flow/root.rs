@@ -1,9 +1,7 @@
-use crate::util::fn_info::get_adt_def_id_by_adt_method;
 use crate::util::mir_scan::{collect_global_local_pairs, get_rawptr_deref, get_unsafe_callees};
-use crate::util::mir_utils::{has_rapx_attr, is_trait_unsafe};
+use crate::util::mir_utils::is_trait_unsafe;
 use rustc_hir::{BodyId, def_id::DefId};
 use rustc_middle::{mir::Local, ty::TyCtxt};
-use rustc_span::Symbol;
 use std::collections::HashSet;
 
 use super::hir_visitor::ContainsUnsafe;
@@ -39,27 +37,9 @@ pub fn hir_contains_unsafe(tcx: TyCtxt<'_>, body_id: BodyId) -> bool {
     fn_unsafe || block_unsafe
 }
 
-/// Check if a struct has `#[rapx::invariant(...)]` annotations.
-///
-/// This is a cheap HIR attribute scan — it only checks for the presence of
-/// the attribute path, without parsing the annotation arguments.
-pub fn has_rapx_struct_invariant(tcx: TyCtxt<'_>, struct_def_id: DefId) -> bool {
-    let Some(local_def_id) = struct_def_id.as_local() else {
-        return false;
-    };
-    has_rapx_attr(tcx, local_def_id, Symbol::intern("invariant"))
-}
-
-/// Quick check: does this function's owning struct have invariants?
-pub fn function_has_rapx_struct_invariant(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-    get_adt_def_id_by_adt_method(tcx, def_id)
-        .map(|struct_def_id| has_rapx_struct_invariant(tcx, struct_def_id))
-        .unwrap_or(false)
-}
-
 /// Quick check: does this function's containing impl implement an `unsafe trait`?
 ///
-/// This is a fast HIR-level pre-filter similar to [`function_has_rapx_struct_invariant`].
+/// This is a fast HIR-level pre-filter for unsafe trait implementations.
 pub fn function_has_trait_ensurance(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     let Some(assoc_item) = tcx.opt_associated_item(def_id) else {
         return false;

@@ -11,6 +11,7 @@
 //! `init_parameters` and re-proved at return by `FunctionVerifier::verify_type_invariants`.
 
 use crate::def_ids::type_ids;
+use crate::util::fn_info;
 use crate::util::mir_utils;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{self, Ty, TyCtxt};
@@ -83,6 +84,17 @@ pub(crate) fn has_json_type_invariants<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) ->
         || ["alloc::", "std::"]
             .iter()
             .any(|prefix| db.contains_key(&format!("{prefix}{key}")))
+}
+
+/// Whether a constructor directly returns its owning ADT with a declared invariant.
+pub(crate) fn constructor_result_has_invariant(tcx: TyCtxt<'_>, callee: DefId) -> bool {
+    let Some(owner) = fn_info::get_adt_def_id_by_adt_method(tcx, callee) else {
+        return false;
+    };
+    let output = tcx.fn_sig(callee).skip_binder().output().skip_binder();
+    Some(owner) == output.ty_adt_def().map(|adt| adt.did())
+        && (crate::contract::annotation::has_rapx_struct_invariant(tcx, owner)
+            || has_json_type_invariants(tcx, output))
 }
 
 /// Whether the container's pointer field has an `Allocated` or `Owning` invariant.

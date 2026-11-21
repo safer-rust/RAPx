@@ -21,10 +21,7 @@ mod target;
 mod trait_ensurance;
 mod vm;
 
-pub(crate) use self::{
-    call_summary::{effects::has_registered_effect, function_var::supports_result as supports_function_var_result},
-    target::PrepareTargets,
-};
+pub(crate) use self::target::PrepareTargets;
 
 use std::{sync::Arc, time::Instant};
 

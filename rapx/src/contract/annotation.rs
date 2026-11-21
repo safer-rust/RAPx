@@ -5,8 +5,23 @@ use crate::contract::{
     attr::{collect_properties_from_named_attrs, is_rapx_named_attr, parse_rapx_attr},
     is_static_lifetime_ident,
 };
+use crate::util::fn_info::get_adt_def_id_by_adt_method;
+use crate::util::mir_utils::has_rapx_attr;
 use rustc_hir::{ItemKind, def_id::DefId};
 use rustc_middle::ty::{self, EarlyParamRegion, GenericParamDefKind, Region, Ty, TyCtxt};
+use rustc_span::Symbol;
+
+/// Check whether a local struct declares a RAPx invariant without parsing it.
+pub(crate) fn has_rapx_struct_invariant(tcx: TyCtxt<'_>, struct_def_id: DefId) -> bool {
+    let Some(local_def_id) = struct_def_id.as_local() else { return false };
+    has_rapx_attr(tcx, local_def_id, Symbol::intern("invariant"))
+}
+
+/// Check whether a function's owning struct declares a RAPx invariant.
+pub(crate) fn function_has_rapx_struct_invariant(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
+    get_adt_def_id_by_adt_method(tcx, def_id)
+        .is_some_and(|struct_def_id| has_rapx_struct_invariant(tcx, struct_def_id))
+}
 
 pub(crate) fn get_trait_method_requires<'tcx>(
     tcx: TyCtxt<'tcx>,

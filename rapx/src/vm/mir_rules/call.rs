@@ -22,7 +22,8 @@ use crate::util::fn_info::{self, FnKind};
 use crate::util::mir_utils;
 use crate::analysis::dataflow::call_summary::{self, CallEffect};
 use crate::def_ids;
-use crate::vm::constructor_policy::{constructor_result_has_invariant, effective_constructor_mir_mode};
+use crate::contract::type_invariants::constructor_result_has_invariant;
+use crate::vm::constructor_policy::effective_constructor_mir_mode;
 
 #[derive(Clone, Copy)]
 struct CallSite<'a, 'z3, 'tcx> {

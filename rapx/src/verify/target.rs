@@ -6,7 +6,7 @@
 
 use crate::analysis::Analysis;
 use crate::analysis::safety_flow::root::{
-    function_has_rapx_struct_invariant, function_has_trait_ensurance, hir_contains_unsafe,
+    function_has_trait_ensurance, hir_contains_unsafe,
 };
 use crate::verify::config::VerifyMode;
 use crate::compat::FxHashMap;
@@ -51,7 +51,7 @@ use crate::util::mir_utils::{
 };
 use crate::verify::checkpoint::{Checkpoint, CheckpointKind, collect_unsafe_callsites};
 
-use crate::contract::annotation::{bind_alive_regions, get_contract_from_annotation, get_struct_invariants_from_annotation, get_trait_method_requires};
+use crate::contract::annotation::{bind_alive_regions, function_has_rapx_struct_invariant, get_contract_from_annotation, get_struct_invariants_from_annotation, get_trait_method_requires};
 
 /// Preconditions associated with a function or unsafe callee.
 pub(crate) type FnContracts<'tcx> = Vec<Property<'tcx>>;

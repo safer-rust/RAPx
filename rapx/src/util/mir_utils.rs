@@ -1,3 +1,4 @@
+use crate::analysis::dataflow::call_summary::{effects::has_registered_effect, function_var::supports_result};
 use crate::compat::{FxHashMap, GenericArgsRef};
 use crate::def_ids::{
     diagnostic_api, intrinsic_api,
@@ -424,7 +425,7 @@ pub(crate) fn has_direct_unmodeled_generic_call<'tcx>(tcx: TyCtxt<'tcx>, def_id:
             && resolve_callee_def_id(tcx, def_id, func)
                 .is_none_or(|target| !tcx.is_mir_available(target))
             && !has_function_var_effect(tcx, callee, body.local_decls[destination.local].ty)
-            && !crate::verify::has_registered_effect(tcx, Some(callee))
+            && !has_registered_effect(tcx, Some(callee))
     })
 }
 
@@ -461,7 +462,7 @@ fn has_unmodeled_generic_call_rec<'tcx>(
             let target = resolve_callee_def_id(tcx, def_id, func);
             if target.is_none_or(|target| !tcx.is_mir_available(target))
                 && !has_function_var_effect(tcx, callee, body.local_decls[destination.local].ty)
-                && !crate::verify::has_registered_effect(tcx, Some(callee))
+                && !has_registered_effect(tcx, Some(callee))
             {
                 return true;
             }
@@ -482,7 +483,7 @@ fn has_unmodeled_generic_call_rec<'tcx>(
 fn has_function_var_effect(tcx: TyCtxt<'_>, callee: DefId, result_ty: Ty<'_>) -> bool {
     tcx.trait_of_assoc(callee)
         .is_some_and(|trait_id| lang_api::is_fn_trait(tcx, trait_id))
-        && crate::verify::supports_function_var_result(result_ty)
+        && supports_result(result_ty)
 }
 
 /// Resolve a call `func` operand to its monomorphized [`Instance`].
