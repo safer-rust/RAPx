@@ -8,7 +8,10 @@ use rustc_middle::{
     ty::{TyCtxt, TypingEnv},
 };
 
-use crate::{def_ids::intrinsic_api, util::mir_utils};
+use crate::{
+    def_ids::{intrinsic_api, other_api},
+    util::mir_utils,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PointerOffsetDirection {
@@ -42,15 +45,38 @@ fn pointer_offset(tcx: TyCtxt<'_>, callee: DefId, depth: usize) -> Option<Pointe
         .local_decls
         .get(Local::from_usize(1))
         .and_then(|decl| mir_utils::pointee_ty(decl.ty));
-    let mut has_zst_switch = false;
-    let only_zst_switches = body.basic_blocks.iter().all(|block| {
+    let mut zst_switches = Vec::new();
+    let mut ub_switches = Vec::new();
+    let only_zst_or_ub_switches = body.basic_blocks.iter_enumerated().all(|(bb, block)| {
         let TerminatorKind::SwitchInt { discr, .. } = &block.terminator().kind else {
             return true;
         };
-        has_zst_switch = true;
-        zst_property_operand(tcx, body, discr, pointee)
+        if zst_property_operand(tcx, body, discr, pointee) {
+            zst_switches.push(bb);
+            true
+        } else if ub_check_result_operand(tcx, body, discr) {
+            ub_switches.push(bb);
+            true
+        } else {
+            false
+        }
     });
-    let zst_branch = has_zst_switch && only_zst_switches;
+    let ub_checks_precede_zst = if ub_switches.is_empty() {
+        true
+    } else if let [zst_bb] = zst_switches.as_slice() {
+        let dominators = body.basic_blocks.dominators();
+        ub_switches
+            .iter()
+            .all(|&bb| dominators.dominates(bb, *zst_bb))
+            && body
+                .basic_blocks
+                .iter_enumerated()
+                .filter(|(_, block)| matches!(block.terminator().kind, TerminatorKind::Return))
+                .all(|(bb, _)| dominators.dominates(*zst_bb, bb))
+    } else {
+        false
+    };
+    let zst_branch = !zst_switches.is_empty() && only_zst_or_ub_switches && ub_checks_precede_zst;
     trace_pointer_offset(
         tcx,
         body,
@@ -59,6 +85,39 @@ fn pointer_offset(tcx: TyCtxt<'_>, callee: DefId, depth: usize) -> Option<Pointe
         zst_branch,
         &mut HashSet::new(),
     )
+}
+
+/// A debug UB check may branch before the ZST switch without changing the result.
+fn ub_check_result_operand(tcx: TyCtxt<'_>, body: &Body<'_>, discr: &Operand<'_>) -> bool {
+    let Some(place) = mir_utils::operand_mir_place(discr) else {
+        return false;
+    };
+    if !place.projection.is_empty() {
+        return false;
+    }
+    let mut callee = None;
+    for block in body.basic_blocks.iter() {
+        if block.statements.iter().any(|stmt| {
+            matches!(&stmt.kind,
+            StatementKind::Assign(assign) if assign.0.local == place.local)
+        }) {
+            return false;
+        }
+        if let TerminatorKind::Call {
+            func, destination, ..
+        } = &block.terminator().kind
+            && destination.local == place.local
+        {
+            if !destination.projection.is_empty() || callee.is_some() {
+                return false;
+            }
+            let Some(did) = mir_utils::dep_callee_def_id(func) else {
+                return false;
+            };
+            callee = Some(did);
+        }
+    }
+    callee.is_some_and(|did| other_api::is_ub_check(tcx, did))
 }
 
 fn trace_pointer_offset<'tcx>(
