@@ -34,11 +34,11 @@ impl<'tcx> BackwardSlicer<'tcx> {
             // a raw ownership share, together with their argument sources.
             let is_state_change = mir_utils::dep_callee_def_id(func).is_some_and(|c| {
                 crate::def_ids::other_api::is_drop_fn(self.tcx, c)
-                    || crate::verify::contract::json::query_json_contracts(self.tcx, c)
+                    || crate::contract::json::query_json_contracts(self.tcx, c)
                         .iter()
                         .any(|property| {
                             property.kind()
-                                == Some(crate::verify::contract::PropertyKind::RefCountShare)
+                                == Some(crate::contract::PropertyKind::RefCountShare)
                         })
             });
             if is_state_change {

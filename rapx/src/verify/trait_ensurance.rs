@@ -3,8 +3,8 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 
-use super::contract::{Property, PropertyArg, PropertyKind};
-use super::target::get_struct_invariants_from_annotation;
+use crate::contract::{Property, PropertyArg, PropertyKind};
+use crate::contract::annotation::get_struct_invariants_from_annotation;
 
 /// Obligations from an unsafe trait implementation.
 ///
@@ -74,7 +74,7 @@ pub(super) fn build_marker_trait_obligations<'tcx>(
         return Vec::new();
     };
 
-    let templates = super::contract::json::query_trait_ensures(tcx, trait_def_id);
+    let templates = crate::contract::json::query_trait_ensures(tcx, trait_def_id);
     let mut obligations = Vec::new();
     for entry in templates {
         if let Some(prop) = build_type_atom(tcx, self_ty_def_id, &entry, self_ty) {
@@ -91,17 +91,17 @@ pub(super) fn build_marker_trait_obligations<'tcx>(
 fn build_type_atom<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
-    entry: &super::contract::json::JsonProperty,
+    entry: &crate::contract::json::JsonProperty,
     self_ty: rustc_middle::ty::Ty<'tcx>,
 ) -> Option<Property<'tcx>> {
     if let Some(items) = &entry.any {
         let disjuncts: Vec<Property<'tcx>> = items
             .iter()
             .filter_map(|item| match item {
-                super::contract::json::AnyItem::Single(e) => {
+                crate::contract::json::AnyItem::Single(e) => {
                     build_type_atom(tcx, def_id, e, self_ty)
                 }
-                super::contract::json::AnyItem::And(es) => {
+                crate::contract::json::AnyItem::And(es) => {
                     let conjuncts: Vec<Property<'tcx>> = es
                         .iter()
                         .filter_map(|e| build_type_atom(tcx, def_id, e, self_ty))
@@ -161,7 +161,7 @@ fn build_type_atom<'tcx>(
                 .args
                 .iter()
                 .filter_map(|s| {
-                    let normalized = super::contract::json::normalize_json_contract_arg(s);
+                    let normalized = crate::contract::json::normalize_json_contract_arg(s);
                     syn::parse_str::<syn::Expr>(&normalized).ok()
                 })
                 .collect();
@@ -169,7 +169,7 @@ fn build_type_atom<'tcx>(
                 return None;
             }
 
-            if let Some(spec) = super::contract::compound::find_compound(def_id.krate, &entry.tag) {
+            if let Some(spec) = crate::contract::compound::find_compound(def_id.krate, &entry.tag) {
                 for i in exprs.len()..spec.param_tys.len() {
                     if spec.param_tys.get(i).map(|s| s.as_str()) != Some("Ptr") {
                         return None;
@@ -182,7 +182,7 @@ fn build_type_atom<'tcx>(
                 }
             }
 
-            match super::contract::compound::expand_compound(tcx, def_id, &entry.tag, &exprs) {
+            match crate::contract::compound::expand_compound(tcx, def_id, &entry.tag, &exprs) {
                 Some(mut props) if !props.is_empty() => {
                     // A compound body expands into one property per conjunct, each
                     // tagged with the compound's origin.  Hoist that origin onto the
@@ -218,5 +218,5 @@ fn extract_tamed_field<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Option<String>
             )
         })
         .and_then(|p| p.args().first())
-        .and_then(|a| super::contract::place::field_name_from_arg(tcx, def_id, a))
+        .and_then(|a| crate::contract::place::field_name_from_arg(tcx, def_id, a))
 }

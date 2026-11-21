@@ -1,12 +1,12 @@
 //! Transmute / trait / size property checking for the symbolic VM.
 
 use crate::util::mir_utils;
+use crate::contract::{Property, PropertyArg};
 use rustc_middle::ty::{GenericArgKind, Ty, TyKind};
 
 use crate::verify::checkpoint::Checkpoint;
 use crate::vm::state::VmExecutor;
 use crate::verify::{
-    contract::{Property, PropertyArg},
     report::{CheckResult, UnknownReason},
 };
 

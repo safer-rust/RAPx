@@ -10,11 +10,11 @@ use z3::Config;
 
 use crate::analysis::path::CallArg;
 use crate::compat::FxHashMap;
+use crate::contract::Property;
 use crate::vm::VmExecutor;
 
 use super::{
     config::VerifyConfig,
-    contract::Property,
     slicer::{ProofGoal, RelevantItem},
 };
 

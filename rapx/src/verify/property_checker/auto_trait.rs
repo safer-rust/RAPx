@@ -5,7 +5,7 @@ use crate::verify::auto_trait::{
     ref_send_check, uni_internal_mut_check,
 };
 use crate::verify::checkpoint::Checkpoint;
-use crate::verify::contract::{Property, PropertyArg};
+use crate::contract::{Property, PropertyArg};
 use crate::verify::report::{CheckResult, UnknownReason};
 use crate::vm::state::VmExecutor;
 

@@ -11,11 +11,11 @@ use z3::{
 
 use crate::analysis::dataflow::pointer_flow::return_traces_first_arg;
 use crate::compat::FxHashMap;
+use crate::contract::{ContractExpr, Property, PropertyArg};
 use crate::util::mir_utils::{self, dep_callee_def_id};
 use crate::verify::checkpoint::Checkpoint;
 use crate::vm::state::{AllocId, VmExecutor};
 use crate::verify::{
-    contract::{ContractExpr, Property, PropertyArg},
     report::{CheckResult, UnknownReason},
 };
 

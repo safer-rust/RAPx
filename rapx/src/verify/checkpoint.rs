@@ -28,7 +28,7 @@ use rustc_middle::mir::CastKind;
 use rustc_middle::ty::TyKind;
 use std::collections::HashSet;
 
-use super::contract::{
+use crate::contract::{
     ContractExpr, ContractKind, ContractPlace, PlaceBase, Property, PropertyArg, PropertyKind,
 };
 

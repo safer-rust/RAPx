@@ -7,7 +7,7 @@
 use crate::def_ids::type_ids;
 use crate::util::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
-use crate::verify::contract::{
+use crate::contract::{
     ContractExpr, ContractKind, BinOp, PlaceBase, Property, PropertyArg, RelOp,
 };
 use crate::verify::report::{CheckResult, UnknownReason};
@@ -803,7 +803,7 @@ impl PropertyChecker {
         &self,
         vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
-        predicates: &[crate::verify::contract::NumericPredicate<'tcx>],
+        predicates: &[crate::contract::NumericPredicate<'tcx>],
     ) -> bool {
         !predicates.is_empty()
             && predicates
@@ -815,7 +815,7 @@ impl PropertyChecker {
         &self,
         vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
-        pred: &crate::verify::contract::NumericPredicate<'tcx>,
+        pred: &crate::contract::NumericPredicate<'tcx>,
     ) -> bool {
         if !matches!(pred.op, RelOp::Le | RelOp::Lt) {
             return false;

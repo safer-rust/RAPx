@@ -7,7 +7,7 @@
 use crate::def_ids::type_ids;
 use crate::util::def_use::{PlaceBaseKey, PlaceKey};
 use crate::verify::checkpoint::Checkpoint;
-use crate::verify::contract::{
+use crate::contract::{
     ContractExpr, ContractPlace, ContractProjection, Property, PropertyArg,
 };
 use crate::verify::report::{CheckResult, UnknownReason};
@@ -49,8 +49,8 @@ impl PropertyChecker {
         property: &Property<'tcx>,
     ) -> bool {
         let cp = match property.args().first() {
-            Some(PropertyArg::Expr(crate::verify::contract::ContractExpr::Place(cp)))
-            | Some(PropertyArg::ForEach(crate::verify::contract::ContractExpr::Place(cp))) => cp,
+            Some(PropertyArg::Expr(crate::contract::ContractExpr::Place(cp)))
+            | Some(PropertyArg::ForEach(crate::contract::ContractExpr::Place(cp))) => cp,
             _ => return false,
         };
         let has_nullable_proj = cp.projections.iter().any(|p| {

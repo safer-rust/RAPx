@@ -2,10 +2,10 @@
 
 use crate::analysis::dataflow::pointer_copy;
 use crate::def_ids::diagnostic_api;
+use crate::contract::{ContractExpr, PlaceBase, Property, PropertyArg, PropertyKind};
 use crate::verify::checkpoint::Checkpoint;
 use crate::vm::state::VmExecutor;
 use crate::verify::{
-    contract::{ContractExpr, PlaceBase, Property, PropertyArg, PropertyKind},
     report::{CheckResult, UnknownReason},
 };
 use rustc_hir::def_id::DefId;

@@ -8,7 +8,7 @@
 use crate::def_ids::type_ids;
 use crate::util::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
-use crate::verify::contract::{ContractExpr, Property, PropertyArg, PropertyKind, is_static_lifetime_ident};
+use crate::contract::{ContractExpr, Property, PropertyArg, PropertyKind, is_static_lifetime_ident};
 use crate::verify::report::{CheckResult, UnknownReason};
 use crate::vm::state::{AllocId, OffsetKind, VmExecutor, VmValue};
 use rustc_hash::FxHashSet;

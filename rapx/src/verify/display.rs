@@ -12,10 +12,10 @@ use rustc_middle::ty::{self, ClauseKind, TyCtxt};
 use indexmap::IndexMap;
 
 use crate::{compat::FxHashMap, util::fn_info::get_cons};
+use crate::contract::{ContractExpr, ContractKind, Property, PropertyArg, PropertyKind, render::display_expr_user_friendly};
 
 use super::{
     checkpoint::CheckpointLocation,
-    contract::{ContractExpr, ContractKind, Property, PropertyArg, PropertyKind, render::display_expr_user_friendly},
     report::{CheckResult, PropertyCheckResult, Soundness},
 };
 
@@ -281,7 +281,7 @@ pub(crate) fn fmt_contract_expanded<'tcx>(
                 None => format!("{p1} aliases another live place (hazard)"),
             }
         }
-        _ => fmt_meaning_template(crate::verify::contract::spec::kind_meaning(kind), &args),
+        _ => fmt_meaning_template(crate::contract::spec::kind_meaning(kind), &args),
     };
     (call, meaning)
 }

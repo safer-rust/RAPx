@@ -2,13 +2,13 @@
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
+use crate::contract::PropertyKind;
 
 use super::{dedup_compound_props, fmt_contract_expanded, fmt_fn_path_with_generics, fmt_fn_with_params};
 use crate::{
     compat::FxHashMap,
     util::name::short_fn_name,
     verify::{
-        contract::PropertyKind,
         target::FunctionTarget,
         trait_ensurance::{MarkerTraitKind, TraitEnsurance, TraitEnsuranceKind},
     },

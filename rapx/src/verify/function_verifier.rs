@@ -15,6 +15,7 @@ use rustc_middle::{
 
 use crate::analysis::path::PathTree;
 use crate::compat::{FxHashMap, FxHashSet};
+use crate::contract::{ContractExpr, PlaceBase, Property, PropertyArg, PropertyKind};
 use crate::util::{
     fn_info::{FnKind, get_type},
     mir_utils::{collect_return_block_indices, is_return_block},
@@ -23,7 +24,6 @@ use crate::util::{
 use super::{
     config::VerifyConfig,
     checkpoint::{Checkpoint, CheckpointKind, CheckpointLocation},
-    contract::{ContractExpr, PlaceBase, Property, PropertyArg, PropertyKind},
     path::PathExtractor,
     proof_cache::{VmCache, new_z3_context},
     report::{CheckResult, PATH_LIMIT_DESCRIPTION, PropertyCheckResult, UnknownReason},

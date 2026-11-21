@@ -235,7 +235,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 if self.is_local_adt_receiver(&val) {
                     return None;
                 }
-                if let crate::verify::contract::ContractExpr::Place(cp) = &**inner
+                if let crate::contract::ContractExpr::Place(cp) = &**inner
                     && let Some(field_path) = cp.plain_field_path()
                 {
                     let base_local = match cp.base {
@@ -324,7 +324,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     fn eval_contract_place(
         &self,
         checkpoint: Option<&Checkpoint<'tcx>>,
-        cp: &crate::verify::contract::ContractPlace,
+        cp: &crate::contract::ContractPlace,
     ) -> Option<Int<'z3>> {
         let field_path = cp.plain_field_path()?;
 

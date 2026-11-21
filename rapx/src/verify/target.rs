@@ -10,6 +10,10 @@ use crate::analysis::safety_flow::root::{
 };
 use crate::verify::config::VerifyMode;
 use crate::compat::FxHashMap;
+use crate::contract::{
+    ContractExpr, ContractPlace, PlaceBase, Property, PropertyArg, PropertyKind,
+    ensures::get_trait_method_ensures, type_invariants::build_type_invariants_from_params,
+};
 use crate::def_ids::{
     intrinsic_api,
     lang_api::{self, LangItem},
@@ -34,16 +38,11 @@ use std::sync::Arc;
 
 use super::{
     config::VerifyConfig,
-    contract::{
-        ContractExpr, ContractPlace, PlaceBase, Property, PropertyArg, PropertyKind,
-        ensures::get_trait_method_ensures,
-    },
     path::{CalleeBodies, PathExtractor},
     trait_ensurance::{
         MarkerTraitKind, TraitEnsurance, TraitEnsuranceKind, build_marker_trait_obligations,
         marker_trait_kind,
     },
-    type_invariants::build_type_invariants_from_params,
 };
 use crate::util::fn_info::get_adt_def_id_by_adt_method;
 use crate::util::mir_utils::{
@@ -52,7 +51,7 @@ use crate::util::mir_utils::{
 };
 use crate::verify::checkpoint::{Checkpoint, CheckpointKind, collect_unsafe_callsites};
 
-pub(crate) use crate::contract::annotation::{bind_alive_regions, get_contract_from_annotation, get_struct_invariants_from_annotation, get_trait_method_requires};
+use crate::contract::annotation::{bind_alive_regions, get_contract_from_annotation, get_struct_invariants_from_annotation, get_trait_method_requires};
 
 /// Preconditions associated with a function or unsafe callee.
 pub(crate) type FnContracts<'tcx> = Vec<Property<'tcx>>;
@@ -422,7 +421,7 @@ fn resolve_chain_contracts<'tcx>(
             }
 
             if reqs.is_empty() && is_std_crate_def_id(tcx, sub_def_id) {
-                reqs = super::contract::json::query_json_contracts(tcx, sub_def_id);
+                reqs = crate::contract::json::query_json_contracts(tcx, sub_def_id);
             }
 
             if reqs.is_empty() {
@@ -505,7 +504,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                 }
 
                 if requires.is_empty() && is_std {
-                    requires = super::contract::json::query_json_contracts(self.tcx, callee_def_id);
+                    requires = crate::contract::json::query_json_contracts(self.tcx, callee_def_id);
                 }
 
                 if requires.is_empty() && follow_chain {
@@ -516,7 +515,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                         let is_intrinsic =
                             crate::def_ids::intrinsic_api::is_intrinsic(self.tcx, callee_def_id);
                         let has_json_entry = is_std
-                            && super::contract::json::get_std_contracts_from_json(
+                            && crate::contract::json::get_std_contracts_from_json(
                                 self.tcx,
                                 callee_def_id,
                             )
@@ -551,7 +550,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                 if requires.is_empty() {
                     // An empty JSON entry or verified body may have no `requires`.
                     let has_json_entry = is_std
-                        && super::contract::json::get_std_contracts_from_json(
+                        && crate::contract::json::get_std_contracts_from_json(
                             self.tcx,
                             callee_def_id,
                         )
@@ -655,7 +654,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                 NonDivergingIntrinsic::CopyNonOverlapping(_) => checkpoint.callee,
             };
             checkpoint.requires = signature_def_id
-                .map(|did| super::contract::json::query_json_contracts_at_path(self.tcx, did, path))
+                .map(|did| crate::contract::json::query_json_contracts_at_path(self.tcx, did, path))
                 .filter(|requires| !requires.is_empty())
                 .unwrap_or_else(|| vec![Property::new_atom(PropertyKind::Unknown, Vec::new())]);
         }

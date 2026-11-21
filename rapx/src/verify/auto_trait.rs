@@ -24,6 +24,7 @@ use rustc_middle::{
 
 use crate::analysis::dataflow::pointer_flow::trace_source_arg;
 use crate::compat::FxHashMap;
+use crate::contract::{PropertyKind, annotation::get_struct_invariants_from_annotation};
 use crate::def_ids::{
     intrinsic_api,
     lang_api::{self, LangItem},
@@ -34,9 +35,7 @@ use crate::util::{
     mir_utils::{self, dep_callee_def_id},
 };
 use crate::verify::{
-    contract::PropertyKind,
     report::{CheckResult, UnknownReason},
-    target::get_struct_invariants_from_annotation,
 };
 
 /// Three-valued structural verdict: a type definitely contains a negative
@@ -192,7 +191,7 @@ pub(crate) fn field_invariant_check<'tcx>(
                 p.args()
                     .first()
                     .and_then(|a| {
-                        crate::verify::contract::place::field_name_from_arg(tcx, adt_def_id, a)
+                        crate::contract::place::field_name_from_arg(tcx, adt_def_id, a)
                     })
                     .as_deref()
                     == Some(f)

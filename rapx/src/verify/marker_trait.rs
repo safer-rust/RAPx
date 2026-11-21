@@ -4,13 +4,13 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 
 use crate::compat::FxHashMap;
+use crate::contract::{Property, PropertyArg, PropertyKind, place::field_name_from_arg};
 
 use super::{
     auto_trait::{
         atomic_update_check, contain_no_type_check, field_invariant_check, no_internal_mut_check,
         no_raw_ptr_check, ref_send_check, uni_internal_mut_check,
     },
-    contract::{Property, PropertyArg, PropertyKind, place::field_name_from_arg},
     report::{CheckResult, UnknownReason},
     trait_ensurance::{MarkerTraitKind, TraitEnsurance, TraitEnsuranceKind},
 };

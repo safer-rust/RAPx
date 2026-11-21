@@ -3,7 +3,7 @@
 use crate::def_ids::type_ids;
 use crate::util::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
-use crate::verify::contract::Property;
+use crate::contract::Property;
 use crate::verify::report::{CheckResult, UnknownReason};
 use crate::vm::state::VmExecutor;
 use rustc_middle::{
@@ -93,7 +93,7 @@ impl PropertyChecker {
         let target_place = property.target_place();
         let arg_place = target_place
             .and_then(|place| match place.base {
-                crate::verify::contract::PlaceBase::Arg(n) => checkpoint.args.get(n),
+                crate::contract::PlaceBase::Arg(n) => checkpoint.args.get(n),
                 _ => None,
             })
             .and_then(mir_utils::operand_mir_place);
@@ -124,20 +124,20 @@ impl PropertyChecker {
             Some((adt.did(), field))
         });
         let owns_field_by_invariant = owning_invariant_field.is_some_and(|(adt_id, field)| {
-            crate::verify::target::get_struct_invariants_from_annotation(
+            crate::contract::annotation::get_struct_invariants_from_annotation(
                 vm_state.tcx,
                 adt_id,
                 adt_id,
             )
             .iter()
             .any(|p| {
-                p.kind() == Some(crate::verify::contract::PropertyKind::Owning)
+                p.kind() == Some(crate::contract::PropertyKind::Owning)
                     && p.target_place().is_some_and(|place| {
                         place
                             .projections
                             .iter()
                             .find_map(|projection| match projection {
-                                crate::verify::contract::ContractProjection::Field {
+                                crate::contract::ContractProjection::Field {
                                     index,
                                     ..
                                 } => Some(*index),
@@ -298,14 +298,14 @@ fn owning_field_source(
         return false;
     }
     let invariants =
-        crate::verify::target::get_struct_invariants_from_annotation(tcx, adt_id, adt_id);
-    [crate::verify::contract::PropertyKind::Allocated, crate::verify::contract::PropertyKind::Typed, crate::verify::contract::PropertyKind::Owning]
+        crate::contract::annotation::get_struct_invariants_from_annotation(tcx, adt_id, adt_id);
+    [crate::contract::PropertyKind::Allocated, crate::contract::PropertyKind::Typed, crate::contract::PropertyKind::Owning]
         .into_iter()
         .all(|kind| invariants.iter().any(|property| {
             property.kind() == Some(kind)
                 && property.target_place().is_some_and(|place| matches!(
                     place.projections.first(),
-                    Some(crate::verify::contract::ContractProjection::Field { index }) if *index == field
+                    Some(crate::contract::ContractProjection::Field { index }) if *index == field
                 ))
         }))
 }

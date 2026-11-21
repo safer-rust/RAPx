@@ -8,7 +8,7 @@ use crate::def_ids::intrinsic_api;
 use crate::util::def_use::PlaceKey;
 use crate::verify::call_summary;
 use crate::verify::checkpoint::Checkpoint;
-use crate::verify::contract::{
+use crate::contract::{
     ContractExpr, BinOp, PlaceBase, Property, PropertyArg, PropertyKind, RelOp,
 };
 use crate::verify::report::{CheckResult, UnknownReason};
@@ -191,7 +191,7 @@ impl PropertyChecker {
         vm_state: &VmExecutor<'z3, 'tcx>,
         solver: &Solver<'z3>,
         checkpoint: Option<&Checkpoint<'tcx>>,
-        pred: &crate::verify::contract::NumericPredicate<'tcx>,
+        pred: &crate::contract::NumericPredicate<'tcx>,
     ) -> Option<CheckResult> {
         // For a `SliceIndex` range (e.g. `..n`), `ValidNum(index < CAPACITY)`
         // must compare the range's *exclusive end* (`n <= CAPACITY`) rather than
@@ -327,7 +327,7 @@ impl PropertyChecker {
                     return;
                 }
                 let Some((min, max)) =
-                    crate::verify::contract::resolve::int_type_min_max(vm_state.tcx, v.ty)
+                    crate::contract::resolve::int_type_min_max(vm_state.tcx, v.ty)
                 else {
                     return;
                 };

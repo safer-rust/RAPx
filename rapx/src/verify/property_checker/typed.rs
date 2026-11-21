@@ -8,7 +8,7 @@ use crate::def_ids::type_ids;
 use crate::def_ids::lang_api::{self, LangItem};
 use crate::util::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
-use crate::verify::contract::{ContractExpr, Property, PropertyArg};
+use crate::contract::{ContractExpr, Property, PropertyArg};
 use crate::verify::report::{CheckResult, UnknownReason};
 use crate::vm::state::VmExecutor;
 use rustc_middle::ty::{Ty, TyKind};

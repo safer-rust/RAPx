@@ -17,11 +17,12 @@ use rustc_middle::{mir::{BasicBlock, Body, Local}, ty::TyCtxt};
 use crate::analysis::dataflow::graph::build_dataflow_graph_from_body;
 use crate::analysis::dataflow::types::DataflowGraph;
 use crate::analysis::path::{CallArg, PathNode, PathTree};
+use crate::contract;
 use crate::util::def_use::RelevantPlaces;
 use crate::verify::checkpoint::{Checkpoint, CheckpointKind, CheckpointLocation};
 use crate::verify::path::{CalleeBodies, EntryBodies};
 
-use super::{contract, path::Path};
+use super::path::Path;
 pub(crate) use crate::vm::RelevantItem;
 
 /// A proof goal for one `(checkpoint, path)` item: the set of relevant items

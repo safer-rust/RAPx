@@ -35,6 +35,7 @@
 
 use crate::analysis::path::graph::PathGraph;
 use crate::compat::{FxHashMap, FxHashSet};
+use crate::contract::{ContractExpr, NumericPredicate, Property, PropertyArg, PropertyKind, RelOp};
 use crate::util::mir_utils;
 use rustc_hir::def_id::DefId;
 #[cfg(rapx_const_ext)]
@@ -48,7 +49,6 @@ use rustc_middle::{
 };
 
 use super::{
-    contract::{ContractExpr, NumericPredicate, Property, PropertyArg, PropertyKind, RelOp},
     slicer::bind_callsite_roots,
     target::FunctionTarget,
 };

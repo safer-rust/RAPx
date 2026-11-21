@@ -11,11 +11,11 @@ use std::cell::Cell;
 
 use crate::analysis::path::PathTree;
 use crate::def_ids;
+use crate::contract::{self, AndProperty, AtomProperty, OrProperty, Property, PropertyKind};
 use crate::util::mir_utils;
 use crate::vm::VmExecutor;
 use crate::verify::{
     checkpoint::{Checkpoint, CheckpointKind, CheckpointLocation},
-    contract::{self, AndProperty, AtomProperty, OrProperty, Property, PropertyKind},
     property_checker::PropertyChecker,
     proof_cache::VmCache,
     report::{CheckResult, UnknownReason},

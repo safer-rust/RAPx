@@ -1,7 +1,7 @@
 //! Checker for `ValidString`: UTF-8 validity of tracked byte buffers.
 
 use crate::verify::checkpoint::Checkpoint;
-use crate::verify::contract::Property;
+use crate::contract::Property;
 use crate::verify::report::{CheckResult, UnknownReason};
 use crate::vm::state::VmExecutor;
 use z3::{SatResult, Solver};

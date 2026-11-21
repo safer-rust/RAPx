@@ -4,7 +4,7 @@
 //! through the types in this module.  Keeping these types here leaves the driver
 //! focused on orchestration.
 
-use super::contract::Property;
+use crate::contract::Property;
 use crate::verify::checkpoint::CheckpointLocation;
 
 pub(crate) const PATH_LIMIT_DESCRIPTION: &str = "[not enumerated: path limit reached]";

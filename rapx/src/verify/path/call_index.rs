@@ -6,7 +6,8 @@ use crate::def_ids::lang_api::{self, LangItem};
 use crate::util::fn_info::{self, FnKind};
 use crate::util::{mir_utils, name::get_adt_self_ty};
 use crate::limit::{HINTED_CALLEE_BLOCK_LIMIT, LOCAL_CALLEE_BLOCK_LIMIT};
-use crate::verify::{config::VerifyConfig, contract::ensures::has_slice_offset_ensures};
+use crate::contract::ensures::has_slice_offset_ensures;
+use crate::verify::config::VerifyConfig;
 use crate::vm::constructor_policy::effective_constructor_mir_mode;
 use std::sync::Arc;
 #[cfg(rapx_has_attr_ir)]

@@ -8,7 +8,6 @@ mod auto_trait;
 pub(crate) use crate::analysis::dataflow::call_summary;
 mod checkpoint;
 pub(crate) mod config;
-pub(crate) use crate::contract;
 mod display;
 mod function_verifier;
 mod loop_handling;
@@ -20,7 +19,6 @@ mod report;
 mod slicer;
 mod target;
 mod trait_ensurance;
-pub(crate) use crate::contract::type_invariants;
 mod vm;
 
 pub(crate) use self::{
@@ -41,12 +39,12 @@ use crate::util::{
     name::short_fn_name,
 };
 
+use crate::contract::{
+    ContractExpr, ContractPlace, ContractProjection, PlaceBase, Property, PropertyArg,
+    annotation::get_contract_from_annotation, compound::register_compound_properties,
+    ensures::get_trait_method_ensures,
+};
 use self::{
-    contract::{
-        ContractExpr, ContractPlace, ContractProjection, PlaceBase, Property, PropertyArg,
-        compound::register_compound_properties,
-        ensures::get_trait_method_ensures,
-    },
     display::{
         dedup_compound_props, emit_results_and_verdict, emit_verify_summary, fmt_contract_expanded,
         fmt_fn_path_with_bounds, print_contracts_debug,
@@ -57,7 +55,7 @@ use self::{
     marker_trait::MarkerTraitVerifier,
     proof_cache::{VmCache, new_z3_context},
     report::{CheckResult, PropertyCheckResult},
-    target::{FunctionTarget, VerifyTargetCollector, get_contract_from_annotation},
+    target::{FunctionTarget, VerifyTargetCollector},
     trait_ensurance::TraitEnsuranceKind,
 };
 
