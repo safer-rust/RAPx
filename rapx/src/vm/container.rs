@@ -9,7 +9,6 @@ use z3::ast::{Ast, Int};
 use crate::def_ids::type_ids;
 use crate::compat::GenericArgsRef;
 use crate::util::mir_utils;
-use crate::contract::{ContractExpr, ContractProjection, PropertyKind, place::projected_field_ty};
 
 use super::state::{AllocId, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue};
 
@@ -260,7 +259,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
 
     /// Resolve the type of a local plus its field-index path.
     pub(crate) fn field_type_at(&self, local: Local, field_path: &[usize]) -> Option<Ty<'tcx>> {
-        projected_field_ty(self.tcx, self.body().local_decls[local].ty, field_path)
+        mir_utils::projected_field_ty(self.tcx, self.body().local_decls[local].ty, field_path)
     }
 
     /// Extract the pointee type if `ty` is a `#[repr(transparent)]`
@@ -326,76 +325,6 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
 
     pub(crate) fn container_ptr_field(&self, ty: Ty<'tcx>) -> Option<Vec<usize>> {
         self.container_ptr_field_inner(ty, Vec::new(), 0)
-    }
-
-    pub(crate) fn owner_ptr_has_invariant(&self, ty: Ty<'tcx>, kind: PropertyKind) -> bool {
-        let TyKind::Adt(adt, _) = ty.kind() else {
-            return false;
-        };
-        let Some(path) = self.container_ptr_field(ty) else {
-            return false;
-        };
-        let invariants = crate::contract::annotation::get_struct_invariants_from_annotation(
-            self.tcx, adt.did(), adt.did(),
-        );
-        let annotated = invariants.iter().any(|property| {
-            property.kind() == Some(kind)
-                && (kind != PropertyKind::Allocated
-                    || property.args().get(2).is_none_or(|arg| {
-                        matches!(arg.expr(), Some(ContractExpr::Const(count)) if *count > 0)
-                    }))
-                && property.target_place().is_some_and(|place| {
-                    place
-                        .projections
-                        .iter()
-                        .map(|projection| match projection {
-                            ContractProjection::Field { index } => Some(*index),
-                            _ => None,
-                        })
-                        .collect::<Option<Vec<_>>>()
-                        == Some(path.clone())
-                })
-        });
-        if annotated {
-            return true;
-        }
-        let tag = match kind {
-            PropertyKind::Allocated => "Allocated",
-            PropertyKind::Owning => "Owning",
-            _ => return false,
-        };
-        let key = crate::util::name::public_def_path(self.tcx, adt.did());
-        crate::contract::json::get_std_type_invariants()
-            .get(&key)
-            .is_some_and(|entries| entries.iter().any(|entry| {
-                entry.tag == tag
-                    && (kind != PropertyKind::Allocated
-                        || entry.args.get(2).is_none_or(|count| {
-                            count.parse::<u128>().is_ok_and(|count| count > 0)
-                        }))
-                    && entry.args.first().and_then(|arg| {
-                        let mut field_ty = ty;
-                        arg.strip_prefix("$self.")?
-                            .split('.')
-                            .map(|name| {
-                                let TyKind::Adt(adt, substs) = field_ty.kind() else {
-                                    return None;
-                                };
-                                if adt.is_enum() {
-                                    return None;
-                                }
-                                let field = adt.non_enum_variant().fields.iter().enumerate().find(
-                                    |(index, field)| {
-                                        name.parse::<usize>().ok() == Some(*index)
-                                            || field.name.as_str() == name
-                                    },
-                                )?;
-                                field_ty = mir_utils::field_ty(self.tcx, field.1, substs);
-                                Some(field.0)
-                            })
-                            .collect::<Option<Vec<_>>>()
-                    }) == Some(path.clone())
-            }))
     }
 
     fn container_ptr_field_inner(

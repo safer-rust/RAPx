@@ -256,27 +256,6 @@ fn resolve_next_field<'tcx>(
     None
 }
 
-/// Resolve a field-index path against its root type, including `Some`/`Ok` wrappers.
-pub(crate) fn projected_field_ty<'tcx>(tcx: TyCtxt<'tcx>, mut ty: Ty<'tcx>, path: &[usize]) -> Option<Ty<'tcx>> {
-    for &index in path {
-        ty = match ty.peel_refs().kind() {
-            TyKind::Adt(adt, args) => {
-                let variant = if adt.is_enum() {
-                    adt.variants().iter().find(|variant| {
-                        matches!(variant.name.as_str(), "Some" | "Ok") && variant.fields.len() > index
-                    })?
-                } else {
-                    adt.non_enum_variant()
-                };
-                mir_utils::field_ty(tcx, variant.fields.get(FieldIdx::from_usize(index))?, args)
-            }
-            TyKind::Tuple(fields) => *fields.get(index)?,
-            _ => return None,
-        };
-    }
-    Some(ty)
-}
-
 /// Strip a `ForEach` projection from a property argument.
 pub(crate) fn strip_for_each<'tcx>(arg: &mut PropertyArg<'tcx>) -> bool {
     if let PropertyArg::Expr(ContractExpr::Place(place)) = arg

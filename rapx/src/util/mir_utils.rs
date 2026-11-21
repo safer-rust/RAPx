@@ -1280,6 +1280,27 @@ pub fn field_ty<'tcx>(
     field.ty(tcx, *args.borrow()).skip_norm_wip()
 }
 
+/// Resolve a field-index path against its root type, including `Some`/`Ok` wrappers.
+pub(crate) fn projected_field_ty<'tcx>(tcx: TyCtxt<'tcx>, mut ty: Ty<'tcx>, path: &[usize]) -> Option<Ty<'tcx>> {
+    for &index in path {
+        ty = match ty.peel_refs().kind() {
+            TyKind::Adt(adt, args) => {
+                let variant = if adt.is_enum() {
+                    adt.variants().iter().find(|variant| {
+                        matches!(variant.name.as_str(), "Some" | "Ok") && variant.fields.len() > index
+                    })?
+                } else {
+                    adt.non_enum_variant()
+                };
+                field_ty(tcx, variant.fields.get(rustc_abi::FieldIdx::from_usize(index))?, args)
+            }
+            TyKind::Tuple(fields) => *fields.get(index)?,
+            _ => return None,
+        };
+    }
+    Some(ty)
+}
+
 /// Whether `def_id` is a single-field struct wrapping a raw pointer (i.e.
 /// `NonNull`-shaped).  Used by alias/ownership reasoning to recognize pointer
 /// wrappers — including local re-implementations — by their structure rather

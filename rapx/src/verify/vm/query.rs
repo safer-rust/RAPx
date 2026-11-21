@@ -1,6 +1,6 @@
 //! Read-only queries over the symbolic VM state used by property checks.
 
-use crate::contract::{ContractExpr, ContractPlace, ContractProjection, PlaceBase, Property, place::projected_field_ty};
+use crate::contract::{ContractExpr, ContractPlace, ContractProjection, PlaceBase, Property};
 use crate::def_ids::type_ids;
 use crate::util::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
@@ -58,7 +58,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                             },
                             _ => self.body().local_decls[local].ty,
                         };
-                        projected_field_ty(self.tcx, root_ty, &fields).unwrap_or(base_value.ty)
+                        mir_utils::projected_field_ty(self.tcx, root_ty, &fields).unwrap_or(base_value.ty)
                     };
                     let inner_ty = match enum_ty.kind() {
                         TyKind::Adt(adt, substs) if adt.is_enum() => {

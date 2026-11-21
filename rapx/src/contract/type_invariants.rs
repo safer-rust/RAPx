@@ -11,11 +11,12 @@
 //! `init_parameters` and re-proved at return by `FunctionVerifier::verify_type_invariants`.
 
 use crate::def_ids::type_ids;
+use crate::util::mir_utils;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{self, Ty, TyCtxt};
 
 use crate::contract::{
-    json::AnyItem, place::projected_field_ty, ContractExpr, ContractPlace, ContractProjection, NumericPredicate, PlaceBase,
+    json::AnyItem, ContractExpr, ContractPlace, ContractProjection, NumericPredicate, PlaceBase,
     Property, PropertyArg, PropertyKind,
 };
 
@@ -84,6 +85,60 @@ pub(crate) fn has_json_type_invariants<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) ->
             .any(|prefix| db.contains_key(&format!("{prefix}{key}")))
 }
 
+/// Whether the container's pointer field has an `Allocated` or `Owning` invariant.
+pub(crate) fn has_owner_ptr_invariant<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>, path: &[usize], kind: PropertyKind) -> bool {
+    let ty::Adt(adt, _) = ty.kind() else {
+        return false;
+    };
+    let invariants = crate::contract::annotation::get_struct_invariants_from_annotation(tcx, adt.did(), adt.did());
+    let annotated = invariants.iter().any(|property| {
+        property.kind() == Some(kind)
+            && (kind != PropertyKind::Allocated
+                || property.args().get(2).is_none_or(|arg| {
+                    matches!(arg.expr(), Some(ContractExpr::Const(count)) if *count > 0)
+                }))
+            && property.target_place().is_some_and(|place| {
+                place.projections.iter().map(|projection| match projection {
+                    ContractProjection::Field { index } => Some(*index),
+                    _ => None,
+                }).collect::<Option<Vec<_>>>().as_deref() == Some(path)
+            })
+    });
+    if annotated {
+        return true;
+    }
+    let tag = match kind {
+        PropertyKind::Allocated => "Allocated",
+        PropertyKind::Owning => "Owning",
+        _ => return false,
+    };
+    let key = crate::util::name::public_def_path(tcx, adt.did());
+    let Some(entries) = crate::contract::json::get_std_type_invariants().get(&key) else {
+        return false;
+    };
+    entries.iter().any(|entry| {
+        entry.tag == tag
+            && (kind != PropertyKind::Allocated
+                || entry.args.get(2).is_none_or(|count| count.parse::<u128>().is_ok_and(|count| count > 0)))
+            && entry.args.first().and_then(|arg| {
+                let mut field_ty = ty;
+                arg.strip_prefix("$self.")?.split('.').map(|name| {
+                    let ty::Adt(adt, substs) = field_ty.kind() else {
+                        return None;
+                    };
+                    if adt.is_enum() {
+                        return None;
+                    }
+                    let field = adt.non_enum_variant().fields.iter().enumerate().find(|(index, field)| {
+                        name.parse::<usize>().ok() == Some(*index) || field.name.as_str() == name
+                    })?;
+                    field_ty = mir_utils::field_ty(tcx, field.1, substs);
+                    Some(field.0)
+                }).collect::<Option<Vec<_>>>()
+            }).as_deref() == Some(path)
+    })
+}
+
 /// Look up the type path in the DB and add instantiated invariants to `results`.
 fn collect_type_invariants<'tcx>(
     tcx: TyCtxt<'tcx>,
@@ -96,7 +151,7 @@ fn collect_type_invariants<'tcx>(
 ) {
     let zst_vec = matches!(type_path, "alloc::vec::Vec" | "std::vec::Vec" | "vec::Vec")
         && elem_ty
-            .and_then(|ty| crate::util::mir_utils::layout_of_ty(tcx, def_id, ty))
+            .and_then(|ty| mir_utils::layout_of_ty(tcx, def_id, ty))
             .is_some_and(|layout| layout.size.bytes() == 0);
     if let Some(entries) = db.get(type_path) {
         for prop_entry in entries {
@@ -246,7 +301,7 @@ fn contract_place_ty<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, place: &ContractPla
         PlaceBase::Arg(index) => *inputs.get(index)?,
         PlaceBase::Local(index) => *inputs.get(index.checked_sub(1)?)?,
     };
-    projected_field_ty(tcx, ty, &place.plain_field_path()?)
+    mir_utils::projected_field_ty(tcx, ty, &place.plain_field_path()?)
 }
 
 fn transparent_nonnull_path<'tcx>(
