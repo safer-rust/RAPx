@@ -4,8 +4,7 @@ extern crate rustc_driver;
 extern crate rustc_session;
 
 use clap::Parser;
-use rapx::cli;
-use rapx::help;
+use rapx::cli::{self, help};
 use rapx::{RAPX_DEFAULT_ARGS, RapCallback, rap_debug, rap_info, rap_trace, utils::log::init_log};
 use rustc_session::EarlyDiagCtxt;
 use rustc_session::config::ErrorOutputType;

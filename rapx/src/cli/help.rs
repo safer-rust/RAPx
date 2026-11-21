@@ -1,3 +1,5 @@
+//! Help text and styling shared by the `rapx` and `cargo-rapx` commands.
+
 use clap::builder::{
     Styles,
     styling::{Effects, Style},

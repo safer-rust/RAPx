@@ -1,3 +1,5 @@
+//! Shared compiler and MIR helpers used across analyses, verification, and VM execution.
+
 pub mod def_path;
 pub mod def_use;
 pub mod draw_dot;

@@ -9,8 +9,7 @@ extern crate rapx;
 
 use crate::utils::*;
 use clap::Parser;
-use rapx::cli;
-use rapx::help;
+use rapx::cli::{self, help};
 use rapx::utils::log::{init_log, rap_error_and_exit};
 use std::env;
 

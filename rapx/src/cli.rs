@@ -1,5 +1,6 @@
 mod analyze;
 mod check;
+pub mod help;
 
 use clap::{Args, Subcommand};
 

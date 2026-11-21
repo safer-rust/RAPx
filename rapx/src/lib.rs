@@ -9,7 +9,6 @@ pub(crate) mod compat;
 pub(crate) mod contract;
 pub(crate) mod def_ids;
 pub(crate) mod graphs;
-pub mod help;
 pub(crate) mod helpers;
 pub(crate) mod limit;
 pub(crate) mod preprocess;
