@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-22.04
     continue-on-error: true
     env:
-      RUSTUP_TOOLCHAIN: nightly-2026-10-22
+      RUSTUP_TOOLCHAIN: nightly-2026-11-12
     steps:
     - uses: actions/checkout@v4
     - name: Setup toolchain
@@ -63,7 +63,7 @@ jobs:
         cd rapx-verify-rust-std
         export RAPX_SYSROOT=$(rustc --print sysroot)
         export LD_LIBRARY_PATH="$RAPX_SYSROOT/lib"
-        export RUSTFLAGS="--cfg=rapx -Zcrate-attr=feature(register_tool) -Zcrate-attr=register_tool(rapx)"
+        export RUSTFLAGS="--cfg=rapx -Aduplicate_features -Zcrate-attr=feature(register_tool) -Zcrate-attr=register_tool(rapx)"
         export __CARGO_TESTS_ONLY_SRC_ROOT="$(pwd)/library"
         cd library/core
         cargo rapx verify --module slice --mode targeted --path-limit "$VERIFY_PATH_LIMIT" -- --release 2>&1 | tee /tmp/rapx-verify-output.txt
