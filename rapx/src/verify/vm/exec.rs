@@ -106,15 +106,6 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         body: Option<&'tcx rustc_middle::mir::Body<'tcx>>,
         args: &[CallArg],
     ) {
-        let method_call = args.first().and_then(|arg| {
-            let CallArg::Local(local) = arg else {
-                return None;
-            };
-            self.local_value(Local::from_usize(*local))
-                .and_then(|receiver| {
-                    self.begin_method_call(callee, receiver, Some(Local::from_usize(*local)))
-                })
-        });
         let param_count = body
             .map(|body| body.arg_count)
             .unwrap_or_else(|| self.tcx.optimized_mir(callee).arg_count);
@@ -274,7 +265,6 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         }
         self.path_state.caller_frames.push(super::state::SavedCallerFrame {
             frame,
-            method_call,
             postcondition_args: param_sources,
             arg_referents: saved_referents,
             deferred_writes: saved_writes,
@@ -302,16 +292,16 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             })
             .collect();
         let writes = std::mem::take(&mut self.path_state.inline.deferred_field_writes);
-        let (method_call, postcondition_args) = match self.path_state.caller_frames.pop() {
+        let postcondition_args = match self.path_state.caller_frames.pop() {
             Some(saved) => {
                 self.restore_frame(saved.frame);
                 self.path_state.inline.arg_referents = saved.arg_referents;
                 self.path_state.inline.deferred_field_writes = saved.deferred_writes;
-                (saved.method_call, Some(saved.postcondition_args))
+                Some(saved.postcondition_args)
             }
             None => {
                 self.path_state.inline.arg_referents.clear();
-                (None, None)
+                None
             }
         };
         self.replay_deferred_writes(writes);
@@ -355,7 +345,6 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             self.assert_call_postconditions(callee, &args, Local::from_usize(dest));
             self.assert_call_result_invariants(Local::from_usize(dest));
         }
-        self.finish_method_call(method_call, ret.as_ref());
     }
 
     /// A `ManuallyDrop<Owner>` retained at return keeps its strong share alive.

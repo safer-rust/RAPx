@@ -21,7 +21,6 @@ use z3::{
 };
 
 use crate::compat::{FxHashMap, FxHashSet};
-use super::method_cache::MethodSnapshot;
 pub(crate) use super::VmExecutor;
 use crate::helpers::def_use::PlaceKey;
 
@@ -600,8 +599,6 @@ pub(crate) struct FrameState<'tcx> {
 pub(crate) struct SavedCallerFrame<'z3, 'tcx> {
     /// Caller MIR frame restored when the inlined callee returns.
     pub(crate) frame: FrameState<'tcx>,
-    /// Call snapshot used to cache a stable return value.
-    pub(crate) method_call: Option<MethodSnapshot<'z3, 'tcx>>,
     /// Caller locals used to bind trait-method `ensures` after inlining.
     pub(crate) postcondition_args: Vec<Option<Local>>,
     /// Caller frame's argument referents restored on return.
