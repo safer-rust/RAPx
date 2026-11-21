@@ -1,6 +1,5 @@
 //! MIR items retained by the backward slicer for VM execution.
 
-use crate::contract;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{BasicBlock, Body};
 
@@ -35,9 +34,6 @@ pub(crate) enum RelevantItem<'tcx> {
     /// Return from an inlined callee: write the callee's `_0` to the caller's
     /// destination local.
     CalleeExit { dest: usize },
-    /// A contract fact injected by the function verifier before VM execution.
-    /// Never produced by the backward visitor itself.
-    ContractFact { property: contract::Property<'tcx> },
 }
 impl RelevantItem<'_> {
     pub(crate) fn set_global_block(&mut self, global_block: usize) {

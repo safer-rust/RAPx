@@ -102,11 +102,6 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 self.handle_callee_exit(*dest);
                 true
             }
-            RelevantItem::ContractFact { property } => {
-                self.path_state.diagnostics.active_mir = None;
-                self.assert_contract_fact(property);
-                true
-            }
         }
     }
 

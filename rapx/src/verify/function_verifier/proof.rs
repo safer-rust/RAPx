@@ -17,9 +17,9 @@ use crate::vm::VmExecutor;
 use crate::verify::{
     checkpoint::{Checkpoint, CheckpointKind, CheckpointLocation},
     property_checker::PropertyChecker,
-    proof_cache::VmCache,
+    proof_cache::{ProofGoal, VmCache},
     report::{CheckResult, UnknownReason},
-    slicer::{ProofGoal, RelevantItem},
+    slicer::{RelevantItem, SlicedPath},
 };
 
 use super::FunctionVerifier;
@@ -119,7 +119,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                 .collect();
             let entry_facts: Vec<_> = self.target.caller_requires.iter()
                 .filter(|property| property.kind() != Some(PropertyKind::Unknown))
-                .map(|property| RelevantItem::ContractFact { property: property.clone() })
+                .cloned()
                 .collect();
             let needs_post_deref = checkpoint.kind == CheckpointKind::RawPtrDeref
                 && selected_properties.iter().any(|property| property.kind() == Some(PropertyKind::Alias));
@@ -146,7 +146,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                             && *stmt_index == checkpoint.stmt_index)
                 })).flatten();
                 let split = deref_position.unwrap_or(goal.items.len());
-                let pre_goal = ProofGoal { path: goal.path.clone(), items: goal.items[..split].to_vec() };
+                let pre_goal = ProofGoal { path: goal.path.clone(), items: goal.items[..split].to_vec(), entry_facts: goal.entry_facts.clone() };
                 let cached = cache.states_for(self.tcx, self.target.def_id, self.target.body, pre_goal);
                 let post_states = deref_position.map(|_| VmExecutor::execute_items_after(cached.states.as_ref().clone(), &goal.items[split..]));
                 let post_reachability = post_states.as_ref().map(|states| states.iter().map(|_| Cell::new(None)).collect::<Vec<_>>());
@@ -602,8 +602,8 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         tree: &PathTree,
         checkpoint: CheckpointLocation,
         properties: &[&Property<'tcx>],
-        entry_facts: &[RelevantItem<'tcx>],
-        goal: ProofGoal<'tcx>,
+        entry_facts: &[Property<'tcx>],
+        goal: SlicedPath<'tcx>,
     ) -> Vec<CheckResult> {
         let def_id = self.target.def_id;
         let fake_checkpoint = Checkpoint {
@@ -631,16 +631,14 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
     fn prepare_goal(
         &self,
         tree: &PathTree,
-        mut goal: ProofGoal<'tcx>,
-        entry_facts: &[RelevantItem<'tcx>],
+        goal: SlicedPath<'tcx>,
+        entry_facts: &[Property<'tcx>],
     ) -> ProofGoal<'tcx> {
-        if !entry_facts.is_empty() {
-            let mut items = entry_facts.to_vec();
-            items.append(&mut goal.items);
-            goal.items = items;
+        ProofGoal {
+            path: goal.path,
+            items: self.inject_inline_boundaries(goal.items, tree),
+            entry_facts: entry_facts.to_vec(),
         }
-        goal.items = self.inject_inline_boundaries(goal.items, tree);
-        goal
     }
 
 }

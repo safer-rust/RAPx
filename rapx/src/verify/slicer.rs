@@ -2,7 +2,7 @@
 //!
 //! Given a path tree, a checkpoint, and a property, it walks each path backward
 //! to keep only the MIR items that are data-relevant to the property, producing
-//! one [`ProofGoal`] per path for the symbolic VM to execute forward.
+//! one [`SlicedPath`] per path for the symbolic VM to execute forward.
 
 mod relevance;
 mod rules;
@@ -28,7 +28,7 @@ pub(crate) use crate::vm::RelevantItem;
 /// A proof goal for one `(checkpoint, path)` item: the set of relevant items
 /// plus the path context needed to verify the target property.
 #[derive(Clone, Debug)]
-pub(crate) struct ProofGoal<'tcx> {
+pub(crate) struct SlicedPath<'tcx> {
     /// Path being visited; `path.target` identifies the checkpoint.
     pub path: Path,
     /// Items kept from the path.
@@ -125,7 +125,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         tree: &PathTree,
         checkpoint: &Checkpoint<'tcx>,
         properties: &[&contract::Property<'tcx>],
-    ) -> Vec<ProofGoal<'tcx>> {
+    ) -> Vec<SlicedPath<'tcx>> {
         let combined = contract::Property::new_and(properties.iter().map(|property| (*property).clone()).collect());
         let options = SliceOptions::for_properties(properties);
         self.visit_path_tree_impl(
@@ -148,7 +148,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         caller: DefId,
         checkpoint_loc: CheckpointLocation,
         properties: &[&contract::Property<'tcx>],
-    ) -> Vec<ProofGoal<'tcx>> {
+    ) -> Vec<SlicedPath<'tcx>> {
         let combined = contract::Property::new_and(properties.iter().map(|property| (*property).clone()).collect());
         self.visit_path_tree_impl(
             tree,
@@ -172,7 +172,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         bind_checkpoint: Option<&Checkpoint<'tcx>>,
         property: &contract::Property<'tcx>,
         options: SliceOptions,
-    ) -> Vec<ProofGoal<'tcx>> {
+    ) -> Vec<SlicedPath<'tcx>> {
         let Some(root) = tree.root() else {
             return Vec::new();
         };
@@ -218,7 +218,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         for (block_path, backward_items, _relevant, _) in leaf_results {
             let mut items = backward_items;
             items.reverse();
-            results.push(ProofGoal {
+            results.push(SlicedPath {
                 path: Path {
                     target: checkpoint_loc,
                     blocks: block_path,

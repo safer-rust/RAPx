@@ -27,7 +27,7 @@ use super::{
     path::PathExtractor,
     proof_cache::{VmCache, new_z3_context},
     report::{CheckResult, PATH_LIMIT_DESCRIPTION, PropertyCheckResult, UnknownReason},
-    slicer::{BackwardSlicer, RelevantItem},
+    slicer::BackwardSlicer,
     target::FunctionTarget,
 };
 
@@ -168,9 +168,9 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         // are needed to re-prove the invariant after a field mutation — e.g.
         // `set_len` sets `self.len = new_len`, so `len <= cap` only follows
         // from the `new_len <= self.cap` precondition.
-        let entry_facts: Vec<RelevantItem<'tcx>> = caller_contracts.iter()
+        let entry_facts: Vec<Property<'tcx>> = caller_contracts.iter()
             .filter(|c| !matches!(c.kind(), Some(PropertyKind::Unknown)))
-            .map(|c| RelevantItem::ContractFact { property: c.clone() })
+            .cloned()
             .collect();
         self.check_exit_properties(invariants, &entry_facts, !is_constructor, "struct")
     }
@@ -183,17 +183,15 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
             return Vec::new();
         }
 
-        let entry_facts: Vec<RelevantItem<'tcx>> = invariants.iter()
-            .map(|inv| RelevantItem::ContractFact { property: inv.clone() })
-            .collect();
+        let entry_facts = invariants.clone();
         self.check_exit_properties(invariants, &entry_facts, false, "type")
     }
 
     /// Check postconditions at normal return blocks using entry requirements.
     pub(crate) fn verify_postconditions(&self, postconditions: &[Property<'tcx>]) -> Vec<PropertyCheckResult<'tcx>> {
-        let entry_facts: Vec<RelevantItem<'tcx>> = self.target.caller_requires.iter()
+        let entry_facts: Vec<Property<'tcx>> = self.target.caller_requires.iter()
             .filter(|property| !matches!(property.kind(), Some(PropertyKind::Unknown)))
-            .map(|property| RelevantItem::ContractFact { property: property.clone() })
+            .cloned()
             .collect();
         self.check_exit_properties(postconditions, &entry_facts, false, "postcond")
     }
@@ -202,7 +200,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
     fn check_exit_properties(
         &self,
         invariants: &[Property<'tcx>],
-        entry_facts: &[RelevantItem<'tcx>],
+        entry_facts: &[Property<'tcx>],
         check_unwind: bool,
         label: &str,
     ) -> Vec<PropertyCheckResult<'tcx>> {
@@ -226,9 +224,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                 .collect();
             let stable: Vec<_> = invariants.iter().map(|invariant| {
                 label == "type"
-                    && entry_facts.iter().any(|item| {
-                        matches!(item, RelevantItem::ContractFact { property } if property == invariant)
-                    })
+                    && entry_facts.contains(invariant)
                     && stable_reference_metadata(self.tcx, self.target.def_id, invariant)
             }).collect();
             let mut groups: IndexMap<Vec<usize>, FxHashSet<Vec<usize>>> = IndexMap::new();

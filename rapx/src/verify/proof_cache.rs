@@ -15,16 +15,25 @@ use crate::vm::VmExecutor;
 
 use super::{
     config::VerifyConfig,
-    slicer::{ProofGoal, RelevantItem},
+    path::Path,
+    slicer::RelevantItem,
 };
+
+/// A sliced MIR path and the contract facts assumed before its first item.
+#[derive(Clone)]
+pub(crate) struct ProofGoal<'tcx> {
+    pub(crate) path: Path,
+    pub(crate) items: Vec<RelevantItem<'tcx>>,
+    pub(crate) entry_facts: Vec<Property<'tcx>>,
+}
 
 #[derive(Clone, Hash, PartialEq, Eq)]
 enum GoalItemKey<'tcx> {
+    EntryFacts(Vec<Property<'tcx>>),
     Statement(DefId, BasicBlock, Option<usize>, usize),
     Terminator(DefId, BasicBlock, Option<usize>, Option<BasicBlock>),
     CalleeEntry(DefId, Option<usize>, Vec<CallArg>),
     CalleeExit(usize),
-    ContractFact(Property<'tcx>),
 }
 
 #[derive(Hash, PartialEq, Eq)]
@@ -74,7 +83,9 @@ impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
         instance_body: Option<&'tcx Body<'tcx>>,
         goal: ProofGoal<'tcx>,
     ) -> &CachedGoal<'z3, 'tcx> {
-        let key = goal_key(&goal.items);
+        // Keep entry facts in the cache key; the remaining keys correspond to MIR items.
+        let mut key = vec![GoalItemKey::EntryFacts(goal.entry_facts.clone())];
+        key.extend(goal_key(&goal.items));
         if self.states.contains_key(&key) {
             return self.states.get(&key).unwrap();
         }
@@ -101,16 +112,21 @@ impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
         let mut states = if prefix_len > 0 {
             Arc::clone(&self.prefix_states[parent - 1])
         } else {
-            Arc::new(
-                VmExecutor::new(
-                    self.context,
-                    tcx,
-                    caller_def_id,
-                    instance_body,
-                    self.config.constructor_mir_mode(),
-                )
-                .execute_items(&[]),
-            )
+            let mut states = VmExecutor::new(
+                self.context,
+                tcx,
+                caller_def_id,
+                instance_body,
+                self.config.constructor_mir_mode(),
+            ).execute_items(&[]);
+            for state in &mut states {
+                for property in &goal.entry_facts {
+                    if state.diagnostics().is_unsupported() { break; }
+                    state.assert_contract_fact(property);
+                }
+            }
+            prefix_len = 1;
+            Arc::new(states)
         };
         while prefix_len < key.len() {
             let end = ((prefix_len / VM_PREFIX_STRIDE) + 1)
@@ -124,7 +140,7 @@ impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
                     Arc::try_unwrap(states).unwrap_or_else(|shared| shared.as_ref().clone());
                 states = Arc::new(VmExecutor::execute_items_after(
                     owned,
-                    &goal.items[prefix_len..end],
+                    &goal.items[prefix_len - 1..end - 1],
                 ));
             }
             if end < key.len() {
@@ -172,7 +188,6 @@ fn goal_key<'tcx>(items: &[RelevantItem<'tcx>]) -> Vec<GoalItemKey<'tcx>> {
                 args.clone(),
             ),
             RelevantItem::CalleeExit { dest } => GoalItemKey::CalleeExit(*dest),
-            RelevantItem::ContractFact { property } => GoalItemKey::ContractFact(property.clone()),
         })
         .collect()
 }
