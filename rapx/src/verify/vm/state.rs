@@ -14,7 +14,6 @@ use rustc_middle::{
     ty::{Region, Ty, TyKind, TypingEnv},
 };
 use rustc_span::Span;
-use std::cell::RefCell;
 use z3::{
     SatResult, Solver,
     ast::{Array, Ast, Bool, Dynamic, Int},
@@ -607,36 +606,6 @@ pub(crate) struct SavedCallerFrame<'z3, 'tcx> {
     pub(crate) deferred_writes: Vec<(Local, Vec<usize>, VmValue<'z3, 'tcx>)>,
 }
 
-/// Optional memory diagnostics collected along one execution path.
-#[derive(Clone, Default)]
-pub(crate) struct SafeDropEventLog {
-    events: Option<RefCell<Vec<SafeDropEvent>>>,
-}
-
-impl SafeDropEventLog {
-    pub(crate) fn enable(&mut self) {
-        self.events.get_or_insert_with(RefCell::default);
-    }
-
-    pub(crate) fn is_enabled(&self) -> bool {
-        self.events.is_some()
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.events.as_ref().map_or(0, |events| events.borrow().len())
-    }
-
-    pub(crate) fn push(&self, event: SafeDropEvent) {
-        if let Some(events) = &self.events {
-            events.borrow_mut().push(event);
-        }
-    }
-
-    pub(crate) fn events(&self) -> std::cell::Ref<'_, Vec<SafeDropEvent>> {
-        self.events.as_ref().expect("SafeDrop event log is disabled").borrow()
-    }
-}
-
 /// A transferable ownership share. Copies of its pointer use the same entry.
 #[derive(Clone)]
 pub(crate) struct OwnershipTransfer {
@@ -704,8 +673,8 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     }
 
     pub(crate) fn record_memory_drop(&mut self, alloc_id: AllocId, local: Local) {
-        if self.path_state.safedrop_events.is_enabled() {
-            self.path_state.safedrop_events.push(SafeDropEvent {
+        if let Some(events) = &self.path_state.safedrop_events {
+            events.borrow_mut().push(SafeDropEvent {
                 alloc_id,
                 kind: if self.alloc(alloc_id).facts.dead {
                     SafeDropEventKind::DoubleFree
@@ -725,8 +694,10 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     }
 
     pub(crate) fn record_memory_use(&self, alloc_id: AllocId, local: Local) {
-        if self.path_state.safedrop_events.is_enabled() && self.alloc(alloc_id).facts.dead {
-            self.path_state.safedrop_events.push(SafeDropEvent {
+        if let Some(events) = &self.path_state.safedrop_events
+            && self.alloc(alloc_id).facts.dead
+        {
+            events.borrow_mut().push(SafeDropEvent {
                 alloc_id,
                 kind: SafeDropEventKind::UseAfterFree,
                 block: self.path_state.diagnostics.active_mir.as_ref().map(|location| location.block),

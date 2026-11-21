@@ -75,7 +75,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 });
                 let viable =
                     crate::verify::vm::mir_rules::exec_terminator(self, terminator, *switch_succ).continues();
-                viable || (self.path_state.safedrop_events.is_enabled()
+                viable || (self.path_state.safedrop_events.is_some()
                     && matches!(&terminator.kind, TerminatorKind::Call { unwind: UnwindAction::Cleanup(target), .. } if Some(*target) == *switch_succ)
                 )
             }

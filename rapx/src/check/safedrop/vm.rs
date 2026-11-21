@@ -7,6 +7,7 @@ use crate::verify::{AllocId, RelevantItem, SafeDropEvent, SafeDropEventKind, VmE
 use rustc_hir::def_id::DefId;
 use rustc_middle::{mir::{BasicBlock, Local, TerminatorKind}, ty::TyCtxt};
 use rustc_span::Symbol;
+use std::cell::RefCell;
 use z3::{Config, Context};
 
 pub(crate) fn analyze<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, paths: &PathTree) {
@@ -16,7 +17,7 @@ pub(crate) fn analyze<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, paths: &PathTree) 
     let mut bugs = BugRecords::new();
     for path in paths.to_vecs() {
         let mut state = VmExecutor::new(&context, tcx, def_id, None, ConstructorMirMode::Default);
-        state.path_state.safedrop_events.enable();
+        state.path_state.safedrop_events = Some(RefCell::default());
         let mut states = state.execute_items(&[]);
         for (position, &bb_idx) in path.iter().enumerate() {
             let block = BasicBlock::from_usize(bb_idx);
@@ -42,7 +43,8 @@ pub(crate) fn analyze<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, paths: &PathTree) 
             if let Some(&last) = path.last() {
                 record_dangling_exit(state, body, last);
             }
-            collect_events(&state.path_state.safedrop_events.events(), body, &mut bugs);
+            let events = state.path_state.safedrop_events.as_ref().expect("SafeDrop events enabled");
+            collect_events(&events.borrow(), body, &mut bugs);
         }
     }
     report(tcx, def_id, body, &bugs);
@@ -74,7 +76,8 @@ fn record_dangling_exit<'z3, 'tcx>(
             .and_then(|v| v.provenance_alloc_id())
             && state.alloc(alloc_id).facts.dead
         {
-            state.path_state.safedrop_events.push(SafeDropEvent {
+            let events = state.path_state.safedrop_events.as_ref().expect("SafeDrop events enabled");
+            events.borrow_mut().push(SafeDropEvent {
                 alloc_id,
                 kind: SafeDropEventKind::DanglingPointer,
                 block: Some(last),

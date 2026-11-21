@@ -54,7 +54,7 @@ pub(crate) fn eval_ref<'z3, 'tcx>(
 ) -> VmValue<'z3, 'tcx> {
     let dest_ty = dest_place.ty(state.body(), state.tcx).ty;
     if let Some(addr) = state.address_of_place(place) {
-        if state.path_state.safedrop_events.is_enabled()
+        if state.path_state.safedrop_events.is_some()
             && place.projection.iter().any(|projection| {
                 matches!(
                     projection.kind(),

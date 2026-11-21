@@ -159,7 +159,7 @@ pub(super) fn exec_call<'z3, 'tcx>(
     let model = state.select_call_model(&site, drop_call);
     let finish_policy = model.finish_policy();
     let diagnostics_before_call = (finish_policy == CallFinish::Full
-        && state.path_state.safedrop_events.is_enabled())
+        && state.path_state.safedrop_events.is_some())
     .then(|| state.path_state.diagnostics.clone());
     let summary_used = model.uses_summary_invariants();
     if state.execute_call_model(model, &site) == RuleFlow::Pruned {
@@ -305,13 +305,13 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 RuleFlow::Continue
             }
             CallModel::Drop(DropCall::Pointee) => {
-                let event_count = self.path_state.safedrop_events.len();
+                let event_count = self.path_state.safedrop_events.as_ref().map_or(0, |events| events.borrow().len());
                 if let Some(pointer) = arg_values.first()
                     && let Some(local) = self.find_local_by_address(&pointer.z3_term)
                 {
                     super::terminator::exec_drop(self, &rustc_middle::mir::Place::from(local));
                 }
-                if self.path_state.safedrop_events.len() == event_count
+                if self.path_state.safedrop_events.as_ref().map_or(0, |events| events.borrow().len()) == event_count
                     && let Some(pointer) = arg_values.first()
                     && let Some(alloc_id) = pointer.provenance_alloc_id()
                 {

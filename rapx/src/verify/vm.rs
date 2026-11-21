@@ -26,6 +26,7 @@ pub(crate) mod state;
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::{mir::{Body, Local}, ty::TyCtxt};
+use std::cell::RefCell;
 use z3::{Context, ast::Int};
 
 use crate::{compat::{FxHashMap, FxHashSet}, verify::config::ConstructorMirMode};
@@ -33,7 +34,7 @@ use crate::{compat::{FxHashMap, FxHashSet}, verify::config::ConstructorMirMode};
 use self::{
     diagnostics::Diagnostics,
     method_cache::CachedMethodResult,
-    state::{AllocId, Constraints, FrameState, InlineCtx, MemoryUnit, OwnershipTransfer, SafeDropEventLog, SavedCallerFrame},
+    state::{AllocId, Constraints, FrameState, InlineCtx, MemoryUnit, OwnershipTransfer, SafeDropEvent, SavedCallerFrame},
 };
 
 /// Executes MIR using an immutable context and a path-local symbolic state.
@@ -86,7 +87,7 @@ pub(crate) struct VmState<'z3, 'tcx> {
     /// Slice and index terms with their originating MIR locals.
     pub(in crate::verify) index_access_facts: Vec<(Int<'z3>, Int<'z3>, Local, Local)>,
     /// Optional SafeDrop log of drops, use-after-free, and dangling pointers.
-    pub(crate) safedrop_events: SafeDropEventLog,
+    pub(crate) safedrop_events: Option<RefCell<Vec<SafeDropEvent>>>,
     /// Path diagnostics and the MIR location used to attribute new records.
     pub(in crate::verify) diagnostics: Diagnostics,
 }
@@ -128,7 +129,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 method_result_cache: Vec::default(),
                 alias_hazard_allocs: FxHashSet::default(),
                 index_access_facts: Vec::new(),
-                safedrop_events: SafeDropEventLog::default(),
+                safedrop_events: None,
                 diagnostics: Diagnostics::default(),
             },
         }
