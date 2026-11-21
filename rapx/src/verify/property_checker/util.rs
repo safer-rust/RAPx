@@ -11,7 +11,6 @@ use crate::contract::{
     ContractExpr, ContractPlace, ContractProjection, Property, PropertyArg,
 };
 use crate::verify::report::{CheckResult, UnknownReason};
-use crate::vm::contract_query::ContractTargetContext;
 use crate::vm::state::{VmExecutor, VmValue};
 use rustc_middle::{
     mir::{Local, Operand, Rvalue, StatementKind},
@@ -31,7 +30,7 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> Option<VmValue<'z3, 'tcx>> {
-        vm_state.contract_target_value_at(ContractTargetContext::Callsite(&checkpoint.args), property)
+        vm_state.callsite_contract_target_value(&checkpoint.args, property)
     }
 
     /// Implicit vacuous truth for projected targets.

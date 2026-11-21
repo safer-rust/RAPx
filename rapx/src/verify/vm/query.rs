@@ -1,19 +1,132 @@
 //! Read-only queries over the symbolic VM state used by property checks.
 
+use crate::contract::{ContractExpr, ContractPlace, ContractProjection, PlaceBase, Property, place::projected_field_ty};
 use crate::def_ids::type_ids;
 use crate::util::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
-use crate::contract::{ContractPlace, PlaceBase, Property};
+use crate::vm::state::{AllocId, OffsetKind, VmExecutor, VmValue};
 use rustc_middle::{
     mir::{Local, Operand},
     ty::{Ty, TyKind},
 };
 use z3::ast::{Ast, Int};
 
-use crate::vm::state::{AllocId, OffsetKind, VmExecutor, VmValue};
-use crate::vm::contract_query::ContractTargetContext;
-
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
+    /// Resolve a property's target using the checkpoint's call arguments.
+    pub(crate) fn callsite_contract_target_value(&self, args: &[Operand<'tcx>], property: &Property<'tcx>) -> Option<VmValue<'z3, 'tcx>> {
+        let place = match property.args().first()?.expr()? {
+            ContractExpr::Const(index) => ContractPlace { base: PlaceBase::Arg(usize::try_from(*index).ok()?), projections: vec![] },
+            ContractExpr::Place(place) => place.clone(),
+            ContractExpr::IndexAccess { slice, .. } => match slice.as_ref() {
+                ContractExpr::Place(place) => place.clone(),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        self.callsite_contract_place_value(args, &place)
+    }
+
+    fn callsite_contract_place_value(&self, args: &[Operand<'tcx>], place: &ContractPlace) -> Option<VmValue<'z3, 'tcx>> {
+        if place.projections.is_empty() {
+            return match place.base {
+                PlaceBase::Return => self.local_value(Local::from_usize(0)).cloned(),
+                PlaceBase::Arg(index) => args.get(index).map(|arg| self.value_of_operand(arg)),
+                PlaceBase::Local(index) => self.local_value(Local::from_usize(index)).cloned(),
+            };
+        }
+        let local = match place.base {
+            PlaceBase::Return => Local::from_usize(0),
+            PlaceBase::Arg(index) => match args.get(index)? {
+                Operand::Copy(operand_place) | Operand::Move(operand_place) => operand_place.local,
+                _ => return None,
+            },
+            PlaceBase::Local(index) => Local::from_usize(index),
+        };
+        let mut fields = Vec::new();
+        for projection in &place.projections {
+            match projection {
+                ContractProjection::Field { index } => fields.push(*index),
+                ContractProjection::Downcast { variant_index } => {
+                    let base_value = self.field_value(local, &fields).cloned().or_else(|| self.local_value(local).cloned())?;
+                    let enum_ty = if fields.is_empty() {
+                        base_value.ty
+                    } else {
+                        let root_ty = match place.base {
+                            PlaceBase::Arg(index) => match args.get(index)? {
+                                Operand::Copy(operand_place) | Operand::Move(operand_place) => operand_place.ty(self.body(), self.tcx).ty,
+                                _ => return None,
+                            },
+                            _ => self.body().local_decls[local].ty,
+                        };
+                        projected_field_ty(self.tcx, root_ty, &fields).unwrap_or(base_value.ty)
+                    };
+                    let inner_ty = match enum_ty.kind() {
+                        TyKind::Adt(adt, substs) if adt.is_enum() => {
+                            let variant = &adt.variants()[rustc_abi::VariantIdx::from_usize(*variant_index)];
+                            if variant.fields.is_empty() {
+                                None
+                            } else {
+                                Some(mir_utils::field_ty(self.tcx, &variant.fields[rustc_abi::FieldIdx::from_usize(0)], substs))
+                            }
+                        }
+                        _ => None,
+                    }.unwrap_or(base_value.ty);
+                    return Some(VmValue {
+                        z3_term: base_value.z3_term,
+                        ty: inner_ty,
+                        provenance: base_value.provenance,
+                        facts: base_value.facts,
+                        source: base_value.source.field_offset_only(),
+                    });
+                }
+                ContractProjection::ForEach => {
+                    if let Some(value) = self.field_value(local, &fields) {
+                        return Some(value.clone());
+                    }
+                    if let Some(base_value) = self.local_value(local) && base_value.is_pointer() {
+                        return Some(VmValue {
+                            z3_term: base_value.z3_term.clone(),
+                            ty: base_value.ty,
+                            provenance: base_value.provenance.clone(),
+                            facts: base_value.facts.clone(),
+                            source: base_value.source.field_offset_only(),
+                        });
+                    }
+                    return None;
+                }
+            }
+        }
+        if let Some(value) = self.field_value(local, &fields) {
+            return Some(value.clone());
+        }
+        if !fields.is_empty() && local == Local::from_usize(0) {
+            for block in self.body().basic_blocks.iter() {
+                for statement in &block.statements {
+                    if let rustc_middle::mir::StatementKind::Assign(assign) = &statement.kind {
+                        let (target, value) = &**assign;
+                        if let rustc_middle::mir::Rvalue::Aggregate(_, operands) = value
+                            && target.local == local
+                            && let Some(operand) = operands.get(rustc_abi::FieldIdx::from_usize(fields[0]))
+                            && fields.len() == 1
+                        {
+                            return Some(self.value_of_operand(operand));
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(base_value) = self.local_value(local) && let Some(provenance) = &base_value.provenance {
+            return Some(VmValue {
+                z3_term: base_value.z3_term.clone(),
+                ty: base_value.ty,
+                provenance: Some(provenance.clone()),
+                facts: base_value.facts.clone(),
+                source: base_value.source.field_offset_only(),
+            });
+        }
+        None
+    }
+
     pub(crate) fn has_bounded_object_span(
         &self,
         alloc_id: AllocId,
@@ -243,8 +356,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 return true;
             }
         }
-        if let Some(value) =
-            self.contract_target_value_at(ContractTargetContext::Callsite(&checkpoint.args), property)
+        if let Some(value) = self.callsite_contract_target_value(&checkpoint.args, property)
             && self.value_involves_terms(terms, &value)
         {
             return true;

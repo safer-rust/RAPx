@@ -2,7 +2,6 @@
 
 use crate::contract::{BinOp, ContractExpr, PlaceBase, RelOp, UnaryOp};
 use crate::util::mir_utils;
-use crate::vm::contract_query::ContractTargetContext;
 use crate::vm::state::VmValue;
 use crate::vm::VmExecutor;
 use rustc_middle::{mir::Local, ty::TyKind};
@@ -39,7 +38,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             ContractExpr::SizeOf(ty) => Some(self.size_sym_read(*ty)),
             ContractExpr::Place(cp) => {
                 let path = cp.plain_field_path()?;
-                if let Some(value) = self.contract_place_value_at(ContractTargetContext::Bound, cp)
+                if let Some(value) = self.bound_contract_place_value(cp)
                 {
                     return Some(value.z3_term);
                 }

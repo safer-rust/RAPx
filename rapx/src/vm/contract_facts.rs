@@ -12,7 +12,6 @@ use crate::{
 };
 
 use super::contracts::{index_access_locals, rebind_property_place, slice_offset_locals};
-use crate::vm::contract_query::ContractTargetContext;
 use super::state::{
     AllocId, ElementTy, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue,
 };
@@ -592,7 +591,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     /// value rather than the whole `self` reference.
     fn contract_target_value(&self, property: &Property<'tcx>) -> Option<VmValue<'z3, 'tcx>> {
         let place = property.target_place()?;
-        self.contract_place_value_at(ContractTargetContext::Bound, place)
+        self.bound_contract_place_value(place)
     }
 
     /// Write a contract target value back to its (possibly field) location.
@@ -614,7 +613,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             _ => return None,
         };
         cp.plain_field_path()?;
-        self.contract_place_value_at(ContractTargetContext::Bound, cp)?
+        self.bound_contract_place_value(cp)?
             .provenance_alloc_id()
     }
 

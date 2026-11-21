@@ -13,6 +13,16 @@ use z3::{Context, Sort, ast::{Array, Ast, Bool, Int}};
 use super::state::{AllocId, AllocKind, Allocation, ElementTy, MemoryContent, MemoryUnit, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue};
 
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
+    /// The key of a bounded span. Unsized slices and strings also need their length.
+    pub(crate) fn bounded_span(&self, value: &VmValue<'z3, 'tcx>, ty: Ty<'tcx>) -> Option<(Int<'z3>, Ty<'tcx>, Option<Int<'z3>>)> {
+        let len = if matches!(ty.kind(), TyKind::Slice(_) | TyKind::Str) {
+            Some(self.slice_len_from_value(value)?)
+        } else {
+            None
+        };
+        Some((value.z3_term.clone(), ty, len))
+    }
+
     pub(crate) fn copy_memory_values(
         &mut self,
         source: &VmValue<'z3, 'tcx>,
