@@ -7,7 +7,7 @@ use rustc_middle::mir::{
 };
 
 use crate::analysis::dataflow::types::DataflowGraph;
-use crate::helpers::def_use::{RelevantPlaces, operand_uses};
+use crate::util::def_use::{RelevantPlaces, operand_uses};
 
 use super::super::RelevantItem;
 use super::super::BackwardSlicer;

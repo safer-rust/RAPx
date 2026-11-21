@@ -3,7 +3,7 @@ use std::{
     fmt::{self, Write},
 };
 
-use crate::{helpers::fn_info::*, utils::source::get_adt_name};
+use crate::{util::fn_info::*, util::source::get_adt_name};
 use rustc_hir::{Safety, def_id::DefId};
 use rustc_middle::ty::TyCtxt;
 

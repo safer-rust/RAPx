@@ -6,7 +6,7 @@
 
 use crate::def_ids::type_ids;
 use crate::def_ids::lang_api::{self, LangItem};
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{ContractExpr, Property, PropertyArg};
 use crate::verify::report::{CheckResult, UnknownReason};

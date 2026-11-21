@@ -5,7 +5,7 @@
 //! here: places (via `place.rs`), const generics, builtin integer bounds, the
 //! length calls, tag argument types/targets, and `ValidNum` predicates.
 
-use crate::helpers::{
+use crate::util::{
     fn_info::parse_expr_into_number,
     mir_utils,
     name::{access_ident_recursive, match_ty_with_ident},

@@ -2,7 +2,7 @@ use cargo_metadata::{
     Metadata,
     camino::{Utf8Path, Utf8PathBuf},
 };
-use rapx::utils::log::rap_error_and_exit;
+use rapx::util::log::rap_error_and_exit;
 use std::collections::BTreeMap;
 
 /// Run cargo check in each member folder under current workspace.

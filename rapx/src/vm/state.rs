@@ -4,7 +4,7 @@
 //! here; the core state and its constructor are defined in the parent module.
 
 use crate::def_ids::type_ids;
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 use rustc_abi::VariantIdx;
 use rustc_hir::def_id::DefId;
 #[cfg(rapx_const_ext)]
@@ -21,7 +21,7 @@ use z3::{
 
 use crate::compat::{FxHashMap, FxHashSet};
 pub(crate) use super::VmExecutor;
-use crate::helpers::def_use::PlaceKey;
+use crate::util::def_use::PlaceKey;
 
 pub(crate) const REPEATED_ARRAY_ELEMENT: usize = usize::MAX;
 

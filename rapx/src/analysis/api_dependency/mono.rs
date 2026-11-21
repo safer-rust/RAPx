@@ -4,7 +4,7 @@ use super::graph::TyWrapper;
 use super::utils::{self, fn_sig_with_generic_args};
 use crate::compat;
 use crate::compat::GenericArgsRef;
-use crate::helpers::def_path::path_str_def_id;
+use crate::util::def_path::path_str_def_id;
 use crate::limit::MAX_STEP_SET_SIZE;
 use crate::{rap_debug, rap_trace};
 use rand::Rng;

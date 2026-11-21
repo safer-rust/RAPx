@@ -35,7 +35,7 @@ use rustc_middle::ty::TyCtxt;
 
 use crate::analysis::Analysis;
 use crate::compat::{FxHashMap, FxHashSet};
-use crate::helpers::{
+use crate::util::{
     fn_info::{get_cons, get_mutated_fields, get_muts},
     mir_utils,
     name::short_fn_name,

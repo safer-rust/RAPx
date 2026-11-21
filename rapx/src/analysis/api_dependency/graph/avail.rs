@@ -6,7 +6,7 @@ use super::dep_node::DepNode;
 use super::transform::TransformKind;
 use super::ty_wrapper::TyWrapper;
 use super::utils;
-use crate::helpers::def_path::path_str_def_id;
+use crate::util::def_path::path_str_def_id;
 use crate::rap_debug;
 use crate::rap_trace;
 use petgraph::Direction;

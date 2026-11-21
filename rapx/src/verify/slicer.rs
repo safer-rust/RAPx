@@ -17,7 +17,7 @@ use rustc_middle::{mir::{BasicBlock, Body, Local}, ty::TyCtxt};
 use crate::analysis::dataflow::graph::build_dataflow_graph_from_body;
 use crate::analysis::dataflow::types::DataflowGraph;
 use crate::analysis::path::{CallArg, PathNode, PathTree};
-use crate::helpers::def_use::RelevantPlaces;
+use crate::util::def_use::RelevantPlaces;
 use crate::verify::checkpoint::{Checkpoint, CheckpointKind, CheckpointLocation};
 use crate::verify::path::{CalleeBodies, EntryBodies};
 
@@ -494,7 +494,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         for (si, stmt) in block_data.statements[..statement_end].iter().enumerate().rev() {
             let defs = match &stmt.kind {
                 rustc_middle::mir::StatementKind::Assign(assign) => {
-                    let mut d = crate::helpers::def_use::RelevantPlaces::new();
+                    let mut d = crate::util::def_use::RelevantPlaces::new();
                     d.insert_mir_place(&assign.0);
                     d
                 }

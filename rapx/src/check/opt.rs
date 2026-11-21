@@ -10,13 +10,13 @@ macro_rules! def_paths {
     ($($field:ident : $path:literal),+ $(,)?) => {
         static DEFPATHS: once_cell::sync::OnceCell<DefPaths> = once_cell::sync::OnceCell::new();
         struct DefPaths {
-            $(pub $field: $crate::helpers::def_path::DefPath),+
+            $(pub $field: $crate::util::def_path::DefPath),+
         }
         impl DefPaths {
             #[allow(dead_code)]
             fn new(tcx: &rustc_middle::ty::TyCtxt<'_>) -> Self {
                 Self {
-                    $($field: $crate::helpers::def_path::DefPath::new($path, tcx)),+
+                    $($field: $crate::util::def_path::DefPath::new($path, tcx)),+
                 }
             }
         }
@@ -26,7 +26,7 @@ macro_rules! def_paths {
 use rustc_middle::ty::TyCtxt;
 
 use crate::analysis::dataflow::{Graph, default::DataflowAnalyzer};
-use crate::helpers::mir_utils::has_crate;
+use crate::util::mir_utils::has_crate;
 use checking::bounds_checking::BoundsCheck;
 use checking::encoding_checking::EncodingCheck;
 use data_collection::initialization::InitializationCheck;

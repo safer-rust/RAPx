@@ -5,7 +5,7 @@
 //! `NonOverlap` uses provenance-distinctness and range-overlap reasoning.
 
 use crate::def_ids::type_ids;
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{
     ContractExpr, ContractKind, BinOp, PlaceBase, Property, PropertyArg, RelOp,

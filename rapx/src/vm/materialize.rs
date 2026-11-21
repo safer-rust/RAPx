@@ -7,7 +7,7 @@ use rustc_middle::{
 use z3::ast::Int;
 
 use crate::compat::{FxHashMap, FxHashSet};
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 
 use super::state::{AllocId, OffsetKind, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue};
 

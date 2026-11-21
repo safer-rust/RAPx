@@ -5,7 +5,7 @@
 //! contract expression and the VM's computed terms.
 
 use crate::def_ids::intrinsic_api;
-use crate::helpers::def_use::PlaceKey;
+use crate::util::def_use::PlaceKey;
 use crate::verify::call_summary;
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{

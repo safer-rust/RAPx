@@ -1,6 +1,6 @@
 //! Checkpoint-bound contract expression evaluation over symbolic VM values.
 
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
 use crate::contract::{BinOp, ContractExpr, PlaceBase};
 use rustc_hir::def_id::DefId;

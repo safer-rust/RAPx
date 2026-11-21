@@ -3,7 +3,7 @@ use once_cell::sync::OnceCell;
 use rustc_middle::ty::TyCtxt;
 use rustc_span::Span;
 
-use crate::{analysis::dataflow::*, helpers::def_path::DefPath};
+use crate::{analysis::dataflow::*, util::def_path::DefPath};
 use annotate_snippets::Level;
 
 use crate::check::opt::check_utils::node_matches_call;

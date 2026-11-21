@@ -11,7 +11,7 @@ use z3::{SatResult, Solver};
 
 use super::state::{AllocId, MemoryContent, VmExecutor, VmValue};
 use crate::compat::{FxHashSet, Spanned};
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 use crate::limit::MAX_INLINE_DEPTH;
 
 type InlineWorkItem<'z3, 'tcx> = (VmExecutor<'z3, 'tcx>, BasicBlock, FxHashSet<BasicBlock>);
@@ -315,7 +315,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         });
         let mut returns = self.inline_execute_body(&pre_uninit);
         let return_ty = self.body().local_decls[Local::from_usize(0)].ty;
-        if crate::helpers::mir_utils::layout_of_ty(self.tcx, callee_def_id, return_ty)
+        if crate::util::mir_utils::layout_of_ty(self.tcx, callee_def_id, return_ty)
             .is_some_and(|layout| layout.size.bytes() == 0)
             && let Some(states) = returns.as_mut()
         {

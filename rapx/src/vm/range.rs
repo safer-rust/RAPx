@@ -3,7 +3,7 @@ use z3::ast::Int;
 
 use crate::def_ids::type_ids;
 use crate::def_ids::lang_api::{self, LangItem};
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 
 use super::state::{ValueSource, VmExecutor, VmValue};
 

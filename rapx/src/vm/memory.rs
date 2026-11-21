@@ -1,7 +1,7 @@
 //! Symbolic memory model for the VM.
 
 use crate::def_ids::type_ids;
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 #[cfg(rapx_const_ext)]
 use rustc_middle::ty::consts::ConstExt;
 use rustc_middle::{

@@ -29,7 +29,7 @@ use crate::def_ids::{
     lang_api::{self, LangItem},
     type_ids::{self, StdAdtType},
 };
-use crate::helpers::{
+use crate::util::{
     mir_scan::place_has_raw_deref,
     mir_utils::{self, dep_callee_def_id},
 };

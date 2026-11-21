@@ -1,7 +1,7 @@
 use crate::compat::FxHashSet;
 use crate::def_ids::other_api::is_drop_fn;
-use crate::helpers::draw_dot::render_dot_string;
-use crate::helpers::name::get_cleaned_def_path_name;
+use crate::util::draw_dot::render_dot_string;
+use crate::util::name::get_cleaned_def_path_name;
 use colorful::{Color, Colorful};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{

@@ -3,7 +3,7 @@
 use crate::def_ids::type_ids;
 use crate::analysis::dataflow::{call_read, call_write, pointer_copy};
 use crate::analysis::dataflow::pointer_flow::{self, trace_source_arg};
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 use crate::analysis::dataflow::call_summary::VerifierCallSemantics;
 use crate::analysis::dataflow::call_summary::pointer_semantics;
 use crate::contract::PropertyKind;
@@ -19,16 +19,16 @@ use rustc_middle::{
 };
 
 use crate::analysis::alias::{FieldOrigin, resolve_any_field_origin, resolve_self_field_origin};
-use crate::helpers::fn_info::is_externally_reachable;
+use crate::util::fn_info::is_externally_reachable;
 use crate::{
-    helpers::def_use::{PlaceBaseKey, PlaceKey},
-    helpers::mir_scan::get_fn_safety,
+    util::def_use::{PlaceBaseKey, PlaceKey},
+    util::mir_scan::get_fn_safety,
 };
 
 // Re-export the mir_utils helpers still consumed by `vm/alias.rs`.
-pub(crate) use crate::helpers::mir_utils::{operand_mir_place, operand_place};
+pub(crate) use crate::util::mir_utils::{operand_mir_place, operand_place};
 // Remaining mir_utils helpers used only within this module.
-use crate::helpers::mir_utils::{blocks_reachable_after_call, rvalue_any_place_matching};
+use crate::util::mir_utils::{blocks_reachable_after_call, rvalue_any_place_matching};
 
 // ── Shared types ─────────────────────────────────────────────────
 

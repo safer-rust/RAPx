@@ -8,7 +8,7 @@
 use crate::def_ids::intrinsic_api;
 #[cfg(not(rapx_box_deref_transmute))]
 use crate::def_ids::lang_api::{self, LangItem};
-use crate::helpers::{
+use crate::util::{
     mir_scan::{get_fn_safety, place_has_raw_deref},
     mir_utils::pointee_ty,
     name::get_cleaned_def_path_name,

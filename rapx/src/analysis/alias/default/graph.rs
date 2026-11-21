@@ -7,7 +7,7 @@ use crate::{
     analysis::points_to::PtsGraph,
     compat::FxHashMap,
     graphs::cfg::CfgBlock,
-    utils::source::get_fn_name,
+    util::source::get_fn_name,
 };
 use rustc_middle::{mir::Terminator, ty::TyCtxt};
 use rustc_span::{Span, def_id::DefId};

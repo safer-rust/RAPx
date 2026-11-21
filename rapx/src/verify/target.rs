@@ -14,7 +14,7 @@ use crate::def_ids::{
     intrinsic_api,
     lang_api::{self, LangItem},
 };
-use crate::helpers::name::short_fn_name;
+use crate::util::name::short_fn_name;
 use crate::verify::checkpoint::{
     collect_raw_ptr_deref_checkpoints, collect_static_mut_checkpoints,
 };
@@ -45,8 +45,8 @@ use super::{
     },
     type_invariants::build_type_invariants_from_params,
 };
-use crate::helpers::fn_info::get_adt_def_id_by_adt_method;
-use crate::helpers::mir_utils::{
+use crate::util::fn_info::get_adt_def_id_by_adt_method;
+use crate::util::mir_utils::{
     collect_return_block_indices, has_rapx_verify_attr, is_std_crate_def_id, is_trait_unsafe,
     resolve_impl_self_ty_def_id,
 };
@@ -530,14 +530,14 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                             && !has_json_entry
                             && !is_verify_target
                         {
-                            let path = crate::helpers::name::get_cleaned_def_path_name(
+                            let path = crate::util::name::get_cleaned_def_path_name(
                                 self.tcx,
                                 callee_def_id,
                             );
                             rap_warn!("no safety contracts found for callee \"{path}\"");
                         }
                     } else {
-                        let path = crate::helpers::name::get_cleaned_def_path_name(
+                        let path = crate::util::name::get_cleaned_def_path_name(
                             self.tcx,
                             callee_def_id,
                         );
@@ -576,7 +576,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         instance: Option<Instance<'tcx>>,
     ) -> FunctionTarget<'tcx> {
         let body: Option<&'tcx Body<'tcx>> = instance
-            .filter(|inst| !crate::helpers::mir_utils::has_unresolved_const_args(self.tcx, def_id, inst.args))
+            .filter(|inst| !crate::util::mir_utils::has_unresolved_const_args(self.tcx, def_id, inst.args))
             .and_then(|inst| {
                 let mir = self.tcx.optimized_mir(def_id);
                 inst.try_instantiate_mir_and_normalize_erasing_regions(
@@ -595,17 +595,17 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                 let TerminatorKind::Call { func, .. } = &block.terminator().kind else {
                     continue;
                 };
-                let Some(callee) = crate::helpers::mir_utils::resolve_callee_def_id(
+                let Some(callee) = crate::util::mir_utils::resolve_callee_def_id(
                     self.tcx, def_id, func,
                 ) else {
                     continue;
                 };
                 if !self.tcx.is_mir_available(callee)
-                    || !crate::helpers::mir_utils::has_direct_unmodeled_generic_call(self.tcx, callee)
+                    || !crate::util::mir_utils::has_direct_unmodeled_generic_call(self.tcx, callee)
                 {
                     continue;
                 }
-                let Some(inst) = crate::helpers::mir_utils::resolve_callee_instance(
+                let Some(inst) = crate::util::mir_utils::resolve_callee_instance(
                     self.tcx, def_id, func,
                 ) else {
                     continue;
@@ -613,7 +613,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                 if !matches!(inst.def, InstanceKind::Item(_)) || inst.def_id() != callee {
                     continue;
                 }
-                if crate::helpers::mir_utils::has_unresolved_const_args(self.tcx, def_id, inst.args) {
+                if crate::util::mir_utils::has_unresolved_const_args(self.tcx, def_id, inst.args) {
                     continue;
                 }
                 if let Some(previous) = instances.insert(callee, inst)
@@ -726,10 +726,10 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
     /// unmodeled generic trait call (monomorphization is the fallback for an
     /// opaque call with no summary), or a single non-generic target.
     fn build_function_targets(&mut self, def_id: DefId) -> Vec<FunctionTarget<'tcx>> {
-        if !crate::helpers::mir_utils::has_unmodeled_generic_call(self.tcx, def_id) {
+        if !crate::util::mir_utils::has_unmodeled_generic_call(self.tcx, def_id) {
             return vec![self.build_function_target(def_id, None)];
         }
-        let instances = crate::helpers::mir_utils::enumerate_mono_instances(
+        let instances = crate::util::mir_utils::enumerate_mono_instances(
             self.tcx,
             def_id,
             self.config.trait_impl_limit(),

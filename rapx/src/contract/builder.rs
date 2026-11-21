@@ -9,7 +9,7 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 use syn::Expr;
 
-use crate::helpers::name::access_ident_recursive;
+use crate::util::name::access_ident_recursive;
 
 use super::spec;
 use super::*;
@@ -347,9 +347,9 @@ impl<'tcx> Property<'tcx> {
                 let left = super::resolve::parse_target_arg(tcx, def_id, a);
                 let right = super::resolve::parse_target_arg(tcx, def_id, b);
                 let ta = super::place::parse_expr_into_local_and_ty(tcx, def_id, a)
-                    .and_then(|(_, _, ty)| crate::helpers::mir_utils::pointee_ty(ty));
+                    .and_then(|(_, _, ty)| crate::util::mir_utils::pointee_ty(ty));
                 let tb = super::place::parse_expr_into_local_and_ty(tcx, def_id, b)
-                    .and_then(|(_, _, ty)| crate::helpers::mir_utils::pointee_ty(ty));
+                    .and_then(|(_, _, ty)| crate::util::mir_utils::pointee_ty(ty));
                 match (ta, tb) {
                     (Some(ta), Some(tb)) if ta == tb => Self::new_atom(
                         PropertyKind::NonOverlap,

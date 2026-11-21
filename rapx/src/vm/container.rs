@@ -8,7 +8,7 @@ use z3::ast::{Ast, Int};
 
 use crate::def_ids::type_ids;
 use crate::compat::GenericArgsRef;
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 use crate::contract::{ContractExpr, ContractProjection, PropertyKind, place::projected_field_ty};
 
 use super::state::{AllocId, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue};
@@ -364,7 +364,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             PropertyKind::Owning => "Owning",
             _ => return false,
         };
-        let key = crate::helpers::name::public_def_path(self.tcx, adt.did());
+        let key = crate::util::name::public_def_path(self.tcx, adt.did());
         crate::contract::json::get_std_type_invariants()
             .get(&key)
             .is_some_and(|entries| entries.iter().any(|entry| {

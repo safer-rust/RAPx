@@ -6,8 +6,8 @@ use z3::ast::{Ast, Int};
 
 use super::super::state::{ValueSource, VmExecutor};
 use super::RuleFlow;
-use crate::helpers::def_use::PlaceKey;
-use crate::helpers::mir_utils;
+use crate::util::def_use::PlaceKey;
+use crate::util::mir_utils;
 use crate::contract::PropertyKind;
 
 /// The `IS_ZST` fold selects an equivalent path without asserting its guard.

@@ -9,7 +9,7 @@ use std::{
     fmt::{self, Display},
 };
 
-use crate::{Analysis, utils::source::get_fn_name_byid};
+use crate::{Analysis, util::source::get_fn_name_byid};
 
 #[repr(u8)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]

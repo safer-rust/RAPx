@@ -3,7 +3,7 @@
 use crate::contract::{
     ContractExpr, ContractPlace, ContractProjection, PlaceBase, Property, place::projected_field_ty,
 };
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 use crate::vm::{VmExecutor, state::VmValue};
 use rustc_middle::mir::{Local, Operand};
 use rustc_middle::ty::{Ty, TyKind};

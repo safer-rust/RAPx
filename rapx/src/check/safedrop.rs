@@ -6,7 +6,7 @@ use rustc_middle::ty::TyCtxt;
 
 use crate::analysis::Analysis;
 use crate::analysis::path::default::PathAnalyzer;
-use crate::utils::source::get_fn_name;
+use crate::util::source::get_fn_name;
 
 pub struct SafeDrop<'tcx> {
     pub tcx: TyCtxt<'tcx>,

@@ -12,7 +12,7 @@ use super::super::state::{
 };
 
 use crate::def_ids::type_ids;
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 
 pub(crate) fn eval_use<'z3, 'tcx>(
     state: &mut VmExecutor<'z3, 'tcx>,

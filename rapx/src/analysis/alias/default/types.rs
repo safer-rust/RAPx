@@ -1,4 +1,4 @@
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 use rustc_middle::ty::{self, Ty, TyCtxt};
 
 #[derive(PartialEq, Debug, Copy, Clone)]

@@ -35,7 +35,7 @@
 
 use crate::analysis::path::graph::PathGraph;
 use crate::compat::{FxHashMap, FxHashSet};
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 use rustc_hir::def_id::DefId;
 #[cfg(rapx_const_ext)]
 use rustc_middle::ty::consts::ConstExt;
@@ -52,7 +52,7 @@ use super::{
     slicer::bind_callsite_roots,
     target::FunctionTarget,
 };
-use crate::helpers::def_use::RelevantPlaces;
+use crate::util::def_use::RelevantPlaces;
 use crate::verify::checkpoint::Checkpoint;
 
 use crate::limit::{

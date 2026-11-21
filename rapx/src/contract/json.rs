@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 use syn::Expr;
 
-use crate::helpers::name::public_def_path;
+use crate::util::name::public_def_path;
 
 use super::{Property, PropertyKind};
 
@@ -186,7 +186,7 @@ pub(crate) fn query_trait_method_ensures<'tcx>(
     let Some(method) = get_std_trait_method(&path) else {
         return Vec::new();
     };
-    let (param_names, _) = crate::helpers::name::parse_signature(tcx, def_id);
+    let (param_names, _) = crate::util::name::parse_signature(tcx, def_id);
     let has_names = !param_names.is_empty() && !param_names[0].chars().all(|c| c.is_ascii_digit());
     method
         .ensures
@@ -510,7 +510,7 @@ fn parse_json_contracts<'tcx>(
     def_id: DefId,
     entries: &[JsonProperty],
 ) -> Vec<Property<'tcx>> {
-    let (param_names, _) = crate::helpers::name::parse_signature(tcx, def_id);
+    let (param_names, _) = crate::util::name::parse_signature(tcx, def_id);
     let has_names = !param_names.is_empty() && !param_names[0].chars().all(|c| c.is_ascii_digit());
 
     let mut results = Vec::new();

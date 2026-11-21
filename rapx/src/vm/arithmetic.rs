@@ -4,7 +4,7 @@ use rustc_middle::{
 };
 use z3::ast::{Ast, Bool, Int};
 
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 
 use super::state::{OffsetKind, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue};
 

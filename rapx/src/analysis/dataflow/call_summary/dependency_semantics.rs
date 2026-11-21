@@ -13,7 +13,7 @@ use crate::analysis::dataflow::{
 };
 use crate::compat::Spanned;
 use crate::def_ids::{self, intrinsic_api, other_api};
-use crate::helpers::mir_utils as helpers;
+use crate::util::mir_utils as helpers;
 
 use super::{CallEffect, effects, function_var};
 

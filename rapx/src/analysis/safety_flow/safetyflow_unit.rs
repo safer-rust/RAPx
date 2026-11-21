@@ -1,4 +1,4 @@
-use crate::helpers::fn_info::*;
+use crate::util::fn_info::*;
 use rustc_hir::{Safety, def_id::DefId};
 use rustc_middle::mir::Local;
 use std::collections::HashSet;

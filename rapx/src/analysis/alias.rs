@@ -4,8 +4,8 @@ pub mod mfp;
 pub mod observer;
 pub(crate) mod shared_owner;
 pub(crate) mod tree;
-use crate::helpers::mir_utils;
-use crate::utils::source::get_fn_name_byid;
+use crate::util::mir_utils;
+use crate::util::source::get_fn_name_byid;
 
 use super::super::Analysis;
 use crate::compat::FxHashMap;

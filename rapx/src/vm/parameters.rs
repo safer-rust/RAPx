@@ -6,7 +6,7 @@ use z3::ast::Int;
 
 use crate::def_ids::type_ids;
 use crate::compat::FxHashMap;
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 
 use super::state::{AllocId, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue};
 

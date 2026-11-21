@@ -7,7 +7,7 @@ use rustc_middle::ty::{Ty, TyCtxt, TypeFlags, TypeVisitableExt, TypingEnv};
 use super::RelevantItem;
 use super::BackwardSlicer;
 use crate::analysis::dataflow::types::DataflowGraph;
-use crate::helpers::def_use::RelevantPlaces;
+use crate::util::def_use::RelevantPlaces;
 
 mod call;
 mod dispatch;

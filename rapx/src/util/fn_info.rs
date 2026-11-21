@@ -9,7 +9,6 @@ use std::{collections::HashSet, fmt::Debug, hash::Hash};
 use syn::Expr;
 
 pub use super::mir_scan::get_fn_safety;
-pub use super::name::get_cleaned_def_path_name;
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum FnKind {

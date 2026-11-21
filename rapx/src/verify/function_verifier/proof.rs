@@ -11,7 +11,7 @@ use std::cell::Cell;
 
 use crate::analysis::path::PathTree;
 use crate::def_ids;
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 use crate::vm::VmExecutor;
 use crate::verify::{
     checkpoint::{Checkpoint, CheckpointKind, CheckpointLocation},

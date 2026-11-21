@@ -4,7 +4,7 @@ use z3::ast::{Ast, Bool, Int};
 use crate::def_ids::type_ids;
 use crate::{
     compat::FxHashSet,
-    helpers::mir_utils,
+    util::mir_utils,
     contract::{
             ContractExpr, ContractKind, ContractPlace, ContractProjection, BinOp, PlaceBase,
             Property, PropertyArg, PropertyKind,

@@ -1,5 +1,5 @@
 use crate::def_ids::lang_api::{self, LangItem};
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 use crate::limit::FUZZABLE_MAX_DEPTH;
 #[cfg(rapx_has_attr_ir)]
 use rustc_attr_ir::AttributeKind;

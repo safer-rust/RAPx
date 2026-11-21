@@ -1,4 +1,4 @@
-use crate::utils::log::rap_error_and_exit;
+use crate::util::log::rap_error_and_exit;
 
 use std::fs;
 use std::path::Path;

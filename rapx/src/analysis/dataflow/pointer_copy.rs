@@ -7,7 +7,7 @@ use rustc_middle::{
 };
 
 use crate::def_ids::{diagnostic_api, intrinsic_api};
-use crate::helpers::mir_utils::dep_callee_def_id;
+use crate::util::mir_utils::dep_callee_def_id;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct CopyFlow {

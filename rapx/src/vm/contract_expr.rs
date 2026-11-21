@@ -1,7 +1,7 @@
 //! Contract-fact expressions and shared numeric operations.
 
 use crate::contract::{BinOp, ContractExpr, PlaceBase, RelOp, UnaryOp};
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 use crate::vm::contract_query::ContractTargetContext;
 use crate::vm::state::VmValue;
 use crate::vm::VmExecutor;

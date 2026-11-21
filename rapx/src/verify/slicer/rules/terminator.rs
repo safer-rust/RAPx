@@ -5,8 +5,8 @@ use rustc_middle::mir::{BasicBlock, Body, Operand, Place, TerminatorKind};
 
 use crate::analysis::dataflow::types::DataflowGraph;
 use crate::compat::Spanned;
-use crate::helpers::def_use::{RelevantPlaces, call_args_uses_at, terminator_use_def};
-use crate::helpers::mir_utils;
+use crate::util::def_use::{RelevantPlaces, call_args_uses_at, terminator_use_def};
+use crate::util::mir_utils;
 
 use super::super::RelevantItem;
 use super::super::BackwardSlicer;

@@ -1,6 +1,6 @@
 use annotate_snippets::{Level, Renderer, Snippet};
 
-use crate::utils::span::{
+use crate::util::span::{
     relative_pos_range, span_to_filename, span_to_line_number, span_to_source_code,
 };
 use rustc_span::Span;

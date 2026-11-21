@@ -6,13 +6,13 @@
 //! back to the originating parameter/local.
 
 use crate::def_ids::type_ids;
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 use crate::compat::GenericArgsRef;
 use crate::analysis::alias::hazard::{self as alias_hazard, AliasProducer, HazardKind};
 use crate::analysis::alias::FieldOrigin;
 use crate::analysis::dataflow::pointer_flow;
 use crate::verify::checkpoint::Checkpoint;
-use crate::helpers::def_use::PlaceKey;
+use crate::util::def_use::PlaceKey;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{Local, Operand, ProjectionElem, Rvalue, StatementKind};
 

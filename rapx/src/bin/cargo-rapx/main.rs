@@ -7,15 +7,15 @@
 #[macro_use]
 extern crate rapx;
 
-use crate::utils::*;
+use crate::runner::*;
 use clap::Parser;
 use rapx::cli::{self, help};
-use rapx::utils::log::{init_log, rap_error_and_exit};
+use rapx::util::log::{init_log, rap_error_and_exit};
 use std::env;
 
 mod args;
 mod cargo_check;
-mod utils;
+mod runner;
 
 fn phase_cargo_rap() {
     rap_trace!("Start phase cargo-rapx.");

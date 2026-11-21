@@ -5,7 +5,7 @@
 //! by every checker family.
 
 use crate::def_ids::type_ids;
-use crate::helpers::def_use::{PlaceBaseKey, PlaceKey};
+use crate::util::def_use::{PlaceBaseKey, PlaceKey};
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{
     ContractExpr, ContractPlace, ContractProjection, Property, PropertyArg,

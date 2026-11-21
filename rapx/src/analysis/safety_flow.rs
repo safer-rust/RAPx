@@ -10,8 +10,8 @@ pub mod safetyflow_unit;
 pub mod std_analysis;
 
 use crate::{
-    helpers::{draw_dot::render_dot_graphs, fn_info::*},
-    utils::source::{get_fn_name_byid, get_module_name},
+    util::{draw_dot::render_dot_graphs, fn_info::*},
+    util::source::{get_fn_name_byid, get_module_name},
 };
 use fn_collector::FnCollector;
 use root::hir_contains_unsafe;

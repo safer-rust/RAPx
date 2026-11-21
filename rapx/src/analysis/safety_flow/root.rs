@@ -1,6 +1,6 @@
-use crate::helpers::fn_info::get_adt_def_id_by_adt_method;
-use crate::helpers::mir_scan::{collect_global_local_pairs, get_rawptr_deref, get_unsafe_callees};
-use crate::helpers::mir_utils::{has_rapx_attr, is_trait_unsafe};
+use crate::util::fn_info::get_adt_def_id_by_adt_method;
+use crate::util::mir_scan::{collect_global_local_pairs, get_rawptr_deref, get_unsafe_callees};
+use crate::util::mir_utils::{has_rapx_attr, is_trait_unsafe};
 use rustc_hir::{BodyId, def_id::DefId};
 use rustc_middle::{mir::Local, ty::TyCtxt};
 use rustc_span::Symbol;

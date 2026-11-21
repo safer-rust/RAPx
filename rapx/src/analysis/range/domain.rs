@@ -25,7 +25,7 @@ use rustc_middle::{
 };
 
 use crate::analysis::{path::PathTree, range::Range};
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 
 use self::{core::*, symbolic_expr::*};
 

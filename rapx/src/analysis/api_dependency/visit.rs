@@ -3,7 +3,7 @@ use super::graph::{DepEdge, DepNode};
 use super::is_def_id_public;
 use crate::analysis::api_dependency::mono;
 use crate::def_ids::lang_api::{self, LangItem};
-use crate::helpers::path::{PathResolver, get_path_resolver};
+use crate::util::path::{PathResolver, get_path_resolver};
 use crate::{rap_debug, rap_trace};
 use rustc_hir::{
     BodyId, BodyOwnerKind, FnDecl,

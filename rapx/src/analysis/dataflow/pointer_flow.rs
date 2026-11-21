@@ -11,7 +11,7 @@ use rustc_middle::{
 };
 
 use crate::def_ids::type_ids;
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 
 /// Whether a raw pointer or `NonNull` return value traces to the first argument.
 pub(crate) fn return_traces_first_arg(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {

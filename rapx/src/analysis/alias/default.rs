@@ -10,7 +10,7 @@ use crate::compat::FxHashMap;
 use crate::{
     analysis::{Analysis, path::default::PathAnalyzer},
     limit::ALIAS_VISIT_LIMIT,
-    utils::source::*,
+    util::source::*,
 };
 use graph::AliasGraph;
 use rustc_hir::def_id::DefId;

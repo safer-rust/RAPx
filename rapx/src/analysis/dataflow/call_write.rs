@@ -13,7 +13,7 @@ use rustc_middle::{
 
 use crate::analysis::path::graph::{PathEnumerator, PathGraph};
 use crate::compat::Spanned;
-use crate::helpers::mir_utils as helpers;
+use crate::util::mir_utils as helpers;
 
 /// API-specific facts needed by the MIR write tracer.
 pub(crate) trait WriteSemantics {

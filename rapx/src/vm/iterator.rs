@@ -2,7 +2,7 @@ use rustc_middle::{mir::Local, ty::TyKind};
 use z3::ast::{Ast, Int};
 
 use crate::def_ids::type_ids;
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 
 use super::state::{AllocId, OffsetKind, Provenance, VmExecutor, VmValue};
 

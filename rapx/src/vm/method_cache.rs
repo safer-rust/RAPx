@@ -8,7 +8,7 @@ use z3::ast::Int;
 use crate::analysis::dataflow::call_summary::pointer_semantics;
 use crate::compat::FxHashMap;
 use crate::def_ids::{self, diagnostic_api, intrinsic_api};
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 
 use super::state::{AllocId, VmExecutor, VmValue};
 

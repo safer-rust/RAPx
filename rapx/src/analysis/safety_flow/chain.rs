@@ -1,6 +1,6 @@
-use crate::helpers::mir_scan::get_fn_safety;
-use crate::helpers::mir_utils::dep_callee_def_id;
-use crate::helpers::name::get_cleaned_def_path_name;
+use crate::util::mir_scan::get_fn_safety;
+use crate::util::mir_utils::dep_callee_def_id;
+use crate::util::name::get_cleaned_def_path_name;
 use rustc_hir::{Safety, def_id::DefId};
 use rustc_middle::{
     mir::{Terminator, TerminatorKind},

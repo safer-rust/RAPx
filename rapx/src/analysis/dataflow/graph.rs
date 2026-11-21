@@ -279,7 +279,7 @@ impl DataflowGraph {
                     return Some((node_idx, node));
                 }
             } else {
-                if !crate::utils::span::relative_pos_range(node.span, span).eq(0..0)
+                if !crate::util::span::relative_pos_range(node.span, span).eq(0..0)
                     && (node.span.lo() == span.lo() || node.span.hi() == span.hi())
                 {
                     return Some((node_idx, node));

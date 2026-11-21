@@ -12,7 +12,7 @@ use z3::ast::{Ast, Bool, Int};
 
 use super::super::super::state::{AllocKind, ValueSource, VmExecutor, VmValue};
 use crate::def_ids::lang_api::{self, LangItem};
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 
 #[derive(Clone, Copy)]
 enum ComparisonMethod {

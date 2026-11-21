@@ -1,7 +1,7 @@
 //! Read-only queries over the symbolic VM state used by property checks.
 
 use crate::def_ids::type_ids;
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
 use crate::contract::{ContractPlace, PlaceBase, Property};
 use rustc_middle::{

@@ -12,7 +12,7 @@
 //! # PlaceKey adapters
 //! `PtsGraph` exposes PlaceKey-oriented methods (`insert_place_edge`,
 //! `get_place_source`, `resolve_place`, `place_edges`) for consumers in the
-//! verify pipeline that work with `crate::helpers::def_use::PlaceKey` rather
+//! verify pipeline that work with `crate::util::def_use::PlaceKey` rather
 //! than [`slot::Slot`].
 //!
 //! # Edge sources
@@ -34,7 +34,7 @@ use self::slot::{AbstractLoc, Slot};
 
 use crate::analysis::alias::default::types::ValueKind;
 use crate::compat::{FxHashMap, FxHashSet};
-use crate::helpers::def_use::{PlaceBaseKey, PlaceKey};
+use crate::util::def_use::{PlaceBaseKey, PlaceKey};
 use crate::limit::MAX_VALUES_PER_PATH;
 
 /// Unified points-to and value-flow graph.

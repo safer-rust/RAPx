@@ -76,7 +76,7 @@ impl ContractPlace {
         for projection in &self.projections {
             match projection {
                 ContractProjection::Field { index } => {
-                    let field_name = crate::helpers::name::resolve_field_name(tcx, index, struct_def_id);
+                    let field_name = crate::util::name::resolve_field_name(tcx, index, struct_def_id);
                     if result.is_empty() {
                         result = field_name;
                     } else {

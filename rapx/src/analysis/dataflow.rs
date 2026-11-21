@@ -28,7 +28,7 @@ use rustc_index::IndexVec;
 use rustc_middle::mir::Local;
 use rustc_span::{DUMMY_SP, Span};
 
-use crate::{analysis::Analysis, utils::source::get_fn_name_byid};
+use crate::{analysis::Analysis, util::source::get_fn_name_byid};
 
 pub type Graph = DataflowGraph;
 pub type GraphNode = DataflowNode;

@@ -4,7 +4,7 @@ use crate::graphs::{
     cfg::{CfgBlock, ControlFlowGraph},
     scc::{Scc, SccInfo},
 };
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 use rustc_middle::{
     mir::{
         AggregateKind, BasicBlock, BinOp, Body, Local, Operand, ProjectionElem, Rvalue,

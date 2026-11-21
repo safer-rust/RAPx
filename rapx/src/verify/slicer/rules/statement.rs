@@ -4,8 +4,8 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{BasicBlock, Body, Local, Operand, Place, ProjectionElem, Rvalue};
 
 use crate::analysis::dataflow::types::DataflowGraph;
-use crate::helpers::def_use::{RelevantPlaces, operand_uses};
-use crate::helpers::mir_utils;
+use crate::util::def_use::{RelevantPlaces, operand_uses};
+use crate::util::mir_utils;
 
 use super::super::RelevantItem;
 use super::super::BackwardSlicer;
@@ -135,7 +135,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             // the current definition.  When the uses of this statement
             // would re-add a place whose definition was already found earlier
             // in the walk, skip it to prevent wrong (duplicate) matches.
-            let already_seen: crate::compat::FxHashSet<crate::helpers::def_use::PlaceKey> =
+            let already_seen: crate::compat::FxHashSet<crate::util::def_use::PlaceKey> =
                 relevant.places.clone();
             let indexed_write = place
                 .projection
@@ -220,7 +220,7 @@ fn collect_assignment_uses<'tcx>(
     // Also collect uses directly from operands — the dataflow graph
     // creates synthetic nodes for field projections (e.g. _13.0),
     // so we need the direct operand uses to reach through.
-    for operand in crate::helpers::def_use::rvalue_operands(rvalue) {
+    for operand in crate::util::def_use::rvalue_operands(rvalue) {
         uses.extend(operand_uses(operand));
     }
     // A reborrow (`_p = &(*_q)`, `_p = &raw (*_q)`) carries no operands, so

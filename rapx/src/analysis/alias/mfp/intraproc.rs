@@ -1,4 +1,4 @@
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 use crate::compat::FxHashMap;
 use crate::compat::Spanned;
 use rustc_hir::def_id::DefId;

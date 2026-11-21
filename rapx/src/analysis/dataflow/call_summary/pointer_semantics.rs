@@ -9,7 +9,7 @@ use rustc_middle::{
 };
 
 use crate::analysis::dataflow::pointer_flow::{is_nonnull_view, return_source_arg};
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 
 /// Whether MIR shows a read-only pointer view of the first argument.
 pub(crate) fn is_benign_origin_use(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {

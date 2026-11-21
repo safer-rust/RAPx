@@ -4,8 +4,8 @@
 use crate::analysis::path::default::PathAnalyzer;
 use crate::compat::{FxHashMap, FxHashSet};
 use crate::def_ids::{diagnostic_api, type_ids};
-use crate::helpers::mir_scan::collect_global_local_pairs;
-use crate::helpers::mir_utils::resolve_callee_def_id;
+use crate::util::mir_scan::collect_global_local_pairs;
+use crate::util::mir_utils::resolve_callee_def_id;
 use crate::vm::{RelevantItem, VmExecutor, constructor_policy::ConstructorMirMode, state::AllocId};
 use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::{

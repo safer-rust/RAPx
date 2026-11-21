@@ -11,7 +11,7 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{self, ClauseKind, TyCtxt};
 use indexmap::IndexMap;
 
-use crate::{compat::FxHashMap, helpers::fn_info::get_cons};
+use crate::{compat::FxHashMap, util::fn_info::get_cons};
 
 use super::{
     checkpoint::CheckpointLocation,

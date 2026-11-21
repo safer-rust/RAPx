@@ -13,7 +13,7 @@ use super::super::super::state::{
 };
 use crate::def_ids::type_ids;
 use crate::compat::Spanned;
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 use crate::analysis::dataflow::call_summary::{
     BoundedArithmeticOp, CallEffect, OverflowOp, SimdArithOp, SimdCmpOp,
 };

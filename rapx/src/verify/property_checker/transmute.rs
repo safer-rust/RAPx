@@ -1,6 +1,6 @@
 //! Transmute / trait / size property checking for the symbolic VM.
 
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 use rustc_middle::ty::{GenericArgKind, Ty, TyKind};
 
 use crate::verify::checkpoint::Checkpoint;
@@ -83,7 +83,7 @@ impl PropertyChecker {
         for (predicate, _span) in pred_iter {
             if let rustc_middle::ty::ClauseKind::Trait(trait_ref) = predicate.kind().skip_binder()
                 && trait_ref.self_ty() == ty {
-                    let short_name = crate::helpers::name::short_fn_name(tcx, trait_ref.def_id());
+                    let short_name = crate::util::name::short_fn_name(tcx, trait_ref.def_id());
                     if short_name == trait_name {
                         return CheckResult::ProvedByRule;
                     }

@@ -18,7 +18,7 @@ use rustc_middle::ty::TyCtxt;
 
 use super::compound::{CompoundArg, CompoundBody};
 use super::{ContractExpr, BinOp, NumericPredicate, UnaryOp, RelOp};
-use crate::helpers::name::match_ty_with_ident;
+use crate::util::name::match_ty_with_ident;
 
 /// Parser derived from `grammar.pest`.
 #[derive(Parser)]

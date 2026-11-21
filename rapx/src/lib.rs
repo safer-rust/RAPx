@@ -1,7 +1,7 @@
 #![feature(rustc_private)]
 
 #[macro_use]
-pub mod utils;
+pub mod util;
 pub mod analysis;
 pub mod check;
 pub mod cli;
@@ -9,7 +9,6 @@ pub(crate) mod compat;
 pub(crate) mod contract;
 pub(crate) mod def_ids;
 pub(crate) mod graphs;
-pub(crate) mod helpers;
 pub(crate) mod limit;
 pub(crate) mod preprocess;
 pub(crate) mod verify;
@@ -58,7 +57,7 @@ use analysis::{
     safety_flow::{SafetyFlowAnalysis, TargetCrate},
     ssa_transform::SSATrans,
 };
-use helpers::show_mir::ShowMir;
+use util::show_mir::ShowMir;
 use rustc_ast::ast;
 use rustc_driver::{Callbacks, Compilation};
 use rustc_interface::interface::{self, Compiler};

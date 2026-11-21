@@ -2,7 +2,7 @@ use crate::analysis::path::PathTree;
 use crate::check::safedrop::bug_records::{BugRecords, BugType, LocalSpot, TyBug};
 use crate::compat::FxHashMap;
 use crate::def_ids::type_ids;
-use crate::utils::source::{get_filename, get_name};
+use crate::util::source::{get_filename, get_name};
 use crate::vm::{
     RelevantItem, VmExecutor, constructor_policy::ConstructorMirMode, diagnostics::Diagnostics,
     state::{AllocId, MemoryEvent, MemoryEventKind, ValueFacts, VmValue},

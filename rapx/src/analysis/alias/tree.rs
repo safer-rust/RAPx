@@ -12,7 +12,7 @@
 //! chain (`flow_xor_violation` in `vm/alias.rs`), so this static forest is not
 //! consulted for live-value grouping.
 
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 use super::hazard as alias_hazard;
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;

@@ -15,7 +15,7 @@ use rustc_middle::{
 
 use crate::analysis::path::PathTree;
 use crate::compat::{FxHashMap, FxHashSet};
-use crate::helpers::{
+use crate::util::{
     fn_info::{FnKind, get_type},
     mir_utils::{collect_return_block_indices, is_return_block},
 };

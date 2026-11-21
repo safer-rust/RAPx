@@ -6,7 +6,7 @@
 //! modify relevant state.
 
 use crate::compat::Spanned;
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{BasicBlock, Body, Operand, Place},
@@ -16,7 +16,7 @@ use rustc_middle::{
 use crate::analysis::dataflow::call;
 use crate::analysis::dataflow::types::DataflowGraph;
 
-use crate::helpers::def_use::{RelevantPlaces, call_args_uses_at};
+use crate::util::def_use::{RelevantPlaces, call_args_uses_at};
 use crate::verify::call_summary;
 
 use super::super::RelevantItem;

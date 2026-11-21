@@ -8,7 +8,7 @@ use rustc_middle::{
     ty::{TyCtxt, TypingEnv},
 };
 
-use crate::{def_ids::intrinsic_api, helpers::mir_utils};
+use crate::{def_ids::intrinsic_api, util::mir_utils};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PointerOffsetDirection {

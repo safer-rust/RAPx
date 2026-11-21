@@ -3,7 +3,7 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::{mir::Body, ty::TyCtxt};
 use rustc_span::{Span, Symbol};
 
-use crate::utils::{
+use crate::util::{
     source::get_name,
     span::{
         are_spans_in_same_file, relative_pos_range, span_to_filename, span_to_line_number,

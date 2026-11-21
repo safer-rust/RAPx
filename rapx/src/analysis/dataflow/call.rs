@@ -59,7 +59,7 @@ pub(crate) fn dependencies<'tcx>(
     semantics: &impl CallSemantics,
 ) -> CallDependencies {
     let arg_count = args.len();
-    let Some(callee) = crate::helpers::mir_utils::dep_callee_def_id(func) else {
+    let Some(callee) = crate::util::mir_utils::dep_callee_def_id(func) else {
         return CallDependencies::fallback(arg_count);
     };
     if let Some(summary) = semantics.special_dependencies(tcx, caller, callee, func, args, body) {
@@ -115,7 +115,7 @@ pub(crate) fn return_dependencies(tcx: TyCtxt<'_>, callee: DefId) -> Option<Vec<
     if !tcx.is_mir_available(callee) {
         return None;
     }
-    crate::helpers::mir_utils::catch_panic(|| {
+    crate::util::mir_utils::catch_panic(|| {
         build_dataflow_graph(tcx, callee)
             .param_return_deps()
             .iter_enumerated()

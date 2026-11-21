@@ -34,10 +34,10 @@ use super::utils;
 use super::visit::{self, FnVisitor};
 use crate::analysis::api_dependency::is_fuzzable_ty;
 use crate::compat::GenericArgsRef;
-use crate::helpers::def_path::path_str_def_id;
+use crate::util::def_path::path_str_def_id;
 use crate::rap_debug;
 use crate::rap_trace;
-use crate::utils::fs::rap_create_file;
+use crate::util::fs::rap_create_file;
 
 #[derive(Clone, Copy, Eq, PartialEq, Debug, Serialize)]
 #[serde(tag = "type")]

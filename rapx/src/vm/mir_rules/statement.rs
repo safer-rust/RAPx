@@ -13,7 +13,7 @@ use z3::ast::{Ast, Bool, Int};
 use super::super::state::{AllocKind, MemoryContent, Provenance, ValueSource, VmExecutor, VmValue};
 use super::eval_rvalue;
 use crate::def_ids::type_ids;
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 
 pub(crate) fn exec_assume<'z3, 'tcx>(state: &mut VmExecutor<'z3, 'tcx>, operand: &Operand<'tcx>) {
     let value = state.value_of_operand(operand);

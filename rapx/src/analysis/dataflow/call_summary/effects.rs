@@ -20,7 +20,7 @@ use crate::{
         lang_api::{self, LangItem},
         nomir_api, other_api,
     },
-    helpers::{
+    util::{
         mir_utils::{self, type_layout},
         name::public_def_path,
     },

@@ -1,7 +1,7 @@
 //! Constructor MIR selection used by the symbolic VM.
 
 use crate::analysis::safety_flow::root::has_rapx_struct_invariant;
-use crate::helpers::fn_info::{self, FnKind};
+use crate::util::fn_info::{self, FnKind};
 use crate::contract::type_invariants::has_json_type_invariants;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;

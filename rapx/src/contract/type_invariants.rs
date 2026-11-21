@@ -36,7 +36,7 @@ pub(crate) fn build_type_invariants_from_params<'tcx>(
 
     let mut results = Vec::new();
 
-    let (param_names, _param_tys) = crate::helpers::name::parse_signature(tcx, def_id);
+    let (param_names, _param_tys) = crate::util::name::parse_signature(tcx, def_id);
 
     for (index, &param_ty) in inputs.iter().enumerate() {
         if param_ty.is_primitive() {
@@ -96,7 +96,7 @@ fn collect_type_invariants<'tcx>(
 ) {
     let zst_vec = matches!(type_path, "alloc::vec::Vec" | "std::vec::Vec" | "vec::Vec")
         && elem_ty
-            .and_then(|ty| crate::helpers::mir_utils::layout_of_ty(tcx, def_id, ty))
+            .and_then(|ty| crate::util::mir_utils::layout_of_ty(tcx, def_id, ty))
             .is_some_and(|layout| layout.size.bytes() == 0);
     if let Some(entries) = db.get(type_path) {
         for prop_entry in entries {
@@ -263,7 +263,7 @@ fn transparent_nonnull_path<'tcx>(
     }
     let mut path = None;
     for (index, field) in adt.non_enum_variant().fields.iter().enumerate() {
-        let field_ty = crate::helpers::mir_utils::field_ty(tcx, field, args);
+        let field_ty = crate::util::mir_utils::field_ty(tcx, field, args);
         let Some(mut suffix) = transparent_nonnull_path(tcx, field_ty, depth - 1) else {
             continue;
         };
@@ -353,7 +353,7 @@ fn replace_expr_ty<'tcx>(expr: &mut ContractExpr<'tcx>, ty: Ty<'tcx>) {
 fn type_path_key<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> (String, Option<Ty<'tcx>>) {
     match ty.kind() {
         rustc_middle::ty::TyKind::Adt(adt_def, substs) => {
-            let key = crate::helpers::name::public_def_path(tcx, adt_def.did());
+            let key = crate::util::name::public_def_path(tcx, adt_def.did());
             // The first type argument is the element type for containers
             // (`Vec<T>`/`String`); `$elem` in a container invariant resolves to
             // it (unused by non-container entries like `NonNull`).
@@ -368,7 +368,7 @@ fn type_path_key<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> (String, Option<Ty<'t
                 type_path_key(tcx, *inner)
             }
             rustc_middle::ty::TyKind::Adt(adt, _)
-                if crate::helpers::name::public_def_path(tcx, adt.did()) == "core::ffi::CStr" =>
+                if crate::util::name::public_def_path(tcx, adt.did()) == "core::ffi::CStr" =>
             {
                 ("core::ffi::CStr".to_string(), None)
             }

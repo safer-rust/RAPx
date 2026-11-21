@@ -175,7 +175,7 @@ pub(crate) fn owning_field_paths_from_annotation<'tcx>(
                 };
                 let field = fields.iter().nth(index)?;
                 path.push(index);
-                ty = crate::helpers::mir_utils::field_ty(tcx, field, args);
+                ty = crate::util::mir_utils::field_ty(tcx, field, args);
             }
             Some(path)
         })

@@ -1,7 +1,7 @@
 pub mod default;
 pub mod graph;
 
-use crate::utils::source::get_fn_name_byid;
+use crate::util::source::get_fn_name_byid;
 use rustc_hir::def_id::DefId;
 use std::fmt::{self, Display};
 

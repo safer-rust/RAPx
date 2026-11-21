@@ -7,15 +7,15 @@
 //! and the pest-based expression converter (`pest.rs`) can share it
 //! without a dependency cycle.
 
-use crate::helpers::mir_utils;
+use crate::util::mir_utils;
 use rustc_abi::FieldIdx;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 use syn::Expr;
 
-use crate::helpers::fn_info::{FnKind, get_type};
-use crate::helpers::name::{access_ident_recursive, get_adt_self_ty, parse_signature};
+use crate::util::fn_info::{FnKind, get_type};
+use crate::util::name::{access_ident_recursive, get_adt_self_ty, parse_signature};
 
 use super::{ContractExpr, ContractPlace, ContractProjection, PlaceBase, PropertyArg};
 
@@ -212,7 +212,7 @@ fn resolve_projection_from_struct_ident<'tcx>(
     // lives inside the `Ok`/`Some` variant (field 0 of the enum). Prepend that
     // field access so the invariant's place resolves through the variant's data
     // (e.g. `ptr` -> `Return.Field(0).Field(0)`).
-    if base_local == 0 && crate::helpers::fn_info::returns_wrapped_self(tcx, def_id) {
+    if base_local == 0 && crate::util::fn_info::returns_wrapped_self(tcx, def_id) {
         field_indices.insert(0, 0);
     }
 
