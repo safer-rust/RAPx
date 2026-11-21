@@ -594,7 +594,7 @@ pub(crate) struct FrameState<'tcx> {
     pub(crate) local_alloc: FxHashMap<Local, AllocId>,
 }
 
-/// Caller state parked during a path-replay call, including its method snapshot.
+/// Caller state parked during a path-replay call.
 #[derive(Clone)]
 pub(crate) struct SavedCallerFrame<'z3, 'tcx> {
     /// Caller MIR frame restored when the inlined callee returns.
