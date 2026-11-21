@@ -1,22 +1,19 @@
-//! VM-specific alias origin tracing.
+//! Alias checks combining VM provenance with MIR hazard analysis.
 //!
-//! Bridges `VmExecutor` provenance tracking with the shared `alias_hazard`
-//! MIR scanning infrastructure. The VM already tracks which `AllocId`
-//! each local's value points to; this module traces that provenance
-//! back to the originating parameter/local.
+//! Trace a pointer's allocation back to its source, then check whether a
+//! reference view, ownership transfer, read, or copy violates Alias.
 
-use crate::def_ids::type_ids;
-use crate::util::mir_utils;
-use crate::compat::GenericArgsRef;
 use crate::analysis::alias::hazard::{self as alias_hazard, AliasProducer, HazardKind};
 use crate::analysis::alias::FieldOrigin;
 use crate::analysis::dataflow::pointer_flow;
-use crate::verify::checkpoint::Checkpoint;
+use crate::compat::GenericArgsRef;
+use crate::def_ids::type_ids;
 use crate::util::def_use::PlaceKey;
+use crate::util::mir_utils;
+use crate::verify::checkpoint::Checkpoint;
+use crate::vm::state::{VmExecutor, VmValue};
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{Local, Operand, ProjectionElem, Rvalue, StatementKind};
-
-use crate::vm::state::{VmExecutor, VmValue};
 
 /// Information about a value's ultimate origin.
 #[derive(Clone, Debug)]
@@ -50,8 +47,7 @@ impl VmOrigin {
         matches!(self.kind, VmOriginKind::SharedRef)
     }
 
-    /// Whether this origin is an owned type (Box, Vec) whose allocation was
-    /// transferred to this function.
+    /// Whether this origin is an owned type (Box, Vec) transferred to this function.
     pub(crate) fn is_owned(&self) -> bool {
         matches!(self.kind, VmOriginKind::Owned(_))
     }
@@ -68,9 +64,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         };
 
         let alloc_id = prov.alloc_id;
-
         let mut best: Option<VmOrigin> = None;
-
         for (local, val) in self.all_local_values() {
             let Some(val_prov) = &val.provenance else {
                 continue;
@@ -80,14 +74,9 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             }
 
             let kind = self.classify_local(&local);
-            let candidate = VmOrigin {
-                local,
-                kind,
-            };
-
+            let candidate = VmOrigin { local, kind };
             let is_param = local.as_usize() >= 1 && local.as_usize() <= self.body().arg_count;
             let is_owned = candidate.is_owned();
-
             match &best {
                 None => best = Some(candidate),
                 Some(existing) => {
@@ -134,9 +123,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     }
 }
 
-// ── High-level VM alias check ────────────────────────────────────
-
-/// Result of the VM-based alias check.
+/// Result of an Alias check using VM state.
 pub(crate) enum VmAliasResult {
     Proved,
     Failed(String),
@@ -147,10 +134,7 @@ fn origin_alias_hazard_accepted<'z3, 'tcx>(
     vm_state: &VmExecutor<'z3, 'tcx>,
     origin_val: &VmValue<'z3, 'tcx>,
 ) -> bool {
-    origin_val
-        .provenance_alloc_id()
-        .map(|alloc_id| vm_state.has_alias_hazard(alloc_id))
-        .unwrap_or(false)
+    origin_val.provenance_alloc_id().is_some_and(|alloc_id| vm_state.has_alias_hazard(alloc_id))
 }
 
 /// Flow-sensitive shared-XOR-mutable check for a view-producing checkpoint.
@@ -167,9 +151,7 @@ fn flow_xor_violation<'z3, 'tcx>(
     let origin_arg = checkpoint.args.first()?;
     let origin_place = alias_hazard::operand_mir_place(origin_arg)?;
     let origin_local = origin_place.local;
-    let origin_alloc = vm_state
-        .value_of_operand(origin_arg)
-        .provenance_alloc_id()?;
+    let origin_alloc = vm_state.value_of_operand(origin_arg).provenance_alloc_id()?;
     let origin_root = vm_state.root_alloc(origin_alloc);
     let live = alias_hazard::live_locals_at(
         vm_state.tcx,
@@ -204,9 +186,7 @@ fn flow_xor_violation<'z3, 'tcx>(
         if conflicts {
             let produced = if unique { "&mut" } else { "&" };
             let live_kind = if view_mut { "&mut" } else { "&" };
-            return Some(format!(
-                "producing {produced} while a live {live_kind} aliases the same data"
-            ));
+            return Some(format!("producing {produced} while a live {live_kind} aliases the same data"));
         }
     }
     None
@@ -217,29 +197,19 @@ fn escaped_parameter_origin<'z3, 'tcx>(
     checkpoint: &Checkpoint<'tcx>,
     origin_arg: &Operand<'tcx>,
 ) -> Option<(usize, Vec<usize>)> {
-    if !alias_hazard::destination_flows_to_return(
-        vm_state.tcx,
-        checkpoint.caller,
-        checkpoint.destination,
-    ) {
+    if !alias_hazard::destination_flows_to_return(vm_state.tcx, checkpoint.caller, checkpoint.destination) {
         return None;
     }
     let origin = mir_utils::operand_mir_place(origin_arg)?;
-    let (root, fields) = crate::analysis::alias::tree::AliasTree::build(
-        vm_state.tcx,
-        checkpoint.caller,
-    )
-    .resolve_local_to_root(origin.local);
+    let (root, fields) = crate::analysis::alias::tree::AliasTree::build(vm_state.tcx, checkpoint.caller)
+        .resolve_local_to_root(origin.local);
     (root >= 1 && root <= vm_state.body().arg_count).then_some((root, fields))
 }
 
 /// Run the full alias hazard check for the VM backend.
 ///
 /// This is the function the `PropertyChecker::check_alias` delegates to.
-pub(crate) fn check_alias_vm<'z3, 'tcx>(
-    vm_state: &VmExecutor<'z3, 'tcx>,
-    checkpoint: &Checkpoint<'tcx>,
-) -> VmAliasResult {
+pub(crate) fn check_alias_vm<'z3, 'tcx>(vm_state: &VmExecutor<'z3, 'tcx>, checkpoint: &Checkpoint<'tcx>) -> VmAliasResult {
     let callee = match checkpoint.callee {
         Some(c) => c,
         None => {
@@ -286,13 +256,9 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
                     // A mut view produced through a raw field of a reference
                     // parameter (`(*self).next`). When it escapes, trace to the
                     // root parameter and reject a shared-reference origin.
-                    if let Some((root, fields)) =
-                        escaped_parameter_origin(vm_state, checkpoint, origin_arg)
-                    {
+                    if let Some((root, fields)) = escaped_parameter_origin(vm_state, checkpoint, origin_arg) {
                         if !fields.is_empty() {
-                            let root_ty = vm_state.body().local_decls
-                                [rustc_middle::mir::Local::from_usize(root)]
-                            .ty;
+                            let root_ty = vm_state.body().local_decls[Local::from_usize(root)].ty;
                             if let rustc_middle::ty::TyKind::Ref(
                                 _,
                                 _,
@@ -300,10 +266,7 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
                             ) = root_ty.kind()
                                 && checkpoint.is_mut_ref
                             {
-                                return VmAliasResult::Failed(
-                                    "&mut deref through a shared reference writes immutable data"
-                                        .into(),
-                                );
+                                return VmAliasResult::Failed("&mut deref through a shared reference writes immutable data".into());
                             }
                         }
                     }
@@ -311,9 +274,7 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
                 }
                 if origin.is_shared_ref() {
                     if checkpoint.is_mut_ref {
-                        return VmAliasResult::Failed(
-                            "&mut deref through a shared reference writes immutable data".into(),
-                        );
+                        return VmAliasResult::Failed("&mut deref through a shared reference writes immutable data".into());
                     }
                     // A shared view (`&*self.next`) produced through a raw field
                     // of a reference parameter. When the view escapes (flows to
@@ -321,27 +282,16 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
                     // same encapsulation check used by the view-producer path: a
                     // public or safe-code-exposed raw field cannot uphold the
                     // returned `&T`.
-                    if let Some((root, fields)) =
-                        escaped_parameter_origin(vm_state, checkpoint, origin_arg)
-                    {
+                    if let Some((root, fields)) = escaped_parameter_origin(vm_state, checkpoint, origin_arg) {
                         if !fields.is_empty() {
                             let resolved = PlaceKey::from_origin(root, fields);
-                            if let Some(sfo) = alias_hazard::self_field_origin(
-                                vm_state.tcx,
-                                checkpoint.caller,
-                                &resolved,
-                            ) {
+                            if let Some(sfo) = alias_hazard::self_field_origin(vm_state.tcx, checkpoint.caller, &resolved) {
                                 // A caller that already declares an `Alias`
                                 // precondition (e.g. `Ptr2Ref`) relies on its
                                 // caller rather than field encapsulation, so the
                                 // encapsulation check must not fire there.
                                 if !origin_alias_hazard_accepted(vm_state, &origin_val) {
-                                    return check_escaped_field(
-                                        vm_state.tcx,
-                                        checkpoint.caller,
-                                        &sfo,
-                                        HazardKind::SharedView,
-                                    );
+                                    return check_escaped_field(vm_state.tcx, checkpoint.caller, &sfo, HazardKind::SharedView);
                                 }
                             }
                         } else {
@@ -349,11 +299,7 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
                             // escapes to the return must not claim a region that
                             // outlives its own (e.g. returning a `&'b str` as
                             // `&'a str` when `'a: 'b`).
-                            if let Some(reason) = escape_region_violation(
-                                vm_state.tcx,
-                                checkpoint.caller,
-                                root,
-                            ) {
+                            if let Some(reason) = escape_region_violation(vm_state.tcx, checkpoint.caller, root) {
                                 return VmAliasResult::Failed(reason);
                             }
                         }
@@ -379,11 +325,7 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
                     if origin_alias_hazard_accepted(vm_state, &origin_val) {
                         return VmAliasResult::Proved;
                     }
-                    let escapes = alias_hazard::destination_flows_to_return(
-                        vm_state.tcx,
-                        checkpoint.caller,
-                        checkpoint.destination,
-                    );
+                    let escapes = alias_hazard::destination_flows_to_return(vm_state.tcx, checkpoint.caller, checkpoint.destination);
                     if !escapes {
                         return VmAliasResult::Proved;
                     }
@@ -438,13 +380,10 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
             // struct field and that field is a shared reference, the view is safe.
             let tcx = vm_state.tcx;
             let caller = checkpoint.caller;
-            let arg_place =
-                alias_hazard::operand_mir_place(origin_arg).map(|p| PlaceKey::from_mir_place(p));
+            let arg_place = alias_hazard::operand_mir_place(origin_arg).map(PlaceKey::from_mir_place);
             if let Some(mir_place) = arg_place {
                 let tree = crate::analysis::alias::tree::AliasTree::build(tcx, caller);
-                let local = mir_place
-                    .local()
-                    .unwrap_or(rustc_middle::mir::Local::from_usize(1));
+                let local = mir_place.local().unwrap_or(Local::from_usize(1));
                 let (root, fields) = tree.resolve_local_to_root(local);
                 if !fields.is_empty() {
                     // A raw-pointer field of a *by-value* `self` is exclusively
@@ -454,11 +393,9 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
                     // the caller's copy still aliases the raw target — so it
                     // must not be treated as exclusive. A `&`/`&mut self` is
                     // handled by the shared/mut-ref origin paths above.
-                    let root_ty =
-                        vm_state.body().local_decls[rustc_middle::mir::Local::from_usize(root)].ty;
+                    let root_ty = vm_state.body().local_decls[Local::from_usize(root)].ty;
                     if !matches!(root_ty.kind(), rustc_middle::ty::TyKind::Ref(..)) {
-                        let typing_env =
-                            rustc_middle::ty::TypingEnv::post_analysis(tcx, caller);
+                        let typing_env = rustc_middle::ty::TypingEnv::post_analysis(tcx, caller);
                         if !tcx.type_is_copy_modulo_regions(typing_env, root_ty) {
                             return VmAliasResult::Proved;
                         }
@@ -487,10 +424,7 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
         let ret_ty = vm_state.body().local_decls[rustc_middle::mir::RETURN_PLACE].ty;
         if mir_utils::type_contains_reference(ret_ty) {
             if mutability == rustc_middle::mir::Mutability::Mut {
-                return VmAliasResult::Failed(
-                    "escaping `&mut` derived from a raw pointer without borrow information"
-                        .into(),
-                );
+                return VmAliasResult::Failed("escaping `&mut` derived from a raw pointer without borrow information".into());
             }
             return VmAliasResult::Unknown;
         }
@@ -502,18 +436,10 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
     };
 
     match producer {
-        AliasProducer::View(kind, source_arg) => {
-            check_view_alias(vm_state, checkpoint, kind, source_arg)
-        }
-        AliasProducer::OwnershipTransfer(source_arg) => {
-            check_ownership_transfer_alias(vm_state, checkpoint, source_arg)
-        }
-        AliasProducer::ReadMemory(source_arg) => {
-            check_read_memory_alias(vm_state, checkpoint, source_arg)
-        }
-        AliasProducer::CopyMemory(source_arg) => {
-            check_copy_memory_alias(vm_state, checkpoint, source_arg)
-        }
+        AliasProducer::View(kind, source_arg) => check_view_alias(vm_state, checkpoint, kind, source_arg),
+        AliasProducer::OwnershipTransfer(source_arg) => check_ownership_transfer_alias(vm_state, checkpoint, source_arg),
+        AliasProducer::ReadMemory(source_arg) => check_read_memory_alias(vm_state, checkpoint, source_arg),
+        AliasProducer::CopyMemory(source_arg) => check_copy_memory_alias(vm_state, checkpoint, source_arg),
     }
 }
 
@@ -551,12 +477,7 @@ fn check_view_alias<'z3, 'tcx>(
     }
 
     let origin_place = alias_hazard::operand_place(origin_arg).unwrap_or_else(|| {
-        PlaceKey::from_origin(
-            mir_utils::extract_local(origin_arg)
-                .map(|l| l.as_usize())
-                .unwrap_or(1),
-            vec![],
-        )
+        PlaceKey::from_origin(mir_utils::extract_local(origin_arg).map(|l| l.as_usize()).unwrap_or(1), vec![])
     });
 
     // Trace through local origins to resolve intermediate copies/casts.
@@ -586,12 +507,7 @@ fn check_view_alias<'z3, 'tcx>(
             (HazardKind::SharedView, VmOriginKind::SharedRef) => {
                 // Aliasing-safe, but if the view escapes to the return, its
                 // claimed region must not outlive the source reference's region.
-                if let Some(reason) = shared_view_escape_region_violation(
-                    tcx,
-                    caller,
-                    destination,
-                    origin.local.as_usize(),
-                ) {
+                if let Some(reason) = shared_view_escape_region_violation(tcx, caller, destination, origin.local.as_usize()) {
                     return VmAliasResult::Failed(reason);
                 }
                 return VmAliasResult::Proved;
@@ -600,9 +516,7 @@ fn check_view_alias<'z3, 'tcx>(
                 // `&T` → `&mut T` violates shared-XOR-mutable regardless of
                 // field encapsulation: the caller can re-enter the method and
                 // obtain a second `&mut` to the same data.
-                return VmAliasResult::Failed(
-                    "shared reference cannot produce a unique mutable view".into(),
-                );
+                return VmAliasResult::Failed("shared reference cannot produce a unique mutable view".into());
             }
             _ => {}
         }
@@ -647,8 +561,7 @@ fn check_view_alias<'z3, 'tcx>(
 
     let origin_pk = alias_hazard::resolve_param_origin(tcx, caller, &origin_place);
     if let Some(local_index) = origin_pk {
-        if let alias_hazard::HazardCheck::Safe(_) =
-            alias_hazard::alias_proved_for_param_local(tcx, caller, local_index, kind)
+        if let alias_hazard::HazardCheck::Safe(_) = alias_hazard::alias_proved_for_param_local(tcx, caller, local_index, kind)
         {
             return VmAliasResult::Proved;
         }
@@ -656,8 +569,7 @@ fn check_view_alias<'z3, 'tcx>(
 
     let dest_escapes = alias_hazard::destination_flows_to_return(tcx, caller, destination);
     if dest_escapes {
-        let field_origin =
-            resolve_escaped_field_origin(tcx, caller, &resolved_origin, &origin_place, checkpoint);
+        let field_origin = resolve_escaped_field_origin(tcx, caller, &resolved_origin, &origin_place, checkpoint);
         if let Some(sfo) = field_origin {
             return check_escaped_field(tcx, caller, &sfo, kind);
         }
@@ -666,8 +578,7 @@ fn check_view_alias<'z3, 'tcx>(
         if let Some(sfo) = any_field {
             return check_escaped_field(tcx, caller, &sfo, kind);
         }
-        if let Some(reason) =
-            alias_hazard::private_fn_callsite_delegation(tcx, caller, &origin_place, kind)
+        if let Some(reason) = alias_hazard::private_fn_callsite_delegation(tcx, caller, &origin_place, kind)
         {
             return VmAliasResult::Failed(reason);
         }
@@ -770,10 +681,7 @@ fn self_field_origin(
     })
 }
 
-/// Attempt to extract the MIR local index from an operand for PlaceKey construction.
-/// Try to find a struct field origin by examining checkpoint arguments
-/// and the function's self type. Handles the case where origin tracing
-/// fails to resolve through intermediate locals.
+/// Find a self field origin through the checkpoint argument or a copied local.
 fn find_struct_field_origin_for_param<'tcx>(
     tcx: rustc_middle::ty::TyCtxt<'tcx>,
     caller: DefId,
@@ -853,10 +761,7 @@ fn is_self_field_shared_ref(
     let adt = tcx.adt_def(adt_def);
     let field = adt.all_fields().nth(origin.field_index)?;
     let field_ty = mir_utils::field_ty(tcx, field, args);
-    Some(matches!(
-        field_ty.kind(),
-        rustc_middle::ty::TyKind::Ref(_, _, rustc_middle::ty::Mutability::Not)
-    ))
+    Some(matches!(field_ty.kind(), rustc_middle::ty::TyKind::Ref(_, _, rustc_middle::ty::Mutability::Not)))
 }
 
 /// Shared escape + field-encapsulation check: a view that escapes and traces to
@@ -893,7 +798,7 @@ fn resolve_escaped_field_origin<'tcx>(
         .or_else(|| find_struct_field_origin_for_param(tcx, caller, checkpoint))
 }
 
-/// copies/casts (e.g. `_tmp = self.ptr` → `_1.0`).
+/// Trace a local through copies and casts (e.g. `_tmp = self.ptr` → `_1.0`).
 fn resolve_origin_place_mir(
     tcx: rustc_middle::ty::TyCtxt<'_>,
     caller: DefId,
@@ -1002,9 +907,7 @@ fn check_read_memory_alias<'z3, 'tcx>(
         return VmAliasResult::Proved;
     }
 
-    VmAliasResult::Failed(
-        "read API value escapes while the source pointer persists — structural alias hazard".into(),
-    )
+    VmAliasResult::Failed("read API value escapes while the source pointer persists — structural alias hazard".into())
 }
 
 fn check_copy_memory_alias<'z3, 'tcx>(

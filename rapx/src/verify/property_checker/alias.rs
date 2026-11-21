@@ -1,9 +1,10 @@
 //! Checkers for `Alias` and `Owning` properties.
 
+use crate::contract::Property;
 use crate::def_ids::type_ids;
 use crate::util::mir_utils;
+use crate::verify::alias::{check_alias_vm, VmAliasResult, VmOriginKind};
 use crate::verify::checkpoint::Checkpoint;
-use crate::contract::Property;
 use crate::verify::report::{CheckResult, UnknownReason};
 use crate::vm::state::VmExecutor;
 use rustc_middle::{
@@ -52,10 +53,10 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         _property: &Property<'tcx>,
     ) -> CheckResult {
-        match crate::verify::vm::alias::check_alias_vm(vm_state, checkpoint) {
-            crate::verify::vm::alias::VmAliasResult::Proved => CheckResult::ProvedByRule,
-            crate::verify::vm::alias::VmAliasResult::Failed(_msg) => CheckResult::Failed,
-            crate::verify::vm::alias::VmAliasResult::Unknown => {
+        match check_alias_vm(vm_state, checkpoint) {
+            VmAliasResult::Proved => CheckResult::ProvedByRule,
+            VmAliasResult::Failed(_msg) => CheckResult::Failed,
+            VmAliasResult::Unknown => {
                 CheckResult::Unknown(UnknownReason::Unimplemented)
             }
         }
@@ -150,11 +151,9 @@ impl PropertyChecker {
         let internal_alloc = !vm_state.alloc(alloc_id).is_external();
         let local_alloc = vm_state.local_allocations().any(|(_, id)| id == alloc_id);
         let untrusted_raw_origin = origin.as_ref().is_none_or(|origin| match origin.kind {
-            crate::verify::vm::alias::VmOriginKind::RawPtr
-            | crate::verify::vm::alias::VmOriginKind::SharedRef
-            | crate::verify::vm::alias::VmOriginKind::Unknown => true,
-            crate::verify::vm::alias::VmOriginKind::MutRef => !owns_field_by_invariant,
-            crate::verify::vm::alias::VmOriginKind::Owned(def_id) => {
+            VmOriginKind::RawPtr | VmOriginKind::SharedRef | VmOriginKind::Unknown => true,
+            VmOriginKind::MutRef => !owns_field_by_invariant,
+            VmOriginKind::Owned(def_id) => {
                 !(type_ids::is_std_box(def_id)
                     || type_ids::is_std_vec(def_id)
                     || type_ids::is_std_cstring(def_id)
@@ -222,8 +221,7 @@ impl PropertyChecker {
                     && origin.as_ref().is_some_and(|origin| {
                         matches!(
                             origin.kind,
-                            crate::verify::vm::alias::VmOriginKind::MutRef
-                                | crate::verify::vm::alias::VmOriginKind::Owned(_)
+                            VmOriginKind::MutRef | VmOriginKind::Owned(_)
                         )
                     });
             if fresh_internal || local_manually_drop {

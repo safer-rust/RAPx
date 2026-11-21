@@ -4,6 +4,7 @@
 //! targets and contracts, extract SCC-aware paths, slice them backward, execute
 //! the relevant MIR symbolically, and discharge each property with Z3.
 
+mod alias;
 mod auto_trait;
 pub(crate) use crate::analysis::dataflow::call_summary;
 mod checkpoint;
