@@ -2,10 +2,7 @@ use crate::def_ids::type_ids::{self, StdAdtType};
 use crate::helpers::mir_utils;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{GenericArgKind, Ty, TyCtxt, TyKind, print::with_no_trimmed_paths};
-use serde_json::Value;
-use std::sync::OnceLock;
 use syn::Expr;
-
 
 /// The internal `crate::module::…` path of a `DefId` (e.g. `alloc::rcs::rc::Rc`),
 /// normalised from its `def_path_str` debug form.  Used for display/debug and as
@@ -158,40 +155,6 @@ pub fn get_adt_self_ty<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Option<Ty<'tcx
     None
 }
 
-/// Return the JSON value loaded from the pre-computed standard-library
-/// signature map (`data/std_sig.json`).
-fn get_std_api_signature_json() -> &'static Value {
-    static JSON: OnceLock<Value> = OnceLock::new();
-    JSON.get_or_init(|| {
-        serde_json::from_str(include_str!("data/std_sig.json")).expect("Unable to parse JSON")
-    })
-}
-
-/// Look up known argument names for standard-library APIs.
-///
-/// The lookup key is the public `DefId` path (see [`public_def_path`]).  When
-/// no names are recorded the list is filled with numeric defaults (`"0"`,
-/// `"1"`, …).
-fn get_known_std_names<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Option<Vec<String>> {
-    let std_func_name = public_def_path(tcx, def_id);
-    let json_data = get_std_api_signature_json();
-
-    if let Some(arg_info) = json_data.get(&std_func_name)
-        && let Some(args_name) = arg_info.as_array() {
-            if args_name.is_empty() {
-                return Some(vec!["0".to_string()]);
-            }
-            let mut result = Vec::new();
-            for arg in args_name {
-                if let Some(sp_name) = arg.as_str() {
-                    result.push(sp_name.to_string());
-                }
-            }
-            return Some(result);
-        }
-    None
-}
-
 /// Parse argument names and types from a local function's HIR body.
 /// Recursively unwrap Ref/Paren patterns to find the inner binding identifier.
 /// Needed because `&self` / `&mut self` produce PatKind::Ref(PatKind::Binding(...)).
@@ -233,17 +196,17 @@ fn parse_local_signature<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> (Vec<String>
 
 /// Parse argument names and types from an external function's type signature.
 ///
-/// First tries the pre-defined standard-library names; falls back to
-/// numeric indices (`"0"`, `"1"`, …).
+/// Read parameter names from compiler metadata, falling back to numeric
+/// indices (`"0"`, `"1"`, …) when names are unavailable.
 fn parse_outside_signature<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> (Vec<String>, Vec<Ty<'tcx>>) {
     let sig = tcx.fn_sig(def_id).skip_binder();
     let param_tys: Vec<Ty<'tcx>> = sig.inputs().skip_binder().to_vec();
-
-    if let Some(args_name) = get_known_std_names(tcx, def_id) {
-        return (args_name, param_tys);
-    }
-
-    let args_name = (0..param_tys.len()).map(|i| format!("{}", i)).collect();
+    let idents = tcx.fn_arg_idents(def_id);
+    let args_name = if idents.len() == param_tys.len() && idents.iter().all(Option::is_some) {
+        idents.iter().map(|ident| ident.unwrap().name.to_string()).collect()
+    } else {
+        (0..param_tys.len()).map(|i| i.to_string()).collect()
+    };
     (args_name, param_tys)
 }
 
