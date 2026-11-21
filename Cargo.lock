@@ -803,7 +803,7 @@ dependencies = [
 
 [[package]]
 name = "rapx"
-version = "0.7.77"
+version = "0.7.78"
 dependencies = [
  "annotate-snippets",
  "anyhow",

@@ -33,7 +33,7 @@ use rustc_middle::{
     ty::{EarlyBinder, Instance, InstanceKind, TyCtxt, TypingEnv},
 };
 use rustc_span::Span;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use super::{
@@ -149,10 +149,10 @@ pub(crate) struct StructTarget<'tcx> {
     pub function_targets: Vec<FunctionTarget<'tcx>>,
 }
 
-/// Trace a call operand through `Copy`/`Move` assignments to an outer parameter.
+/// Trace a call operand through unique copies or shared reborrows to an outer parameter.
 ///
-/// Returns its zero-based parameter index, or `None` if the initial operand
-/// is not a direct local or no parameter is found.
+/// Reject reassigned locals: without a reaching-definition check, selecting one
+/// of several writes could attach the wrong precondition to the wrapper.
 fn call_arg_to_outer_param(
     op: &rustc_middle::mir::Operand<'_>,
     body: &rustc_middle::mir::Body<'_>,
@@ -165,37 +165,51 @@ fn call_arg_to_outer_param(
         }
         _ => return None,
     };
-    let mut queue = VecDeque::from([local]);
-    let mut seen = HashSet::from([local]);
-    while let Some(current) = queue.pop_front() {
-        let cidx = current.as_usize();
-        if cidx >= 1 && cidx <= body.arg_count {
-            return Some(cidx - 1);
+    let mut current = local;
+    let mut seen = HashSet::new();
+    loop {
+        if !seen.insert(current) {
+            return None;
         }
+        let mut source = None;
         for bb in body.basic_blocks.iter() {
             for stmt in &bb.statements {
                 let rustc_middle::mir::StatementKind::Assign(assign) = &stmt.kind else {
                     continue;
                 };
                 let (dest, rvalue) = &**assign;
-                if dest.local != current || !dest.projection.is_empty() {
+                if dest.local != current {
                     continue;
                 }
-                let source = match rvalue {
+                if !dest.projection.is_empty() || source.is_some() {
+                    return None;
+                }
+                source = match rvalue {
                     rustc_middle::mir::Rvalue::Use(
                         rustc_middle::mir::Operand::Copy(p) | rustc_middle::mir::Operand::Move(p),
                         ..,
-                    ) => p.local,
-                    _ => continue,
+                    ) if p.projection.is_empty() => Some(p.local),
+                    rustc_middle::mir::Rvalue::Ref(_, rustc_middle::mir::BorrowKind::Shared, p)
+                        if p.projection.as_ref() == [rustc_middle::mir::ProjectionElem::Deref]
+                            && body.local_decls[p.local].ty == body.local_decls[current].ty =>
+                    {
+                        Some(p.local)
+                    }
+                    _ => return None,
                 };
-                if !seen.contains(&source) {
-                    seen.insert(source);
-                    queue.push_back(source);
-                }
+            }
+            if let rustc_middle::mir::TerminatorKind::Call { destination, .. } = &bb.terminator().kind
+                && destination.local == current
+            {
+                return None;
             }
         }
+        let cidx = current.as_usize();
+        if cidx >= 1 && cidx <= body.arg_count {
+            return source.is_none().then_some(cidx - 1);
+        }
+        current = source?;
     }
-    None
 }
 
 /// Rebind a callee contract to parameters of its enclosing function.
@@ -285,6 +299,13 @@ fn rebind_expr<'tcx>(
 ) -> bool {
     match expr {
         ContractExpr::Place(place) => rebind_place(place, args, body),
+        ContractExpr::MethodCall { receiver, args: method_args, .. } => {
+            let mut ok = rebind_expr(receiver, args, callee_args, body);
+            for arg in method_args {
+                ok &= rebind_expr(arg, args, callee_args, body);
+            }
+            ok
+        }
         ContractExpr::Len(inner, _) | ContractExpr::IsEmpty(inner, _) => {
             rebind_expr(inner, args, callee_args, body)
         }
@@ -379,7 +400,7 @@ fn rebind_base<'tcx>(
 /// contracts to the wrapper's parameters. Continue recursively through
 /// unannotated callees.
 ///
-/// `visited` prevents recursion cycles.
+/// `visited` tracks the active recursion path and prevents cycles.
 fn resolve_chain_contracts<'tcx>(
     tcx: TyCtxt<'tcx>,
     callee_def_id: DefId,
@@ -390,6 +411,7 @@ fn resolve_chain_contracts<'tcx>(
     }
 
     if !tcx.is_mir_available(callee_def_id) {
+        visited.remove(&callee_def_id);
         return Vec::new();
     }
 
@@ -442,6 +464,7 @@ fn resolve_chain_contracts<'tcx>(
         }
     }
 
+    visited.remove(&callee_def_id);
     contracts
 }
 
