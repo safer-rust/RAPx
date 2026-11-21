@@ -14,7 +14,7 @@ use syn::Expr;
 
 use crate::util::name::public_def_path;
 
-use super::{Property, PropertyKind};
+use super::{PlaceBase, Property, PropertyKind};
 
 /// Structure of JSON entries.
 ///
@@ -490,6 +490,19 @@ pub(crate) fn query_json_contracts<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Ve
         return Vec::new();
     };
     parse_json_contracts(tcx, def_id, entries)
+}
+
+/// Argument indices named by JSON `RefCountShare` requirements on this function.
+pub(crate) fn ref_count_share_arg_indices(tcx: TyCtxt<'_>, def_id: DefId) -> Vec<usize> {
+    query_json_contracts(tcx, def_id).iter().filter_map(|property| {
+        (property.kind() == Some(PropertyKind::RefCountShare))
+            .then(|| property.target_place())
+            .flatten()
+            .and_then(|place| match place.base {
+                PlaceBase::Arg(index) => Some(index),
+                _ => None,
+            })
+    }).collect()
 }
 
 /// Parse the contract at an explicit JSON key using a function's parameter types.

@@ -96,16 +96,7 @@ fn share_transfer_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Option<usize> {
     {
         return None;
     }
-    let requires = crate::contract::json::query_json_contracts(tcx, callee);
-    requires.iter().find_map(|property| {
-        (property.kind() == Some(PropertyKind::RefCountShare))
-            .then(|| property.target_place())
-            .flatten()
-            .and_then(|place| match place.base {
-                crate::contract::PlaceBase::Arg(index) => Some(index),
-                _ => None,
-            })
-    })
+    crate::contract::json::ref_count_share_arg_indices(tcx, callee).into_iter().next()
 }
 
 pub(crate) fn reconstructed_owner(tcx: TyCtxt<'_>, callee: DefId) -> Option<(usize, DefId)> {

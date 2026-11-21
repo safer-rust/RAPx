@@ -357,15 +357,9 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
 
     /// A `ManuallyDrop<Owner>` retained at return keeps its strong share alive.
     pub(super) fn recover_leaked_owner_shares(&mut self, callee: DefId) {
-        use crate::contract::{PlaceBase, PropertyKind};
-
-        let raw_args: Vec<_> = crate::contract::json::query_json_contracts(self.tcx, callee)
-            .iter()
-            .filter(|property| property.kind() == Some(PropertyKind::RefCountShare))
-            .filter_map(|property| match property.target_place()?.base {
-                PlaceBase::Arg(index) => Some(Local::from_usize(index + 1)),
-                _ => None,
-            })
+        let raw_args: Vec<_> = crate::contract::json::ref_count_share_arg_indices(self.tcx, callee)
+            .into_iter()
+            .map(|index| Local::from_usize(index + 1))
             .filter_map(|local| self.local_value(local).cloned())
             .collect();
         if raw_args.is_empty() {
