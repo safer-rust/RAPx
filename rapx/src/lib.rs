@@ -161,10 +161,7 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
                 SafeDrop::new(tcx).start();
             }
             if *mleak {
-                let mut heap = HeapOwnershipAnalyzer::new(tcx);
-                heap.run();
-                let adt_owner = heap.get_all_items();
-                rCanary::new(tcx, adt_owner).start();
+                rCanary::new(tcx).start();
             }
         }
 

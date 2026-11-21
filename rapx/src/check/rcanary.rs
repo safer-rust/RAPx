@@ -1,85 +1,31 @@
-pub mod ranalyzer;
+mod report;
+mod vm;
 
-use crate::analysis::{
-    Analysis,
-    heap_ownership::{
-        HeapOwnershipAnalysis, HeapOwnershipResultMap, default::HeapOwnershipAnalyzer,
-    },
-};
-use ranalyzer::{FlowAnalysis, IcxSliceFroBlock, IntraFlowContext, MirGraph};
 use rustc_middle::ty::TyCtxt;
-use std::collections::HashMap;
 
+/// Detect leaked ownership released into raw pointers or references through VM replay.
 #[allow(non_camel_case_types)]
-#[derive(Clone)]
 pub struct rCanary<'tcx> {
     tcx: TyCtxt<'tcx>,
-    adt_owner: HeapOwnershipResultMap,
-    mir_graph: MirGraph,
 }
 
 impl<'tcx> rCanary<'tcx> {
-    pub fn new(tcx: TyCtxt<'tcx>, adt_owner: HeapOwnershipResultMap) -> Self {
-        Self {
-            tcx,
-            adt_owner,
-            mir_graph: HashMap::default(),
+    pub fn new(tcx: TyCtxt<'tcx>) -> Self {
+        Self { tcx }
+    }
+
+    pub fn start(&self) {
+        let leaks = vm::detect(self.tcx);
+        for local in self.tcx.mir_keys(()) {
+            let def_id = local.to_def_id();
+            if let Some(spans) = leaks.get(&def_id) {
+                report::emit(
+                    self.tcx,
+                    def_id,
+                    self.tcx.optimized_mir(def_id),
+                    spans.iter().copied(),
+                );
+            }
         }
     }
-
-    pub fn start(&mut self) {
-        let mut heap = HeapOwnershipAnalyzer::new(self.tcx);
-        heap.run();
-        let adt_owner = heap.get_all_items();
-        let rcx_boxed = Box::new(rCanary::new(self.tcx, adt_owner));
-        // Leak to create a 'static reference needed for FlowAnalysis lifetime.
-        let rcx = Box::leak(rcx_boxed);
-        FlowAnalysis::new(rcx).start();
-    }
-
-    pub fn tcx(&self) -> TyCtxt<'tcx> {
-        self.tcx
-    }
-
-    pub fn adt_owner(&self) -> &HeapOwnershipResultMap {
-        &self.adt_owner
-    }
-
-    pub fn mir_graph(&self) -> &MirGraph {
-        &self.mir_graph
-    }
-
-    pub fn mir_graph_mut(&mut self) -> &mut MirGraph {
-        &mut self.mir_graph
-    }
-}
-
-pub trait Tcx<'tcx, 'o, 'a> {
-    fn tcx(&'o self) -> TyCtxt<'tcx>;
-}
-
-pub trait Rcx<'tcx, 'o, 'a> {
-    fn rcx(&'o self) -> &'a rCanary<'tcx>;
-
-    fn tcx(&'o self) -> TyCtxt<'tcx>;
-}
-
-pub trait RcxMut<'tcx, 'o, 'a> {
-    fn rcx(&'o self) -> &'o rCanary<'tcx>;
-
-    fn rcx_mut(&'o mut self) -> &'o mut rCanary<'tcx>;
-
-    fn tcx(&'o self) -> TyCtxt<'tcx>;
-}
-
-pub trait IcxMut<'tcx, 'z3, 'o> {
-    fn icx(&'o self) -> &'o IntraFlowContext<'tcx, 'z3>;
-
-    fn icx_mut(&'o mut self) -> &'o mut IntraFlowContext<'tcx, 'z3>;
-}
-
-pub trait IcxSliceMut<'tcx, 'z3, 'o> {
-    fn icx_slice(&'o self) -> &'o IcxSliceFroBlock<'tcx, 'z3>;
-
-    fn icx_slice_mut(&'o mut self) -> &'o mut IcxSliceFroBlock<'tcx, 'z3>;
 }

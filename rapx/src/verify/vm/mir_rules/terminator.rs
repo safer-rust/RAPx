@@ -1,6 +1,7 @@
 use rustc_middle::mir::{
     BasicBlock, Body, Operand, Place, Rvalue, StatementKind, SwitchTargets, TerminatorKind,
 };
+use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 use z3::ast::{Ast, Int};
 
 use super::super::state::{ValueSource, VmExecutor};
@@ -234,7 +235,9 @@ pub(crate) fn exec_drop<'z3, 'tcx>(state: &mut VmExecutor<'z3, 'tcx>, place: &Pl
             Some((alloc_id, state.body().local_decls[place.local].ty, place.local))
         };
         if let Some((header, ty, source)) = owner {
-            if let Some(data_id) = state.container_data_alloc(header, ty) {
+            if !is_trivial_raw_pointer_wrapper(state.tcx, ty)
+                && let Some(data_id) = state.container_data_alloc(header, ty)
+            {
                 let shared_owner = state.owner_ptr_has_invariant(ty, PropertyKind::Allocated)
                     && !state.owner_ptr_has_invariant(ty, PropertyKind::Owning);
                 if shared_owner {
@@ -258,6 +261,35 @@ pub(crate) fn exec_drop<'z3, 'tcx>(state: &mut VmExecutor<'z3, 'tcx>, place: &Pl
         }
     }
     dropped_data
+}
+
+/// A wrapper with only raw pointers and an empty destructor does not own its pointee.
+fn is_trivial_raw_pointer_wrapper<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
+    let TyKind::Adt(adt, args) = ty.kind() else {
+        return false;
+    };
+    if !adt.is_struct() || adt.non_enum_variant().fields.iter().any(|field| {
+        let ty = mir_utils::field_ty(tcx, field, args);
+        !matches!(ty.kind(), TyKind::RawPtr(..))
+            && !matches!(ty.kind(), TyKind::Adt(inner, _) if matches!(tcx.crate_name(inner.did().krate).as_str(), "core" | "std")
+                && tcx.item_name(inner.did()).as_str() == "PhantomData")
+    }) {
+        return false;
+    }
+    let Some(dtor) = tcx.adt_destructor(adt.did()) else {
+        return true;
+    };
+    tcx.optimized_mir(dtor.did).basic_blocks.iter().all(|block| {
+        block.statements.iter().all(|stmt| match &stmt.kind {
+            StatementKind::StorageLive(..) | StatementKind::StorageDead(..) | StatementKind::Nop => true,
+            StatementKind::Assign(assign) => {
+                let (place, value) = &**assign;
+                place.as_local().is_some_and(|local| local.as_usize() == 0)
+                    && matches!(value, Rvalue::Use(Operand::Constant(constant), _) if constant.const_.ty().is_unit())
+            }
+            _ => false,
+        }) && matches!(block.terminator().kind, TerminatorKind::Return | TerminatorKind::Goto { .. })
+    })
 }
 
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
