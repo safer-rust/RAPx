@@ -1,6 +1,6 @@
 //! Contract-fact expressions and shared numeric operations.
 
-use crate::contract::{BinOp, ContractExpr, PlaceBase, RelOp, UnaryOp};
+use crate::contract::{BinOp, ContractExpr, ContractPlace, ContractProjection, PlaceBase, RelOp, UnaryOp};
 use crate::util::mir_utils;
 use crate::vm::state::VmValue;
 use crate::vm::VmExecutor;
@@ -8,6 +8,22 @@ use rustc_middle::{mir::Local, ty::TyKind};
 use z3::ast::{Ast, Bool, Int};
 
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
+    /// Resolve a contract place already bound to this frame's locals.
+    pub(crate) fn bound_contract_place_value(&self, place: &ContractPlace) -> Option<VmValue<'z3, 'tcx>> {
+        let local = place.base.to_local();
+        if place.projections.is_empty() { return self.local_value(local).cloned() }
+        let mut fields = Vec::new();
+        for projection in &place.projections {
+            match projection {
+                ContractProjection::Field { index } => fields.push(*index),
+                ContractProjection::Downcast { .. } | ContractProjection::ForEach => {
+                    return if fields.is_empty() { self.local_value(local).cloned() } else { self.field_value(local, &fields).cloned() };
+                }
+            }
+        }
+        self.field_value(local, &fields).cloned()
+    }
+
     fn eval_contract_fact_tree(&self, expr: &ContractExpr<'tcx>) -> Option<Int<'z3>> {
         match expr {
             ContractExpr::Const(value) => Some(self.u128_term(*value)),

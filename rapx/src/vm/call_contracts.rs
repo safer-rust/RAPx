@@ -1,10 +1,8 @@
 use rustc_middle::mir::Local;
 
-use super::contracts::{
-    bind_call_property, index_access_locals, rebind_property_place, slice_offset_locals,
-};
 use super::state::{VmExecutor, VmValue};
 use crate::contract::{ContractKind, PropertyKind};
+use crate::contract::place::{bind_call_property, index_access_locals, rebind_property_place, slice_offset_locals};
 
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(crate) fn assert_call_result_invariants(&mut self, destination: Local) {

@@ -11,7 +11,7 @@ use crate::{
         },
 };
 
-use super::contracts::{index_access_locals, rebind_property_place, slice_offset_locals};
+use crate::contract::place::{index_access_locals, rebind_property_place, slice_offset_locals};
 use super::state::{
     AllocId, ElementTy, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue,
 };

@@ -1,25 +1,122 @@
 //! Place resolution: `syn::Expr` → `ContractPlace`.
 //!
-//! Semantic resolution of contract places (arguments, locals, field
-//! projections, `iter()`/`each_element()` element projection, `unwrap_some()`
-//! enum downcast) against rustc's type context.  This layer depends only on
-//! `types.rs` and crate helpers, so both the property builder (`builder.rs`)
-//! and the pest-based expression converter (`pest.rs`) can share it
-//! without a dependency cycle.
+//! Resolve contract places against rustc types and bind them to MIR locals.
 
 use crate::util::mir_utils;
 use rustc_abi::FieldIdx;
 use rustc_hir::def::DefKind;
 use rustc_hir::def_id::DefId;
+use rustc_middle::mir::Local;
 use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 use syn::Expr;
 
 use crate::util::fn_info::{FnKind, get_type};
 use crate::util::name::{access_ident_recursive, get_adt_self_ty, parse_signature};
 
-use super::{ContractExpr, ContractPlace, ContractProjection, PlaceBase, PropertyArg};
+use super::{ContractExpr, ContractPlace, ContractProjection, PlaceBase, Property, PropertyArg, PropertyKind};
 
 type PlacePath<'tcx> = (usize, Vec<usize>, Ty<'tcx>);
+
+/// Extract the bound slice and index locals from an `InBound` property.
+pub(crate) fn index_access_locals(property: &Property<'_>) -> Option<(Local, Local)> {
+    let Property::Atom(atom) = property else { return None };
+    if atom.kind != PropertyKind::InBound { return None }
+    let Some(ContractExpr::IndexAccess { slice, index }) = atom.args.first().and_then(PropertyArg::expr)
+    else { return None };
+    let (ContractExpr::Place(slice), ContractExpr::Place(index)) = (slice.as_ref(), index.as_ref())
+    else { return None };
+    (slice.projections.is_empty() && index.projections.is_empty())
+        .then(|| (slice.base.to_local(), index.base.to_local()))
+}
+
+/// Extract the bound result, base, and index locals from a `SliceOffset` property.
+pub(crate) fn slice_offset_locals(property: &Property<'_>) -> Option<(Local, Local, Local)> {
+    let Property::Atom(atom) = property else { return None };
+    if atom.kind != PropertyKind::SliceOffset { return None }
+    let locals: Option<Vec<Local>> = atom.args.iter().map(|arg| {
+        let Some(ContractExpr::Place(place)) = arg.expr() else { return None };
+        place.projections.is_empty().then(|| place.base.to_local())
+    }).collect();
+    let locals = locals?;
+    let [dest, base, index] = locals.as_slice() else { return None };
+    Some((*dest, *base, *index))
+}
+
+/// Bind a callee property to the caller's argument and return locals.
+pub(crate) fn bind_call_property<'tcx>(property: &mut Property<'tcx>, args: &[Option<Local>], destination: Local) -> bool {
+    let mut bound = true;
+    map_property_places(property, &mut |base| {
+        let local = match *base {
+            PlaceBase::Return | PlaceBase::Local(0) => Some(destination),
+            PlaceBase::Arg(index) => args.get(index).copied().flatten(),
+            PlaceBase::Local(index) => args.get(index - 1).copied().flatten(),
+        };
+        if let Some(local) = local {
+            *base = PlaceBase::Local(local.as_usize());
+        } else {
+            bound = false;
+        }
+    });
+    bound
+}
+
+/// Rebind every place in a struct invariant to a MIR local.
+pub(crate) fn rebind_property_place<'tcx>(property: &mut Property<'tcx>, local: Local) {
+    map_property_places(property, &mut |base| *base = PlaceBase::Local(local.as_usize()));
+}
+
+fn map_property_places<'tcx>(property: &mut Property<'tcx>, map: &mut impl FnMut(&mut PlaceBase)) {
+    match property {
+        Property::Atom(atom) => {
+            for arg in &mut atom.args {
+                match arg {
+                    PropertyArg::Expr(expr) | PropertyArg::ForEach(expr) => map_expr_places(expr, map),
+                    PropertyArg::Predicates(preds) => {
+                        for pred in preds {
+                            map_expr_places(&mut pred.lhs, map);
+                            map_expr_places(&mut pred.rhs, map);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Property::And(and) => {
+            for conjunct in &mut and.conjuncts { map_property_places(conjunct, map) }
+        }
+        Property::Or(or) => {
+            for disjunct in &mut or.disjuncts { map_property_places(disjunct, map) }
+        }
+    }
+}
+
+fn map_expr_places<'tcx>(expr: &mut ContractExpr<'tcx>, map: &mut impl FnMut(&mut PlaceBase)) {
+    match expr {
+        ContractExpr::Place(cp) => map(&mut cp.base),
+        ContractExpr::Len(inner, _) | ContractExpr::IsEmpty(inner, _) | ContractExpr::Unary { expr: inner, .. } => {
+            map_expr_places(inner, map)
+        }
+        ContractExpr::IndexAccess { slice, index } => {
+            map_expr_places(slice, map);
+            map_expr_places(index, map);
+        }
+        ContractExpr::Binary { lhs, rhs, .. } => {
+            map_expr_places(lhs, map);
+            map_expr_places(rhs, map);
+        }
+        ContractExpr::MethodCall { receiver, args, .. } => {
+            map_expr_places(receiver, map);
+            for arg in args { map_expr_places(arg, map) }
+        }
+        ContractExpr::If { cond, then_expr, else_expr } => {
+            map_expr_places(&mut cond.lhs, map);
+            map_expr_places(&mut cond.rhs, map);
+            map_expr_places(then_expr, map);
+            map_expr_places(else_expr, map);
+        }
+        _ => {}
+    }
+}
 
 pub(crate) fn parse_contract_place<'tcx>(
     tcx: TyCtxt<'tcx>,

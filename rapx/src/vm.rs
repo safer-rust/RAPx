@@ -6,7 +6,6 @@ pub(crate) mod constructor_policy;
 pub(crate) mod container;
 pub(crate) mod contract_facts;
 mod contract_expr;
-pub(crate) mod contracts;
 pub(crate) mod diagnostics;
 pub(crate) mod display;
 pub(crate) mod exec;
