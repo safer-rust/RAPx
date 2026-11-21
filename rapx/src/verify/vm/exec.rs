@@ -28,11 +28,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     true
                 } else {
                     let viable = state.execute_item(item);
-                    next.extend(
-                        std::mem::take(&mut state.path_state.inline.pending_states)
-                            .into_iter()
-                            .map(|state| *state),
-                    );
+                    next.extend(std::mem::take(&mut state.path_state.inline.pending_states).into_iter().map(|state| *state));
                     viable
                 };
                 if viable {

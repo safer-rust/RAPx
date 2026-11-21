@@ -438,9 +438,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             return false;
         }
         *self = completed.remove(0);
-        self.path_state.inline
-            .pending_states
-            .extend(completed.into_iter().map(Box::new));
+        self.path_state.inline.pending_states.extend(completed.into_iter().map(Box::new));
         true
     }
 

@@ -118,7 +118,6 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     current_def_id: target_def_id,
                     instantiated_body: instantiated_target_body,
                     local_alloc: FxHashMap::default(),
-                    pending_enum_fields: FxHashMap::default(),
                 },
                 caller_frames: Vec::default(),
                 mem_units: Vec::default(),

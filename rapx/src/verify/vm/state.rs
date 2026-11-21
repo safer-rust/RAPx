@@ -427,7 +427,7 @@ pub(crate) struct InlineCtx<'z3, 'tcx> {
 /// The extra semantics attached to a value, beyond its term/type/provenance.
 ///
 /// A single value carries at most one of these: it is either a plain value, an
-/// `offset_of!` field offset, a symbolic enum discriminant, a comparison
+/// `offset_of!` field offset, an enum construction marker or discriminant, a comparison
 /// result, or a non-comparison binary-op result.  The operands/operator are
 /// used for guard inference (tracing a switch/assert guard back to the pointer
 /// it null-checks/alignment-checks) and division-axiom injection (following
@@ -452,6 +452,8 @@ pub(crate) enum ValueSource<'z3> {
     },
     /// A known enum discriminant.
     KnownDiscriminant(Int<'z3>),
+    /// Variant whose payload fields are being written before `SetDiscriminant`.
+    PendingEnumVariant(Int<'z3>),
     /// A comparison result (`Eq`/`Ne`/`Le`/`Lt`/`Ge`/`Gt`): the operands and
     /// the direct boolean condition (`offset <= len`) carried alongside the
     /// ite-encoded term.
@@ -580,6 +582,9 @@ pub(crate) struct TermCaches<'z3, 'tcx> {
 /// The frame-scoped subset of [`VmExecutor`]: the name → allocation binding keyed
 /// by MIR `Local`, which the callee reuses, so it must be swapped out for the
 /// duration of an inlined callee and swapped back afterwards.
+///
+/// # Agent Rules
+/// Do not add new fields without human approval.
 #[derive(Clone)]
 pub(crate) struct FrameState<'tcx> {
     /// Function executed by this frame.
@@ -588,8 +593,6 @@ pub(crate) struct FrameState<'tcx> {
     pub(crate) instantiated_body: Option<&'tcx Body<'tcx>>,
     /// Stack allocation backing each MIR local and its field values.
     pub(crate) local_alloc: FxHashMap<Local, AllocId>,
-    /// Enum variant and payload fields assembled before `SetDiscriminant`.
-    pub(crate) pending_enum_fields: FxHashMap<Local, (VariantIdx, FxHashSet<usize>)>,
 }
 
 /// Caller state parked during a path-replay call, including its method snapshot.
@@ -881,7 +884,6 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 current_def_id: callee,
                 instantiated_body: body,
                 local_alloc: FxHashMap::default(),
-                pending_enum_fields: FxHashMap::default(),
             },
         )
     }
@@ -917,7 +919,6 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     /// Bind a whole value to a MIR local (store it at `path == []` in the
     /// allocation backing the local, allocating that stack slot on demand).
     pub(crate) fn set_local(&mut self, local: Local, mut value: VmValue<'z3, 'tcx>) {
-        self.path_state.current_frame.pending_enum_fields.remove(&local);
         self.ensure_local_allocation(local);
         let alloc_id = self.path_state.current_frame.local_alloc[&local];
         self.content_mut(alloc_id).facts.may_be_uninit = false;

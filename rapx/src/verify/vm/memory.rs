@@ -1218,10 +1218,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         path: Vec<usize>,
         value: VmValue<'z3, 'tcx>,
     ) {
-        self.path_state.mem_units[alloc_id.0]
-            .content
-            .values
-            .insert((view_ty, path), value);
+        self.path_state.mem_units[alloc_id.0].content.values.insert((view_ty, path), value);
     }
 
     /// Encode the UTF-8 validity DFA over this allocation's tracked bytes.

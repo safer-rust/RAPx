@@ -10,7 +10,7 @@ use rustc_middle::{
 };
 use z3::ast::{Ast, Bool, Int};
 
-use super::super::state::{AllocKind, Provenance, ValueSource, VmExecutor, VmValue};
+use super::super::state::{AllocKind, MemoryContent, Provenance, ValueSource, VmExecutor, VmValue};
 use super::eval_rvalue;
 use crate::def_ids::type_ids;
 use crate::helpers::mir_utils;
@@ -83,25 +83,25 @@ pub(crate) fn exec_set_discriminant<'z3, 'tcx>(
         state.record_unsupported("SetDiscriminant target");
         return;
     }
-    let fields = &adt.variants()[variant_index].fields;
-    let payload_complete = fields.is_empty()
-        || state.path_state
-            .current_frame
-            .pending_enum_fields
-            .get(&place.local)
-            .is_some_and(|(variant, written)| {
-                *variant == variant_index
-                    && fields.iter().enumerate().all(|(index, _)| {
-                        written.contains(&index)
-                            && state
-                                .field_value(place.local, &[index])
-                                .is_some_and(|value| value.facts.init)
-                    })
-            });
     let Some(term) = state.enum_discriminant_term(ty, variant_index) else {
         state.record_unsupported("SetDiscriminant value");
         return;
     };
+    let fields = &adt.variants()[variant_index].fields;
+    let target_alloc = if deref {
+        state.local_value(place.local).and_then(|value| value.provenance_alloc_id())
+    } else {
+        state.path_state.current_frame.local_alloc.get(&place.local).copied()
+    };
+    let payload_complete = fields.is_empty() || target_alloc.is_some_and(|alloc_id| {
+        state.load_value(alloc_id, ty, &[]).is_some_and(|value| {
+            matches!(&value.source, ValueSource::PendingEnumVariant(pending)
+                if pending._eq(&term).simplify().as_bool() == Some(true))
+        })
+            && fields.iter().enumerate().all(|(index, _)| {
+                state.load_value(alloc_id, ty, &[index]).is_some_and(|value| value.facts.init)
+            })
+    });
     if !payload_complete {
         state.record_unsupported("SetDiscriminant incomplete payload");
     }
@@ -135,22 +135,6 @@ pub(crate) fn exec_set_discriminant<'z3, 'tcx>(
                 state.clear_write_evidence(alloc_id);
                 state.store_value(alloc_id, ty, Vec::new(), value);
                 state.content_mut(alloc_id).facts.initialized = true;
-                let aliases = state.path_state
-                    .current_frame
-                    .pending_enum_fields
-                    .keys()
-                    .copied()
-                    .filter(|local| {
-                        state.path_state.current_frame.local_alloc.get(local).copied() == Some(alloc_id)
-                            || state
-                                .local_value(*local)
-                                .and_then(|value| value.provenance_alloc_id())
-                                == Some(alloc_id)
-                    })
-                    .collect::<Vec<_>>();
-                for local in aliases {
-                    state.path_state.current_frame.pending_enum_fields.remove(&local);
-                }
                 return;
             }
             state.record_unsupported("SetDiscriminant pointer target");
@@ -197,11 +181,11 @@ pub(crate) fn exec_set_discriminant<'z3, 'tcx>(
     }
 }
 
-fn record_enum_field_write<'z3, 'tcx>(
+fn prepare_enum_field_write<'z3, 'tcx>(
     state: &mut VmExecutor<'z3, 'tcx>,
     place: &Place<'tcx>,
     rvalue: &Rvalue<'tcx>,
-) {
+) -> Option<bool> {
     let start = usize::from(
         place
             .projection
@@ -209,98 +193,58 @@ fn record_enum_field_write<'z3, 'tcx>(
             .is_some_and(|projection| matches!(projection.kind(), ProjectionElem::Deref)),
     );
     if place.projection.len() != start + 2 {
-        return;
+        return None;
     }
     let ProjectionElem::Downcast(_, variant) = place.projection[start].kind() else {
-        return;
+        return None;
     };
-    let ProjectionElem::Field(field, _) = place.projection[start + 1].kind() else {
-        return;
+    let ProjectionElem::Field(..) = place.projection[start + 1].kind() else {
+        return None;
     };
-    let ty = place.ty(state.body(), state.tcx).ty;
     let ty = if start == 0 {
         state.body().local_decls[place.local].ty
     } else {
-        mir_utils::pointee_ty(state.body().local_decls[place.local].ty).unwrap_or(ty)
+        mir_utils::pointee_ty(state.body().local_decls[place.local].ty)?
     };
     if !matches!(ty.kind(), TyKind::Adt(adt, _) if adt.is_enum()) {
-        return;
+        return None;
     }
-    if start == 1
-        && let Some(alloc_id) = state
-            .local_value(place.local)
-            .and_then(|value| value.provenance_alloc_id())
-    {
-        let aliases = state.path_state
-            .current_frame
-            .pending_enum_fields
-            .keys()
-            .copied()
-            .filter(|local| {
-                *local != place.local
-                    && (state.path_state.current_frame.local_alloc.get(local).copied() == Some(alloc_id)
-                        || state
-                            .local_value(*local)
-                            .and_then(|value| value.provenance_alloc_id())
-                            == Some(alloc_id))
-            })
-            .collect::<Vec<_>>();
-        for local in aliases {
-            state.path_state.current_frame.pending_enum_fields.remove(&local);
-        }
-    }
-    let pending = state.path_state.current_frame.pending_enum_fields.get(&place.local);
-    let new_variant = pending.is_none_or(|(current, _)| *current != variant);
-    if new_variant {
+    let alloc_id = if start == 0 {
+        state.ensure_local_allocation(place.local);
+        state.path_state.current_frame.local_alloc[&place.local]
+    } else {
+        state.local_value(place.local)?.provenance_alloc_id()?
+    };
+    let pending = state.load_value(alloc_id, ty, &[]).and_then(|value| match &value.source {
+        ValueSource::PendingEnumVariant(term) => Some(term.clone()),
+        _ => None,
+    });
+    let target = state.enum_discriminant_term(ty, variant)?;
+    if !pending.as_ref().is_some_and(|term| term._eq(&target).simplify().as_bool() == Some(true)) {
         let same_active = state
-            .local_value(place.local)
-            .and_then(|value| value.discriminant())
-            .zip(state.enum_discriminant_term(ty, variant))
-            .is_some_and(|(current, target)| {
-                current._eq(&target).simplify().as_bool() == Some(true)
-            });
+            .load_value(alloc_id, ty, &[])
+            .and_then(VmValue::discriminant)
+            .is_some_and(|current| current._eq(&target).simplify().as_bool() == Some(true));
         if pending.is_some() || !same_active {
             state.invalidate_field_descendants(place.local, &[]);
-            if start == 1
-                && let Some(pointer) = state.local_value(place.local)
-                && let Some(provenance) = &pointer.provenance
-                && provenance.offset.simplify().as_u64() == Some(0)
-                && state.alloc(provenance.alloc_id).element_ty.as_ty() == Some(ty)
-            {
-                let alloc_id = provenance.alloc_id;
-                state
-                    .content_mut(alloc_id)
-                    .values
-                    .retain(|(view_ty, path), _| *view_ty != ty || path.is_empty());
+            if start == 1 {
+                state.content_mut(alloc_id).values.retain(|(view_ty, path), _| *view_ty != ty || path.is_empty());
             }
         }
-        state.path_state
-            .current_frame
-            .pending_enum_fields
-            .insert(place.local, (variant, Default::default()));
+        let mut marker = VmValue::new(state.alloc(alloc_id).base.clone(), ty);
+        marker.source = ValueSource::PendingEnumVariant(target);
+        state.store_value(alloc_id, ty, Vec::new(), marker);
     }
     let initialized = match rvalue {
         Rvalue::Use(Operand::Constant(_), ..) => true,
         Rvalue::Use(Operand::Copy(source) | Operand::Move(source), ..)
             if source.projection.is_empty() =>
         {
-            state
-                .local_value(source.local)
-                .is_some_and(|value| value.facts.init)
+            state.local_value(source.local).is_some_and(|value| value.facts.init)
         }
         _ => false,
     };
-    if let Some((_, fields)) = state.path_state
-        .current_frame
-        .pending_enum_fields
-        .get_mut(&place.local)
-    {
-        if initialized {
-            fields.insert(field.as_usize());
-        } else {
-            fields.remove(&field.as_usize());
-        }
-    }
+    Some(initialized)
 }
 
 pub(crate) fn exec_assign<'z3, 'tcx>(
@@ -484,7 +428,9 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
             })
             .collect();
         if !field_indices.is_empty() {
-            record_enum_field_write(state, place, rvalue);
+            if let Some(initialized) = prepare_enum_field_write(state, place, rvalue) {
+                value.facts.init = initialized;
+            }
             let track_iter = field_indices == [0];
             state.set_field_value(place.local, field_indices.clone(), value);
             for (path, field) in source_fields {
@@ -553,7 +499,9 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
                     && matches!(place.projection[1].kind(), ProjectionElem::Downcast(..))
                     && matches!(place.projection[2].kind(), ProjectionElem::Field(..));
                 if enum_field {
-                    record_enum_field_write(state, place, rvalue);
+                    if let Some(initialized) = prepare_enum_field_write(state, place, rvalue) {
+                        value.facts.init = initialized;
+                    }
                 }
                 let has_local_field = state.field_value(place.local, &field_indices).is_some();
                 let pointed = state.local_value(place.local).cloned();
@@ -591,14 +539,13 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
 }
 
 pub(crate) fn exec_storage_live<'z3, 'tcx>(state: &mut VmExecutor<'z3, 'tcx>, local: Local) {
-    state.path_state.current_frame.pending_enum_fields.remove(&local);
     state.ensure_local_allocation(local);
     let alloc_id = state.path_state.current_frame.local_alloc[&local];
+    *state.content_mut(alloc_id) = MemoryContent::default();
     state.alloc_mut(alloc_id).facts.dead = false;
 }
 
 pub(crate) fn exec_storage_dead<'z3, 'tcx>(state: &mut VmExecutor<'z3, 'tcx>, local: Local) {
-    state.path_state.current_frame.pending_enum_fields.remove(&local);
     if let Some(alloc_id) = state.path_state.current_frame.local_alloc.get(&local).copied() {
         state.alloc_mut(alloc_id).facts.dead = true;
     }
