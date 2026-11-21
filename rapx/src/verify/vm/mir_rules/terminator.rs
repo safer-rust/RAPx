@@ -215,7 +215,9 @@ pub(crate) fn exec_assert<'z3, 'tcx>(
     state.infer_guard_align(cond, expected);
 }
 
-pub(crate) fn exec_drop<'z3, 'tcx>(state: &mut VmExecutor<'z3, 'tcx>, place: &Place<'tcx>) {
+/// Execute a drop and report whether it marked the container's data allocation dead.
+pub(crate) fn exec_drop<'z3, 'tcx>(state: &mut VmExecutor<'z3, 'tcx>, place: &Place<'tcx>) -> bool {
+    let mut dropped_data = false;
     if let Some(alloc_id) = state.path_state.current_frame.local_alloc.get(&place.local).copied() {
         let is_param = place.local.as_usize() <= state.body().arg_count;
         let owner = if is_param {
@@ -246,6 +248,7 @@ pub(crate) fn exec_drop<'z3, 'tcx>(state: &mut VmExecutor<'z3, 'tcx>, place: &Pl
                     state.alloc_mut(header).facts.dead = true;
                 } else if !is_param {
                     state.record_memory_drop(data_id, source);
+                    dropped_data = true;
                 }
             }
         }
@@ -254,6 +257,7 @@ pub(crate) fn exec_drop<'z3, 'tcx>(state: &mut VmExecutor<'z3, 'tcx>, place: &Pl
             state.invalidate_owner_field(place.local);
         }
     }
+    dropped_data
 }
 
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {

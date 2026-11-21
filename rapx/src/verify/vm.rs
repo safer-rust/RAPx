@@ -34,7 +34,7 @@ use crate::{compat::{FxHashMap, FxHashSet}, verify::config::ConstructorMirMode};
 use self::{
     diagnostics::Diagnostics,
     method_cache::CachedMethodResult,
-    state::{AllocId, Constraints, FrameState, InlineCtx, MemoryUnit, OwnershipTransfer, SafeDropEvent, SavedCallerFrame},
+    state::{AllocId, Constraints, FrameState, InlineCtx, MemoryEvent, MemoryUnit, OwnershipTransfer, SavedCallerFrame},
 };
 
 /// Executes MIR using an immutable context and a path-local symbolic state.
@@ -86,10 +86,10 @@ pub(crate) struct VmState<'z3, 'tcx> {
     alias_hazard_allocs: FxHashSet<AllocId>,
     /// Slice and index terms with their originating MIR locals.
     pub(in crate::verify) index_access_facts: Vec<(Int<'z3>, Int<'z3>, Local, Local)>,
-    /// Optional SafeDrop log of drops, use-after-free, and dangling pointers.
-    pub(crate) safedrop_events: Option<RefCell<Vec<SafeDropEvent>>>,
+    /// Optional trace of memory uses and drops on this path.
+    pub(crate) memory_events: Option<RefCell<Vec<MemoryEvent>>>,
     /// Path diagnostics and the MIR location used to attribute new records.
-    pub(in crate::verify) diagnostics: Diagnostics,
+    pub(crate) diagnostics: Diagnostics,
 }
 
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
@@ -129,7 +129,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 method_result_cache: Vec::default(),
                 alias_hazard_allocs: FxHashSet::default(),
                 index_access_facts: Vec::new(),
-                safedrop_events: None,
+                memory_events: None,
                 diagnostics: Diagnostics::default(),
             },
         }

@@ -18,8 +18,21 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     }
 
     pub(crate) fn execute_items_after(
+        states: Vec<Self>,
+        items: &[RelevantItem<'tcx>],
+    ) -> Vec<Self> {
+        Self::execute_items_after_inner(states, items, false)
+    }
+
+    /// Replay items while retaining a selected cleanup successor after a call.
+    pub(crate) fn execute_items_after_with_cleanup(states: Vec<Self>, items: &[RelevantItem<'tcx>]) -> Vec<Self> {
+        Self::execute_items_after_inner(states, items, true)
+    }
+
+    fn execute_items_after_inner(
         mut states: Vec<Self>,
         items: &[RelevantItem<'tcx>],
+        retain_cleanup: bool,
     ) -> Vec<Self> {
         for item in items {
             let mut next = Vec::new();
@@ -27,7 +40,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 let viable = if state.path_state.diagnostics.is_unsupported() {
                     true
                 } else {
-                    let viable = state.execute_item(item);
+                    let viable = state.execute_item(item, retain_cleanup);
                     next.extend(std::mem::take(&mut state.path_state.inline.pending_states).into_iter().map(|state| *state));
                     viable
                 };
@@ -40,7 +53,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         states
     }
 
-    fn execute_item(&mut self, item: &RelevantItem<'tcx>) -> bool {
+    fn execute_item(&mut self, item: &RelevantItem<'tcx>, retain_cleanup: bool) -> bool {
         match item {
             RelevantItem::Statement {
                 def_id,
@@ -75,7 +88,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 });
                 let viable =
                     crate::verify::vm::mir_rules::exec_terminator(self, terminator, *switch_succ).continues();
-                viable || (self.path_state.safedrop_events.is_some()
+                viable || (retain_cleanup
                     && matches!(&terminator.kind, TerminatorKind::Call { unwind: UnwindAction::Cleanup(target), .. } if Some(*target) == *switch_succ)
                 )
             }

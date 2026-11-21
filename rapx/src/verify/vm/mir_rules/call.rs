@@ -16,7 +16,6 @@ use super::RuleFlow;
 use self::comparison::ComparisonPlan;
 use self::index::BuiltinIndexPlan;
 use crate::verify::config::ConstructorMirMode;
-use crate::def_ids::type_ids;
 use crate::compat::Spanned;
 use crate::def_ids::diagnostic_api;
 use crate::helpers::fn_info::{self, FnKind};
@@ -158,9 +157,6 @@ pub(super) fn exec_call<'z3, 'tcx>(
 
     let model = state.select_call_model(&site, drop_call);
     let finish_policy = model.finish_policy();
-    let diagnostics_before_call = (finish_policy == CallFinish::Full
-        && state.path_state.safedrop_events.is_some())
-    .then(|| state.path_state.diagnostics.clone());
     let summary_used = model.uses_summary_invariants();
     if state.execute_call_model(model, &site) == RuleFlow::Pruned {
         return RuleFlow::Pruned;
@@ -172,33 +168,6 @@ pub(super) fn exec_call<'z3, 'tcx>(
         let result = state.local_value(destination).cloned();
         state.finish_method_call(method_call, result.as_ref());
         return RuleFlow::Continue;
-    }
-    if let Some(before) = diagnostics_before_call.as_ref()
-        && state.path_state
-            .diagnostics
-            .only_copy_memory_target_unavailable_since(before)
-        && matches!(state.body().local_decls[destination].ty.kind(), TyKind::Adt(def, _) if type_ids::is_std_string(def.did()))
-    {
-        let ty = state.body().local_decls[destination].ty;
-        let mut facts = Default::default();
-        if state.init_box_vec_param(destination, ty, destination.as_usize(), &mut facts) {
-            state.path_state.diagnostics.recover_copy_memory_target(before);
-        }
-    }
-    if let Some(before) = diagnostics_before_call.as_ref()
-        && state.path_state.diagnostics.only_missing_mir_since(before)
-        && arg_values.iter().all(|value| {
-            value.provenance.is_none()
-                && !matches!(value.ty.kind(), TyKind::Ref(..) | TyKind::RawPtr(..))
-        })
-    {
-        let ty = state.body().local_decls[destination].ty;
-        let mut facts = Default::default();
-        if !state.init_box_vec_param(destination, ty, destination.as_usize(), &mut facts) {
-            let term = state.fresh_int("safedrop_opaque_result");
-            state.set_local(destination, VmValue::new(term, ty));
-        }
-        state.path_state.diagnostics.recover_missing_mir(before);
     }
     state.finish_call(&site, prior_result.as_ref(), summary_used, method_call);
     RuleFlow::Continue
@@ -305,13 +274,14 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 RuleFlow::Continue
             }
             CallModel::Drop(DropCall::Pointee) => {
-                let event_count = self.path_state.safedrop_events.as_ref().map_or(0, |events| events.borrow().len());
-                if let Some(pointer) = arg_values.first()
+                let dropped_data = if let Some(pointer) = arg_values.first()
                     && let Some(local) = self.find_local_by_address(&pointer.z3_term)
                 {
-                    super::terminator::exec_drop(self, &rustc_middle::mir::Place::from(local));
-                }
-                if self.path_state.safedrop_events.as_ref().map_or(0, |events| events.borrow().len()) == event_count
+                    super::terminator::exec_drop(self, &rustc_middle::mir::Place::from(local))
+                } else {
+                    false
+                };
+                if !dropped_data
                     && let Some(pointer) = arg_values.first()
                     && let Some(alloc_id) = pointer.provenance_alloc_id()
                 {

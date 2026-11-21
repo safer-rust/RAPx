@@ -2,7 +2,7 @@ use rustc_abi::FieldIdx;
 use rustc_hir::def_id::DefId;
 use rustc_index::IndexVec;
 use rustc_middle::{
-    mir::{AggregateKind, BinOp, CastKind, Operand, Place, UnOp},
+    mir::{AggregateKind, BinOp, CastKind, Operand, Place, ProjectionElem, UnOp},
     ty::{Ty, TyKind},
 };
 use z3::ast::{Ast, Int};
@@ -54,13 +54,7 @@ pub(crate) fn eval_ref<'z3, 'tcx>(
 ) -> VmValue<'z3, 'tcx> {
     let dest_ty = dest_place.ty(state.body(), state.tcx).ty;
     if let Some(addr) = state.address_of_place(place) {
-        if state.path_state.safedrop_events.is_some()
-            && place.projection.iter().any(|projection| {
-                matches!(
-                    projection.kind(),
-                    rustc_middle::mir::ProjectionElem::Field(..)
-                )
-            })
+        if place.projection.iter().any(|projection| matches!(projection.kind(), ProjectionElem::Field(..)))
             && let Some(value) = state.value_of_place(place)
             && let Some(alloc_id) = value.provenance_alloc_id()
         {

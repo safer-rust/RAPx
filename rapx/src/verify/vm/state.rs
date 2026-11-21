@@ -29,19 +29,19 @@ pub(crate) const REPEATED_ARRAY_ELEMENT: usize = usize::MAX;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct AllocId(pub usize);
 
-/// Memory events consumed by SafeDrop; normal drops locate later violations.
+/// Memory operations observed while executing a MIR path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SafeDropEventKind {
+pub(crate) enum MemoryEventKind {
     Drop,
-    DoubleFree,
-    UseAfterFree,
-    DanglingPointer,
+    Use,
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct SafeDropEvent {
+pub(crate) struct MemoryEvent {
     pub alloc_id: AllocId,
-    pub kind: SafeDropEventKind,
+    pub kind: MemoryEventKind,
+    /// Whether the allocation was already dead when this operation occurred.
+    pub was_dead: bool,
     pub block: Option<usize>,
     pub local: usize,
     pub span: Span,
@@ -673,14 +673,11 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     }
 
     pub(crate) fn record_memory_drop(&mut self, alloc_id: AllocId, local: Local) {
-        if let Some(events) = &self.path_state.safedrop_events {
-            events.borrow_mut().push(SafeDropEvent {
+        if let Some(events) = &self.path_state.memory_events {
+            events.borrow_mut().push(MemoryEvent {
                 alloc_id,
-                kind: if self.alloc(alloc_id).facts.dead {
-                    SafeDropEventKind::DoubleFree
-                } else {
-                    SafeDropEventKind::Drop
-                },
+                kind: MemoryEventKind::Drop,
+                was_dead: self.alloc(alloc_id).facts.dead,
                 block: self.path_state.diagnostics.active_mir.as_ref().map(|location| location.block),
                 local: local.as_usize(),
                 span: self.path_state
@@ -694,12 +691,11 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     }
 
     pub(crate) fn record_memory_use(&self, alloc_id: AllocId, local: Local) {
-        if let Some(events) = &self.path_state.safedrop_events
-            && self.alloc(alloc_id).facts.dead
-        {
-            events.borrow_mut().push(SafeDropEvent {
+        if let Some(events) = &self.path_state.memory_events {
+            events.borrow_mut().push(MemoryEvent {
                 alloc_id,
-                kind: SafeDropEventKind::UseAfterFree,
+                kind: MemoryEventKind::Use,
+                was_dead: self.alloc(alloc_id).facts.dead,
                 block: self.path_state.diagnostics.active_mir.as_ref().map(|location| location.block),
                 local: local.as_usize(),
                 span: self.path_state
