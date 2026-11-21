@@ -237,7 +237,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let rustc_middle::ty::TyKind::Ref(..) = ty.kind() else {
             return false;
         };
-        let precise_pointee = crate::verify::vm::region::fn_arg_ty(
+        let precise_pointee = crate::vm::region::fn_arg_ty(
             self.tcx,
             self.path_state.current_frame.current_def_id,
             local_idx - 1,
@@ -256,7 +256,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         // `&MaybeUninit<T>` / `&[MaybeUninit<T>]` carry no validity invariant —
         // the content need not be initialized — so do not claim `Init` for them
         // (the content property reduces to `Typed`).
-        let pointee_is_maybe_uninit = crate::verify::api_classify::strips_to_maybe_uninit(pointee_ty);
+        let pointee_is_maybe_uninit = crate::api_classify::strips_to_maybe_uninit(pointee_ty);
 
         invariants.non_null = true;
         if !pointee_is_maybe_uninit {

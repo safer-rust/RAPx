@@ -11,9 +11,8 @@ use crate::verify::contract::{
     ContractExpr, ContractPlace, ContractProjection, Property, PropertyArg,
 };
 use crate::verify::report::{CheckResult, UnknownReason};
-use crate::verify::vm::contract_eval::ContractEvalContext;
-use crate::verify::vm::query::ContractTargetContext;
-use crate::verify::vm::state::{VmExecutor, VmValue};
+use crate::vm::contract_query::ContractTargetContext;
+use crate::vm::state::{VmExecutor, VmValue};
 use rustc_middle::{
     mir::{Local, Operand, Rvalue, StatementKind},
     ty::{GenericArg, GenericArgKind, Ty, TyKind},
@@ -32,7 +31,7 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> Option<VmValue<'z3, 'tcx>> {
-        vm_state.contract_target_value_at(ContractTargetContext::Callsite(checkpoint), property)
+        vm_state.contract_target_value_at(ContractTargetContext::Callsite(&checkpoint.args), property)
     }
 
     /// Implicit vacuous truth for projected targets.
@@ -329,7 +328,7 @@ impl PropertyChecker {
         checkpoint: Option<&Checkpoint<'tcx>>,
         expr: &ContractExpr<'tcx>,
     ) -> Option<Int<'z3>> {
-        vm_state.eval_contract_tree(expr, ContractEvalContext::Check(checkpoint))
+        vm_state.eval_contract_tree(expr, checkpoint)
     }
 
     pub(super) fn trace_value<'z3, 'tcx>(

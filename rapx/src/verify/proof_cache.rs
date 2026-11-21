@@ -10,12 +10,12 @@ use z3::Config;
 
 use crate::analysis::path::CallArg;
 use crate::compat::FxHashMap;
+use crate::vm::VmExecutor;
 
 use super::{
     config::VerifyConfig,
     contract::Property,
     slicer::{ProofGoal, RelevantItem},
-    vm::VmExecutor,
 };
 
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -118,7 +118,7 @@ impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
                 .min(key.len());
             if states
                 .iter()
-                .any(|state| !state.path_state.diagnostics.is_unsupported())
+                .any(|state| !state.diagnostics().is_unsupported())
             {
                 let owned =
                     Arc::try_unwrap(states).unwrap_or_else(|shared| shared.as_ref().clone());

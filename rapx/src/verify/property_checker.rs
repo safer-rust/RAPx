@@ -3,7 +3,7 @@
 use crate::analysis::dataflow::pointer_copy;
 use crate::def_ids::diagnostic_api;
 use crate::verify::checkpoint::Checkpoint;
-use crate::verify::vm::state::VmExecutor;
+use crate::vm::state::VmExecutor;
 use crate::verify::{
     contract::{ContractExpr, PlaceBase, Property, PropertyArg, PropertyKind},
     report::{CheckResult, UnknownReason},
@@ -228,15 +228,15 @@ impl PropertyChecker {
         structural: bool,
         reachability_cache: &std::cell::Cell<Option<z3::SatResult>>,
     ) -> CheckResult {
-        if vm_state.path_state.diagnostics.is_unsupported() {
-            let mut details: Vec<_> = vm_state.path_state.diagnostics.unsupported_details().iter().cloned().collect();
+        if vm_state.diagnostics().is_unsupported() {
+            let mut details: Vec<_> = vm_state.diagnostics().unsupported_details().iter().cloned().collect();
             details.sort();
-            let mut effect_details: Vec<_> = vm_state.path_state.diagnostics.unsupported_effects().iter().cloned().collect();
+            let mut effect_details: Vec<_> = vm_state.diagnostics().unsupported_effects().iter().cloned().collect();
             effect_details.sort();
-            let mut missing_mir: Vec<_> = vm_state.path_state.diagnostics.missing_mir().iter().cloned().collect();
+            let mut missing_mir: Vec<_> = vm_state.diagnostics().missing_mir().iter().cloned().collect();
             missing_mir.sort();
             let mut opaque_control_flow: Vec<_> =
-                vm_state.path_state.diagnostics.opaque_control_flow().iter().cloned().collect();
+                vm_state.diagnostics().opaque_control_flow().iter().cloned().collect();
             opaque_control_flow.sort();
             let mut reasons = Vec::new();
             if !missing_mir.is_empty() {
@@ -365,23 +365,22 @@ impl PropertyChecker {
                         || target_arg
                             .and_then(|index| checkpoint.args.get(index))
                             .and_then(|arg| arg.place())
-                            .and_then(|place| vm_state.path_state.current_frame.local_alloc.get(&place.local))
-                            .is_some_and(|id| vm_state.content(*id).facts.may_be_uninit))
+                            .and_then(|place| vm_state.local_alloc_id(place.local))
+                            .is_some_and(|id| vm_state.content(id).facts.may_be_uninit))
                 {
                     return CheckResult::Failed;
                 }
                 // An incomplete inline may leave the target or an argument as
                 // a placeholder; such a property cannot be decided.
-                if [&vm_state.path_state.inline.inline_truncated_terms, &vm_state.path_state.inline.inline_branch_terms]
-                    .into_iter()
+                if vm_state.incomplete_inline_terms()
                     .any(|terms| vm_state.atom_depends_on_inline_terms(checkpoint, property, terms))
                 {
                     return CheckResult::Unknown(UnknownReason::IncompleteInline);
                 }
-                if vm_state.atom_depends_on_inline_terms(checkpoint, property, &vm_state.path_state.inline.opaque_intrinsic_terms) {
+                if vm_state.atom_depends_on_inline_terms(checkpoint, property, vm_state.opaque_intrinsic_terms()) {
                     return CheckResult::Unknown(UnknownReason::UnmodeledIntrinsic("opaque intrinsic result".to_string()));
                 }
-                if vm_state.path_state.diagnostics.has_incomplete_inline_branch()
+                if vm_state.diagnostics().has_incomplete_inline_branch()
                     && (checkpoint.callee.is_some() || !checkpoint.args.is_empty())
                 {
                     return CheckResult::Unknown(UnknownReason::IncompleteInline);
@@ -389,7 +388,7 @@ impl PropertyChecker {
                 let rule = PROPERTY_RULES.iter().find(|r| r.kind == atom.kind).unwrap_or(&UNKNOWN_RULE);
                 crate::rap_debug!("property rule: {}", rule.name);
                 let result = (rule.apply)(self, vm_state, checkpoint, property);
-                if vm_state.path_state.diagnostics.has_incomplete_inline_branch() && result == CheckResult::Failed {
+                if vm_state.diagnostics().has_incomplete_inline_branch() && result == CheckResult::Failed {
                     CheckResult::Unknown(UnknownReason::IncompleteInline)
                 } else {
                     result

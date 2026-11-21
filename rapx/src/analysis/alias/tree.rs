@@ -13,7 +13,7 @@
 //! consulted for live-value grouping.
 
 use crate::helpers::mir_utils;
-use super::alias_hazard;
+use super::hazard as alias_hazard;
 use rustc_hash::FxHashMap;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{

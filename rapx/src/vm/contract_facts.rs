@@ -5,16 +5,14 @@ use crate::def_ids::type_ids;
 use crate::{
     compat::FxHashSet,
     helpers::mir_utils,
-    verify::{
-        contract::{
+    contract::{
             ContractExpr, ContractKind, ContractPlace, ContractProjection, BinOp, PlaceBase,
             Property, PropertyArg, PropertyKind,
         },
-    },
 };
 
 use super::contracts::{index_access_locals, rebind_property_place, slice_offset_locals};
-use super::query::ContractTargetContext;
+use crate::vm::contract_query::ContractTargetContext;
 use super::state::{
     AllocId, ElementTy, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue,
 };
@@ -36,7 +34,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     return;
                 }
                 self.assert_atom_direct(property);
-                for sub in crate::verify::contract::compound::subsumption_closure(atom) {
+                for sub in crate::contract::compound::subsumption_closure(atom) {
                     self.assert_atom_direct(&Property::Atom(sub));
                 }
             }
@@ -480,7 +478,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             .target_place()
             .map(|cp| {
                 cp.projections.iter().any(|p| {
-                    !matches!(p, crate::verify::contract::ContractProjection::Field { .. })
+                    !matches!(p, crate::contract::ContractProjection::Field { .. })
                 })
             })
             .unwrap_or(false);
@@ -580,7 +578,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let mut path = Vec::new();
         for proj in &cp.projections {
             match proj {
-                crate::verify::contract::ContractProjection::Field { index } => {
+                crate::contract::ContractProjection::Field { index } => {
                     path.push(*index);
                 }
                 _ => break,
@@ -632,7 +630,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     /// Evaluate a numeric predicate to a Z3 Bool for path-condition assertion.
     fn eval_predicate_as_bool(
         &self,
-        pred: &crate::verify::contract::NumericPredicate<'tcx>,
+        pred: &crate::contract::NumericPredicate<'tcx>,
     ) -> Option<Bool<'z3>> {
         let lhs = self.eval_contract_expr_simple(&pred.lhs)?;
         let rhs = self.eval_contract_expr_simple(&pred.rhs)?;
@@ -643,7 +641,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         &self,
         left: &Int<'z3>,
         right: &Int<'z3>,
-        op: crate::verify::contract::BinOp,
+        op: crate::contract::BinOp,
     ) -> Option<Int<'z3>> {
         match op {
             BinOp::Div => Some(left.div(right)),
@@ -789,7 +787,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             rustc_middle::ty::TyKind::Adt(adt_def, _) => *adt_def,
             _ => return,
         };
-        let invariants = crate::verify::target::get_struct_invariants_from_annotation(
+        let invariants = crate::contract::annotation::get_struct_invariants_from_annotation(
             self.tcx,
             adt_def.did(),
             adt_def.did(),
@@ -816,7 +814,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let rustc_middle::ty::TyKind::Adt(adt_def, _) = pointee_ty.kind() else {
             return;
         };
-        let invariants = crate::verify::target::get_struct_invariants_from_annotation(
+        let invariants = crate::contract::annotation::get_struct_invariants_from_annotation(
             self.tcx,
             adt_def.did(),
             adt_def.did(),
@@ -847,7 +845,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         &self,
         alloc_id: AllocId,
         view_ty: Ty<'tcx>,
-        pred: &crate::verify::contract::NumericPredicate<'tcx>,
+        pred: &crate::contract::NumericPredicate<'tcx>,
     ) -> Option<Bool<'z3>> {
         let lhs = self.eval_pointee_expr(alloc_id, view_ty, &pred.lhs)?;
         let rhs = self.eval_pointee_expr(alloc_id, view_ty, &pred.rhs)?;
@@ -937,7 +935,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         // initialized — the `Init ⇒ Typed` subsumption records the element type.
         let is_maybe_uninit = property
             .try_type_arg_at(1)
-            .map(crate::verify::api_classify::strips_to_maybe_uninit)
+            .map(crate::api_classify::strips_to_maybe_uninit)
             .unwrap_or(false);
         if is_maybe_uninit {
             return;

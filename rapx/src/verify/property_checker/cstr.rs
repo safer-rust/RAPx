@@ -13,7 +13,7 @@ use crate::analysis::dataflow::pointer_flow::return_traces_first_arg;
 use crate::compat::FxHashMap;
 use crate::helpers::mir_utils::{self, dep_callee_def_id};
 use crate::verify::checkpoint::Checkpoint;
-use crate::verify::vm::state::{AllocId, VmExecutor};
+use crate::vm::state::{AllocId, VmExecutor};
 use crate::verify::{
     contract::{ContractExpr, Property, PropertyArg},
     report::{CheckResult, UnknownReason},

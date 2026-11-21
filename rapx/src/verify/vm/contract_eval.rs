@@ -1,8 +1,8 @@
-//! Contract expression evaluation over symbolic VM values.
+//! Checkpoint-bound contract expression evaluation over symbolic VM values.
 
 use crate::helpers::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
-use crate::verify::contract::{ContractExpr, BinOp, UnaryOp, PlaceBase, RelOp};
+use crate::contract::{BinOp, ContractExpr, PlaceBase};
 use rustc_hir::def_id::DefId;
 #[cfg(rapx_const_ext)]
 use rustc_middle::ty::consts::ConstExt;
@@ -10,44 +10,24 @@ use rustc_middle::{
     mir::{Local, Operand, Place, TerminatorKind},
     ty::{GenericArgKind, Ty, TyKind},
 };
-use z3::ast::{Ast, Bool, Int};
+use z3::ast::{Ast, Int};
 
-use super::query::ContractTargetContext;
-use super::state::{VmExecutor, VmValue};
-
-#[derive(Clone, Copy)]
-pub(crate) enum ContractEvalContext<'a, 'tcx> {
-    Facts,
-    Check(Option<&'a Checkpoint<'tcx>>),
-}
-
-impl ContractEvalContext<'_, '_> {
-    fn is_check(&self) -> bool {
-        matches!(self, Self::Check(_))
-    }
-}
+use crate::vm::state::{VmExecutor, VmValue};
 
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(crate) fn eval_contract_tree(
         &self,
         expr: &ContractExpr<'tcx>,
-        context: ContractEvalContext<'_, 'tcx>,
+        checkpoint: Option<&Checkpoint<'tcx>>,
     ) -> Option<Int<'z3>> {
         match expr {
             ContractExpr::Const(value) => Some(self.u128_term(*value)),
             ContractExpr::Binary { op, lhs, rhs } => {
-                let left = self.eval_contract_tree(lhs, context)?;
-                let right = self.eval_contract_tree(rhs, context)?;
+                let left = self.eval_contract_tree(lhs, checkpoint)?;
+                let right = self.eval_contract_tree(rhs, checkpoint)?;
                 match op {
                     BinOp::Add | BinOp::Sub | BinOp::Mul => {
                         self.contract_binary_term(*op, &left, &right)
-                    }
-                    BinOp::Div | BinOp::Rem if !context.is_check() => {
-                        Some(if matches!(op, BinOp::Div) {
-                            left.div(&right)
-                        } else {
-                            left.rem(&right)
-                        })
                     }
                     BinOp::Div | BinOp::Rem => {
                         if right.as_u64() == Some(0) {
@@ -62,43 +42,34 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                             ))
                         }
                     }
-                    BinOp::Min if context.is_check() => {
-                        Some(left.le(&right).ite(&left, &right))
-                    }
-                    BinOp::Max if context.is_check() => {
-                        Some(left.ge(&right).ite(&left, &right))
-                    }
+                    BinOp::Min => Some(left.le(&right).ite(&left, &right)),
+                    BinOp::Max => Some(left.ge(&right).ite(&left, &right)),
                     _ => None,
                 }
             }
             ContractExpr::Unary { op, expr } => {
-                let value = self.eval_contract_tree(expr, context)?;
+                let value = self.eval_contract_tree(expr, checkpoint)?;
                 Some(self.contract_unary_term(*op, &value))
             }
             ContractExpr::If {
                 cond,
                 then_expr,
                 else_expr,
-            } if context.is_check() => {
-                let left = self.eval_contract_tree(&cond.lhs, context)?;
-                let right = self.eval_contract_tree(&cond.rhs, context)?;
+            } => {
+                let left = self.eval_contract_tree(&cond.lhs, checkpoint)?;
+                let right = self.eval_contract_tree(&cond.rhs, checkpoint)?;
                 let condition = self.contract_relop_bool(cond.op, &left, &right);
                 match condition.simplify().as_bool() {
-                    Some(true) => self.eval_contract_tree(then_expr, context),
-                    Some(false) => self.eval_contract_tree(else_expr, context),
+                    Some(true) => self.eval_contract_tree(then_expr, checkpoint),
+                    Some(false) => self.eval_contract_tree(else_expr, checkpoint),
                     None => {
-                        let then_value = self.eval_contract_tree(then_expr, context)?;
-                        let else_value = self.eval_contract_tree(else_expr, context)?;
+                        let then_value = self.eval_contract_tree(then_expr, checkpoint)?;
+                        let else_value = self.eval_contract_tree(else_expr, checkpoint)?;
                         Some(condition.ite(&then_value, &else_value))
                     }
                 }
             }
-            _ => match context {
-                ContractEvalContext::Facts => self.eval_contract_expr_simple_leaf(expr),
-                ContractEvalContext::Check(checkpoint) => {
-                    self.eval_contract_expr_check_leaf(checkpoint, expr)
-                }
-            },
+            _ => self.eval_contract_expr_check_leaf(checkpoint, expr),
         }
     }
 
@@ -176,16 +147,11 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let rustc_middle::ty::TyKind::Param(param_ty) = ty.kind() else {
             return false;
         };
-        let generics = self.tcx.generics_of(self.path_state.current_frame.current_def_id);
+        let generics = self.tcx.generics_of(self.current_def_id());
         generics.own_params.iter().any(|p| {
             matches!(p.kind, rustc_middle::ty::GenericParamDefKind::Type { .. })
                 && p.name == param_ty.name
         })
-    }
-
-    fn is_local_adt_receiver(&self, value: &VmValue<'z3, 'tcx>) -> bool {
-        let ty = mir_utils::pointee_ty(value.ty).unwrap_or(value.ty);
-        matches!(ty.kind(), TyKind::Adt(adt, _) if adt.did().as_local().is_some())
     }
 
     fn eval_contract_method_call(
@@ -193,17 +159,11 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         receiver: &ContractExpr<'tcx>,
         method: DefId,
         args: &[ContractExpr<'tcx>],
-        context: ContractEvalContext<'_, 'tcx>,
+        checkpoint: Option<&Checkpoint<'tcx>>,
     ) -> Option<Int<'z3>> {
-        let value = match context {
-            ContractEvalContext::Facts => self.eval_contract_expr_simple_value(receiver)?,
-            ContractEvalContext::Check(checkpoint) => {
-                self.eval_contract_expr_to_value(checkpoint, receiver)?
-            }
-        };
-        let local = match (context, receiver) {
-            (ContractEvalContext::Facts, ContractExpr::Place(cp)) => Some(cp.base.to_local()),
-            (ContractEvalContext::Check(checkpoint), ContractExpr::Place(cp)) => match cp.base {
+        let value = self.eval_contract_expr_to_value(checkpoint, receiver)?;
+        let local = match receiver {
+            ContractExpr::Place(cp) => match cp.base {
                 PlaceBase::Arg(index) => checkpoint
                     .and_then(|ck| ck.args.get(index))
                     .and_then(|operand| operand.place())
@@ -215,7 +175,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         };
         let args = args
             .iter()
-            .map(|arg| self.eval_contract_tree(arg, context))
+            .map(|arg| self.eval_contract_tree(arg, checkpoint))
             .collect::<Option<Vec<_>>>()?;
         self.eval_contract_method(method, value, local, args)
     }
@@ -230,7 +190,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 if size == 0 && matches!(ty.kind(), rustc_middle::ty::TyKind::Param(_)) {
                     size = mir_utils::size_of_generic_param(
                         self.tcx,
-                        self.path_state.current_frame.current_def_id,
+                        self.current_def_id(),
                         *ty,
                     );
                     if size == 0
@@ -306,7 +266,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 receiver,
                 *method,
                 args,
-                ContractEvalContext::Check(checkpoint),
+                checkpoint,
             ),
             ContractExpr::IsEmpty(inner, method) => {
                 let method = (*method)?;
@@ -484,125 +444,5 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         None
     }
 
-    pub(crate) fn eval_contract_expr_simple(&self, expr: &ContractExpr<'tcx>) -> Option<Int<'z3>> {
-        self.eval_contract_tree(expr, ContractEvalContext::Facts)
-    }
 
-    fn eval_contract_expr_simple_leaf(
-        &self,
-        expr: &crate::verify::contract::ContractExpr<'tcx>,
-    ) -> Option<Int<'z3>> {
-        match expr {
-            ContractExpr::SizeOf(ty) => Some(self.size_sym_read(*ty)),
-            ContractExpr::Place(cp) => {
-                let path = cp.plain_field_path()?;
-                if let Some(value) = self.contract_place_value_at(ContractTargetContext::Bound, cp)
-                {
-                    return Some(value.z3_term);
-                }
-                if path.is_empty() {
-                    return None;
-                }
-                let local = cp.base.to_local();
-                let base_val = self.local_value(local)?;
-                let alloc_id = base_val.provenance_alloc_id()?;
-                let view_ty = mir_utils::pointee_ty(base_val.ty).unwrap_or(base_val.ty);
-                self.path_state.mem_units[alloc_id.0]
-                    .content
-                    .values
-                    .get(&(view_ty, path))
-                    .map(|value| value.z3_term.clone())
-            }
-            ContractExpr::Len(inner, _) => {
-                let val = self.eval_contract_expr_simple_value(inner)?;
-                if self.is_local_adt_receiver(&val) {
-                    return None;
-                }
-                if let Some(term) = self.try_simple_iter_len(&val) {
-                    return Some(term);
-                }
-                if let ContractExpr::Place(cp) = &**inner
-                    && let Some(path) = cp.plain_field_path()
-                {
-                    let local = cp.base.to_local();
-                    if let Some(ty) = self.field_type_at(local, &path)
-                        && let Some(term) = self.try_struct_nn_len_field(local, &path, ty)
-                    {
-                        return Some(term);
-                    }
-                }
-                self.len_from_value(&val)
-            }
-            ContractExpr::MethodCall {
-                receiver,
-                method,
-                args,
-            } => {
-                self.eval_contract_method_call(receiver, *method, args, ContractEvalContext::Facts)
-            }
-            ContractExpr::ConstParam { index, .. } => self.const_param_term(*index),
-            _ => None,
-        }
-    }
-
-    fn eval_contract_expr_simple_value(
-        &self,
-        expr: &crate::verify::contract::ContractExpr<'tcx>,
-    ) -> Option<VmValue<'z3, 'tcx>> {
-        match expr {
-            ContractExpr::Place(cp) => match cp.base {
-                PlaceBase::Local(n) => self.local_value(Local::from_usize(n)).cloned(),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
-    fn try_simple_iter_len(&self, arg_val: &VmValue<'z3, 'tcx>) -> Option<Int<'z3>> {
-        if !self.is_iter_ref(arg_val) {
-            return None;
-        }
-        let local = Local::from_usize(1);
-        let ptr = self.field_value(local, &[0])?;
-        let end = self.field_value(local, &[1])?;
-        self.iter_len_from_ptrs(ptr, end)
-    }
-
-    pub(crate) fn contract_binary_term(
-        &self,
-        op: BinOp,
-        left: &Int<'z3>,
-        right: &Int<'z3>,
-    ) -> Option<Int<'z3>> {
-        match op {
-            BinOp::Add => Some(Int::add(self.z3_ctx, &[left, right])),
-            BinOp::Sub => Some(Int::sub(self.z3_ctx, &[left, right])),
-            BinOp::Mul => Some(Int::mul(self.z3_ctx, &[left, right])),
-            _ => None,
-        }
-    }
-
-    pub(crate) fn contract_unary_term(&self, op: UnaryOp, value: &Int<'z3>) -> Int<'z3> {
-        let zero = Int::from_u64(self.z3_ctx, 0);
-        match op {
-            UnaryOp::Not => value._eq(&zero).ite(&Int::from_u64(self.z3_ctx, 1), &zero),
-            UnaryOp::Neg => Int::sub(self.z3_ctx, &[&zero, value]),
-        }
-    }
-
-    pub(crate) fn contract_relop_bool(
-        &self,
-        op: RelOp,
-        left: &Int<'z3>,
-        right: &Int<'z3>,
-    ) -> Bool<'z3> {
-        match op {
-            RelOp::Eq => left._eq(right),
-            RelOp::Ne => left._eq(right).not(),
-            RelOp::Le => left.le(right),
-            RelOp::Lt => left.lt(right),
-            RelOp::Ge => left.ge(right),
-            RelOp::Gt => left.gt(right),
-        }
-    }
 }

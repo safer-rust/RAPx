@@ -7,7 +7,7 @@ use crate::verify::auto_trait::{
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{Property, PropertyArg};
 use crate::verify::report::{CheckResult, UnknownReason};
-use crate::verify::vm::state::VmExecutor;
+use crate::vm::state::VmExecutor;
 
 use super::PropertyChecker;
 

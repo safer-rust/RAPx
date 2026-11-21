@@ -12,7 +12,7 @@ use crate::verify::contract::{
     ContractExpr, BinOp, PlaceBase, Property, PropertyArg, PropertyKind, RelOp,
 };
 use crate::verify::report::{CheckResult, UnknownReason};
-use crate::verify::vm::state::VmExecutor;
+use crate::vm::state::VmExecutor;
 use rustc_hash::FxHashSet;
 use rustc_middle::{mir::Operand, ty::TyKind};
 use z3::{

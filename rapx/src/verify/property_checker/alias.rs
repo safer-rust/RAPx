@@ -5,7 +5,7 @@ use crate::helpers::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::Property;
 use crate::verify::report::{CheckResult, UnknownReason};
-use crate::verify::vm::state::VmExecutor;
+use crate::vm::state::VmExecutor;
 use rustc_middle::{
     mir::{Operand, ProjectionElem, Rvalue, StatementKind},
     ty::TyKind,
@@ -21,7 +21,7 @@ impl PropertyChecker {
         property: &Property<'tcx>,
     ) -> CheckResult {
         let Some(owner) = checkpoint.callee.and_then(|did| {
-            crate::verify::vm::alias_hazard::reconstructed_owner(vm_state.tcx, did)
+            crate::analysis::alias::hazard::reconstructed_owner(vm_state.tcx, did)
                 .map(|(_, owner)| owner)
                 .or_else(|| {
                     let owner_ty = crate::helpers::name::get_adt_self_ty(vm_state.tcx, did)?;
@@ -99,7 +99,7 @@ impl PropertyChecker {
             .and_then(mir_utils::operand_mir_place);
         let owning_invariant_field = arg_place.and_then(|arg_place| {
             let tree =
-                crate::verify::vm::alias_tree::AliasTree::build(vm_state.tcx, checkpoint.caller);
+                crate::analysis::alias::tree::AliasTree::build(vm_state.tcx, checkpoint.caller);
             let (root, fields) = tree.resolve_local_to_root(arg_place.local);
             let field = fields.first().copied().or_else(|| {
                 arg_place
@@ -148,11 +148,7 @@ impl PropertyChecker {
             })
         });
         let internal_alloc = !vm_state.alloc(alloc_id).is_external();
-        let local_alloc = vm_state.path_state
-            .current_frame
-            .local_alloc
-            .values()
-            .any(|id| *id == alloc_id);
+        let local_alloc = vm_state.local_allocations().any(|(_, id)| id == alloc_id);
         let untrusted_raw_origin = origin.as_ref().is_none_or(|origin| match origin.kind {
             crate::verify::vm::alias::VmOriginKind::RawPtr
             | crate::verify::vm::alias::VmOriginKind::SharedRef
@@ -171,7 +167,7 @@ impl PropertyChecker {
         // same allocation — a double free. The reconstructed owner (the call's
         // destination) is not a violation, so exclude it.
         let dest_local = checkpoint.destination;
-        let live = crate::verify::vm::alias_hazard::live_locals_at(
+        let live = crate::analysis::alias::hazard::live_locals_at(
             vm_state.tcx,
             checkpoint.caller,
             checkpoint.block,
@@ -184,19 +180,19 @@ impl PropertyChecker {
         );
         let typing_env =
             rustc_middle::ty::TypingEnv::non_body_analysis(vm_state.tcx, checkpoint.caller);
-        for local in vm_state.path_state.current_frame.local_alloc.keys() {
-            if Some(*local) == dest_local {
+        for (local, _) in vm_state.local_allocations() {
+            if Some(local) == dest_local {
                 continue;
             }
-            if !live.contains(local) {
+            if !live.contains(&local) {
                 continue;
             }
-            let ty = vm_state.body().local_decls[*local].ty;
+            let ty = vm_state.body().local_decls[local].ty;
             if !ty.needs_drop(vm_state.tcx, typing_env) {
                 continue;
             }
-            for path in vm_state.field_paths(*local) {
-                let Some(val) = vm_state.field_value(*local, &path) else {
+            for path in vm_state.field_paths(local) {
+                let Some(val) = vm_state.field_value(local, &path) else {
                     continue;
                 };
                 if val.provenance_alloc_id() != Some(alloc_id) {

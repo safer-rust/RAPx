@@ -4,7 +4,7 @@ use crate::helpers::mir_utils;
 use rustc_middle::ty::{GenericArgKind, Ty, TyKind};
 
 use crate::verify::checkpoint::Checkpoint;
-use crate::verify::vm::state::VmExecutor;
+use crate::vm::state::VmExecutor;
 use crate::verify::{
     contract::{Property, PropertyArg},
     report::{CheckResult, UnknownReason},
@@ -192,7 +192,7 @@ impl PropertyChecker {
             return sz;
         }
         let typing_env =
-            rustc_middle::ty::TypingEnv::post_analysis(vm_state.tcx, vm_state.path_state.current_frame.current_def_id);
+            rustc_middle::ty::TypingEnv::post_analysis(vm_state.tcx, vm_state.current_def_id());
         let sz = mir_utils::catch_panic(|| {
             vm_state
                 .tcx
@@ -210,7 +210,7 @@ impl PropertyChecker {
         }
         let generic_sz = mir_utils::size_of_generic_param(
             vm_state.tcx,
-            vm_state.path_state.current_frame.current_def_id,
+            vm_state.current_def_id(),
             ty,
         );
         if generic_sz > 0 {

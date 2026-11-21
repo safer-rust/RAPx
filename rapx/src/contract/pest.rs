@@ -22,7 +22,7 @@ use crate::helpers::name::match_ty_with_ident;
 
 /// Parser derived from `grammar.pest`.
 #[derive(Parser)]
-#[grammar = "verify/contract/grammar.pest"]
+#[grammar = "contract/grammar.pest"]
 pub(crate) struct ContractParser;
 
 fn only_child(pair: Pair<Rule>) -> Pair<Rule> {

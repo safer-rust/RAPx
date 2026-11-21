@@ -50,7 +50,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         // A reconstructed owner points into the raw pointer's allocation.
         if let TyKind::Adt(adt, _) = ty.kind()
             && let Some((source, owner)) =
-                super::super::super::alias_hazard::reconstructed_owner(self.tcx, callee)
+                crate::analysis::alias::hazard::reconstructed_owner(self.tcx, callee)
             && adt.did() == owner
             && let Some(pointer) = args.get(source)
             && let Some(provenance) = pointer.provenance.as_ref()

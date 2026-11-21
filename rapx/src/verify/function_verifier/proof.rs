@@ -11,6 +11,7 @@ use std::cell::Cell;
 
 use crate::analysis::path::PathTree;
 use crate::helpers::mir_utils;
+use crate::vm::VmExecutor;
 use crate::verify::{
     api_classify,
     checkpoint::{Checkpoint, CheckpointKind, CheckpointLocation},
@@ -19,7 +20,6 @@ use crate::verify::{
     proof_cache::VmCache,
     report::{CheckResult, UnknownReason},
     slicer::{ProofGoal, RelevantItem},
-    vm::VmExecutor,
 };
 
 use super::FunctionVerifier;

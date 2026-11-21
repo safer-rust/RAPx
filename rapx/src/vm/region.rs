@@ -4,39 +4,10 @@ use rustc_data_structures::{fx::FxHashSet, smallvec::SmallVec};
 use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_infer::infer::outlives::env::OutlivesEnvironment;
 use rustc_middle::ty::{
-    EarlyParamRegion, GenericParamDefKind, Region, RegionKind, Ty, TyCtxt, TyKind,
+    Region, RegionKind, Ty, TyCtxt, TyKind,
     outlives::{Component, push_outlives_components},
 };
 
-use crate::verify::contract::is_static_lifetime_ident;
-
-/// Resolve a lifetime name from a contract (e.g. `"a"`, `"static_lifetime"`) to a
-/// concrete `Region`. `name` is the raw ident, without the leading `'`.
-pub(crate) fn resolve_region_name<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    def_id: DefId,
-    name: &str,
-) -> Option<Region<'tcx>> {
-    if is_static_lifetime_ident(name) {
-        return Some(tcx.lifetimes.re_static);
-    }
-    let ticked = format!("'{name}");
-    let generics = tcx.generics_of(def_id);
-    for param in &generics.own_params {
-        if matches!(param.kind, GenericParamDefKind::Lifetime)
-            && param.name.as_str() == ticked.as_str()
-        {
-            return Some(Region::new_early_param(
-                tcx,
-                EarlyParamRegion {
-                    index: param.index,
-                    name: param.name,
-                },
-            ));
-        }
-    }
-    None
-}
 
 /// Whether `src` outlives `ret` (`src: ret`).
 ///

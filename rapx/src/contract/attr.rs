@@ -31,7 +31,7 @@ use super::Property;
 
 /// The raw syntactic form of a property call `tag(arg0, arg1, ...)` parsed
 /// from an attribute — the *unevaluated* stage, before semantic resolution
-/// into a [`Property`](crate::verify::contract::Property).
+/// into a [`Property`](crate::contract::Property).
 #[derive(Debug, Clone)]
 pub(crate) struct AttrProperty {
     /// The property name extracted from the call target.

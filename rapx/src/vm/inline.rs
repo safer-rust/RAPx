@@ -79,7 +79,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             explored += 1;
             let data = &body.basic_blocks[block];
             for statement in &data.statements {
-                crate::verify::vm::mir_rules::exec_contract_method_statement(&mut state, statement);
+                crate::vm::mir_rules::exec_contract_method_statement(&mut state, statement);
             }
             let terminator = data.terminator();
             match &terminator.kind {
@@ -96,7 +96,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 TerminatorKind::SwitchInt { targets, .. } => {
                     for target in targets.all_targets().iter().copied() {
                         let mut branch = state.clone();
-                        if crate::verify::vm::mir_rules::exec_terminator(
+                        if crate::vm::mir_rules::exec_terminator(
                             &mut branch,
                             terminator,
                             Some(target),
@@ -301,7 +301,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             .iter()
             .flatten()
             .filter(|local| {
-                crate::verify::api_classify::strips_to_maybe_uninit(before_inline.body().local_decls[**local].ty)
+                crate::api_classify::strips_to_maybe_uninit(before_inline.body().local_decls[**local].ty)
             })
             .filter_map(|local| before_inline.path_state.current_frame.local_alloc.get(local).copied())
             .filter(|id| before_inline.allocation_needs_write(*id))
@@ -483,14 +483,14 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             }
             let bb_data = &self.body().basic_blocks[block];
             for stmt in &bb_data.statements {
-                crate::verify::vm::mir_rules::exec_statement(self, stmt);
+                crate::vm::mir_rules::exec_statement(self, stmt);
             }
             let terminator = bb_data.terminator();
             match &terminator.kind {
                 TerminatorKind::Goto { target, .. } => queue.push(*target),
                 TerminatorKind::Return => returned = true,
                 TerminatorKind::Assert { target, .. } => {
-                    if crate::verify::vm::mir_rules::exec_terminator(self, terminator, None).continues() {
+                    if crate::vm::mir_rules::exec_terminator(self, terminator, None).continues() {
                         queue.push(*target);
                     }
                 }
@@ -511,7 +511,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     let mut feasible = Vec::new();
                     for target in targets.all_targets().iter().copied() {
                         let mut candidate = self.clone();
-                        if !crate::verify::vm::mir_rules::exec_terminator(
+                        if !crate::vm::mir_rules::exec_terminator(
                             &mut candidate,
                             terminator,
                             Some(target),
@@ -546,7 +546,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     queue.push(target);
                 }
                 TerminatorKind::Call { target, .. } => {
-                    let viable = crate::verify::vm::mir_rules::exec_terminator(self, terminator, None).continues();
+                    let viable = crate::vm::mir_rules::exec_terminator(self, terminator, None).continues();
                     if !self.path_state.inline.pending_states.is_empty() {
                         let Some(target) = target else {
                             return InlineStep::Complete(false);
@@ -568,12 +568,12 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     }
                 }
                 TerminatorKind::Drop { target, .. } => {
-                    if crate::verify::vm::mir_rules::exec_terminator(self, terminator, None).continues() {
+                    if crate::vm::mir_rules::exec_terminator(self, terminator, None).continues() {
                         queue.push(*target);
                     }
                 }
                 _ => {
-                    if !crate::verify::vm::mir_rules::exec_terminator(self, terminator, None).continues() {
+                    if !crate::vm::mir_rules::exec_terminator(self, terminator, None).continues() {
                         return InlineStep::Complete(false);
                     }
                 }
@@ -594,7 +594,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             }
             let bb_data = &state.body().basic_blocks[block];
             for stmt in &bb_data.statements {
-                crate::verify::vm::mir_rules::exec_statement(&mut state, stmt);
+                crate::vm::mir_rules::exec_statement(&mut state, stmt);
             }
             let terminator = bb_data.terminator();
             match &terminator.kind {
@@ -613,7 +613,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     }
                 }
                 TerminatorKind::Assert { target, .. } => {
-                    if crate::verify::vm::mir_rules::exec_terminator(&mut state, terminator, None).continues() {
+                    if crate::vm::mir_rules::exec_terminator(&mut state, terminator, None).continues() {
                         pending.push((state, *target, visited));
                     }
                 }
@@ -633,7 +633,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     }
                     for target in targets.all_targets().iter().copied() {
                         let mut candidate = state.clone();
-                        if !crate::verify::vm::mir_rules::exec_terminator(
+                        if !crate::vm::mir_rules::exec_terminator(
                             &mut candidate,
                             terminator,
                             Some(target),
@@ -667,7 +667,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 }
                 TerminatorKind::Call { target, .. } => {
                     let viable =
-                        crate::verify::vm::mir_rules::exec_terminator(&mut state, terminator, None).continues();
+                        crate::vm::mir_rules::exec_terminator(&mut state, terminator, None).continues();
                     if let Some(target) = target {
                         for alternative in std::mem::take(&mut state.path_state.inline.pending_states) {
                             pending.push((*alternative, *target, visited.clone()));
@@ -678,12 +678,12 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     }
                 }
                 TerminatorKind::Drop { target, .. } => {
-                    if crate::verify::vm::mir_rules::exec_terminator(&mut state, terminator, None).continues() {
+                    if crate::vm::mir_rules::exec_terminator(&mut state, terminator, None).continues() {
                         pending.push((state, *target, visited));
                     }
                 }
                 _ => {
-                    let _ = crate::verify::vm::mir_rules::exec_terminator(&mut state, terminator, None);
+                    let _ = crate::vm::mir_rules::exec_terminator(&mut state, terminator, None);
                 }
             }
         }
@@ -705,7 +705,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let mut stack = Vec::new();
         for target in targets.all_targets().iter().copied() {
             let mut state = self.clone();
-            if crate::verify::vm::mir_rules::exec_terminator(&mut state, switch, Some(target)).continues() {
+            if crate::vm::mir_rules::exec_terminator(&mut state, switch, Some(target)).continues() {
                 stack.push((state, target, FxHashSet::default()));
             }
         }
@@ -717,7 +717,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             explored += 1;
             let data = &state.body().basic_blocks[block];
             for statement in &data.statements {
-                crate::verify::vm::mir_rules::exec_statement(&mut state, statement);
+                crate::vm::mir_rules::exec_statement(&mut state, statement);
             }
             let terminator = data.terminator();
             match &terminator.kind {
@@ -739,7 +739,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 TerminatorKind::SwitchInt { targets, .. } => {
                     for target in targets.all_targets().iter().copied() {
                         let mut branch = state.clone();
-                        if crate::verify::vm::mir_rules::exec_terminator(
+                        if crate::vm::mir_rules::exec_terminator(
                             &mut branch,
                             terminator,
                             Some(target),
@@ -749,7 +749,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     }
                 }
                 TerminatorKind::Assert { target, .. } => {
-                    if crate::verify::vm::mir_rules::exec_terminator(&mut state, terminator, None).continues() {
+                    if crate::vm::mir_rules::exec_terminator(&mut state, terminator, None).continues() {
                         stack.push((state, *target, visited));
                     }
                 }
@@ -767,7 +767,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                         let incomplete = state.path_state.diagnostics.has_incomplete_inline_branch();
                         let truncated = state.path_state.inline.inline_truncated_terms.len();
                         let viable =
-                            crate::verify::vm::mir_rules::exec_terminator(&mut state, terminator, None).continues();
+                            crate::vm::mir_rules::exec_terminator(&mut state, terminator, None).continues();
                         if viable
                             && !state.path_state.diagnostics.is_unsupported()
                             && state.path_state.diagnostics.has_incomplete_inline_branch() == incomplete

@@ -4,12 +4,12 @@
 //! targets and contracts, extract SCC-aware paths, slice them backward, execute
 //! the relevant MIR symbolically, and discharge each property with Z3.
 
-mod api_classify;
+pub(crate) use crate::api_classify;
 mod auto_trait;
-mod call_summary;
+pub(crate) use crate::call_summary;
 mod checkpoint;
 pub(crate) mod config;
-mod contract;
+pub(crate) use crate::contract;
 mod display;
 mod function_verifier;
 mod loop_handling;
@@ -21,14 +21,12 @@ mod report;
 mod slicer;
 mod target;
 mod trait_ensurance;
-mod type_invariants;
+pub(crate) use crate::type_invariants;
 mod vm;
 
 pub(crate) use self::{
     call_summary::{effects::has_registered_effect, function_var::supports_result as supports_function_var_result},
-    slicer::RelevantItem,
     target::PrepareTargets,
-    vm::{VmExecutor, diagnostics::Diagnostics, state::{AllocId, MemoryEvent, MemoryEventKind, ValueFacts, VmValue}},
 };
 
 use std::{sync::Arc, time::Instant};

@@ -4,7 +4,7 @@ use super::contracts::{
     bind_call_property, index_access_locals, rebind_property_place, slice_offset_locals,
 };
 use super::state::{VmExecutor, VmValue};
-use crate::verify::contract::{ContractKind, PropertyKind};
+use crate::contract::{ContractKind, PropertyKind};
 
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(crate) fn assert_call_result_invariants(&mut self, destination: Local) {
@@ -18,7 +18,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let rustc_middle::ty::TyKind::Adt(adt_def, _) = ty.kind() else {
             return;
         };
-        let invariants = crate::verify::target::get_struct_invariants_from_annotation(
+        let invariants = crate::contract::annotation::get_struct_invariants_from_annotation(
             self.tcx,
             adt_def.did(),
             adt_def.did(),
@@ -43,7 +43,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         }
         let ty = result.ty;
         let invariants =
-            crate::verify::type_invariants::build_type_invariants_for_ty(self.tcx, callee, ty);
+            crate::type_invariants::build_type_invariants_for_ty(self.tcx, callee, ty);
         for mut invariant in invariants {
             rebind_property_place(&mut invariant, destination);
             self.assert_contract_fact(&invariant);
@@ -56,7 +56,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         args: &[Option<Local>],
         destination: Local,
     ) {
-        let ensures = crate::verify::contract::ensures::get_call_ensures(self.tcx, callee);
+        let ensures = crate::contract::ensures::get_call_ensures(self.tcx, callee);
         if ensures.is_empty() {
             return;
         }
@@ -69,9 +69,9 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             .iter()
             .any(|property| property.kind() == Some(PropertyKind::SliceOffset))
         {
-            let mut requires = crate::verify::target::get_trait_method_requires(self.tcx, callee);
+            let mut requires = crate::contract::annotation::get_trait_method_requires(self.tcx, callee);
             if requires.is_empty() {
-                requires = crate::verify::contract::json::query_json_contracts(self.tcx, callee);
+                requires = crate::contract::json::query_json_contracts(self.tcx, callee);
             }
             requires
                 .into_iter()

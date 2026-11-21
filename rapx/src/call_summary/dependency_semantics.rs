@@ -14,7 +14,7 @@ use crate::analysis::dataflow::{
 use crate::compat::Spanned;
 use crate::def_ids::{intrinsic_api, other_api};
 use crate::helpers::mir_utils as helpers;
-use crate::verify::api_classify;
+use crate::api_classify;
 
 use super::{CallEffect, effects, function_var};
 

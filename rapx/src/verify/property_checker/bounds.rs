@@ -11,7 +11,7 @@ use crate::verify::contract::{
     ContractExpr, ContractKind, BinOp, PlaceBase, Property, PropertyArg, RelOp,
 };
 use crate::verify::report::{CheckResult, UnknownReason};
-use crate::verify::vm::state::{OffsetKind, VmExecutor, VmValue};
+use crate::vm::state::{OffsetKind, VmExecutor, VmValue};
 use rustc_middle::{
     mir::{Local, Operand, Rvalue, StatementKind},
     ty::{Ty, TyKind},
@@ -394,17 +394,7 @@ impl PropertyChecker {
             let index_val = vm_state.value_of_operand(index_op);
             // The slice term is only an address, and a shorter view of the same
             // slice has the same address. So a fact must also match the length.
-            let slice_len = vm_state.slice_len_from_value(&slice_val);
-            if slice_len.is_some()
-                && vm_state.path_state.index_access_facts.iter().any(|(slice, index, slice_local, _)| {
-                    slice.to_string() == slice_val.z3_term.to_string()
-                        && index.to_string() == index_val.z3_term.to_string()
-                        && vm_state
-                            .local_value(*slice_local)
-                            .and_then(|fact_slice| vm_state.slice_len_from_value(fact_slice))
-                            == slice_len
-                })
-            {
+            if vm_state.has_matching_index_access_fact(&slice_val, &index_val) {
                 return CheckResult::ProvedByRule;
             }
         }

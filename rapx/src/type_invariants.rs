@@ -6,8 +6,8 @@
 //! database, keyed by a normalized type path (e.g. `core::num::NonZero`) or by
 //! the built-in `[T]` slice key.
 //!
-//! The results feed the `type_invariants` field of a [`FunctionTarget`]
-//! (see `super::target`), whose entry facts are synthesized by the VM's
+//! The results feed the `type_invariants` field of a verification target,
+//! whose entry facts are synthesized by the VM's
 //! `init_parameters` and re-proved at return by `FunctionVerifier::verify_type_invariants`.
 
 use crate::def_ids::type_ids;
@@ -25,7 +25,7 @@ pub(crate) fn build_type_invariants_from_params<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
 ) -> Vec<Property<'tcx>> {
-    let db = crate::verify::contract::json::get_std_type_invariants();
+    let db = crate::contract::json::get_std_type_invariants();
     if db.is_empty() {
         return Vec::new();
     }
@@ -68,7 +68,7 @@ pub(crate) fn build_type_invariants_for_ty<'tcx>(
     if ty.is_unit() || ty.is_primitive() {
         return Vec::new();
     }
-    let db = crate::verify::contract::json::get_std_type_invariants();
+    let db = crate::contract::json::get_std_type_invariants();
     let (type_path, elem_ty) = type_path_key(tcx, ty);
     let mut results = Vec::new();
     collect_type_invariants(tcx, def_id, db, &type_path, "return", elem_ty, &mut results);
@@ -76,7 +76,7 @@ pub(crate) fn build_type_invariants_for_ty<'tcx>(
 }
 
 pub(crate) fn has_json_type_invariants<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
-    let db = crate::verify::contract::json::get_std_type_invariants();
+    let db = crate::contract::json::get_std_type_invariants();
     let (key, _) = type_path_key(tcx, ty);
     db.contains_key(&key)
         || ["alloc::", "std::"]
@@ -88,7 +88,7 @@ pub(crate) fn has_json_type_invariants<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) ->
 fn collect_type_invariants<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
-    db: &std::collections::HashMap<String, Vec<crate::verify::contract::json::JsonProperty>>,
+    db: &std::collections::HashMap<String, Vec<crate::contract::json::JsonProperty>>,
     type_path: &str,
     param_name: &str,
     elem_ty: Option<Ty<'tcx>>,
@@ -125,7 +125,7 @@ fn collect_type_invariants<'tcx>(
     }
 }
 
-fn is_vec_capacity_bound(entry: &crate::verify::contract::json::JsonProperty) -> bool {
+fn is_vec_capacity_bound(entry: &crate::contract::json::JsonProperty) -> bool {
     entry.tag == "ValidNum"
         && entry.args == ["$self.len <= $self.buf.inner.cap.0"]
 }
@@ -137,7 +137,7 @@ fn is_vec_capacity_bound(entry: &crate::verify::contract::json::JsonProperty) ->
 fn instantiate_type_invariant<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
-    entry: &crate::verify::contract::json::JsonProperty,
+    entry: &crate::contract::json::JsonProperty,
     param_name: &str,
     elem_ty: Option<Ty<'tcx>>,
 ) -> Vec<Property<'tcx>> {
@@ -180,7 +180,7 @@ const SLICE_ELEM_PLACEHOLDER: &str = "u8";
 fn instantiate_entry<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
-    entry: &crate::verify::contract::json::JsonProperty,
+    entry: &crate::contract::json::JsonProperty,
     param_name: &str,
     elem_ty: Option<Ty<'tcx>>,
 ) -> Vec<Property<'tcx>> {

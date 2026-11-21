@@ -10,7 +10,7 @@ use crate::helpers::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{ContractExpr, Property, PropertyArg};
 use crate::verify::report::{CheckResult, UnknownReason};
-use crate::verify::vm::state::VmExecutor;
+use crate::vm::state::VmExecutor;
 use rustc_middle::ty::{Ty, TyKind};
 use z3::{
     SatResult, Solver,
@@ -291,7 +291,7 @@ impl PropertyChecker {
             Some(PropertyArg::Expr(ContractExpr::Const(c))) | Some(PropertyArg::ForEach(ContractExpr::Const(c))) => {
                 let ty = resolved_ty;
                 if self.is_generic_ty(ty) {
-                    let Some(size) = vm_state.path_state.constraints.term_caches.sizes.get(&ty) else {
+                    let Some(size) = vm_state.cached_size(ty) else {
                         return CheckResult::Unknown(UnknownReason::Unimplemented);
                     };
                     let Ok(expected) = u64::try_from(*c) else {

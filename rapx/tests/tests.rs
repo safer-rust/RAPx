@@ -462,7 +462,7 @@ fn all_fixture_dirs_tested() {
 fn std_contracts_valid() {
     let json = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src/verify/contract/assets/std-api-requires.json"),
+            .join("src/contract/assets/std-api-requires.json"),
     )
     .expect("failed to read contracts JSON");
     let db: std::collections::HashMap<String, Vec<serde_json::Value>> =

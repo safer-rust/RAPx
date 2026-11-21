@@ -3,8 +3,11 @@
 #[macro_use]
 pub mod utils;
 pub mod analysis;
+pub(crate) mod api_classify;
+pub(crate) mod call_summary;
 pub(crate) mod def_ids;
 pub mod check;
+pub(crate) mod contract;
 pub mod cli;
 pub(crate) mod compat;
 pub(crate) mod graphs;
@@ -12,7 +15,9 @@ pub(crate) mod limit;
 pub mod help;
 pub(crate) mod helpers;
 pub(crate) mod preprocess;
+pub(crate) mod type_invariants;
 pub(crate) mod verify;
+pub(crate) mod vm;
 
 extern crate rustc_abi;
 extern crate rustc_ast;

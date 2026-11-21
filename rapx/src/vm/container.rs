@@ -9,7 +9,7 @@ use z3::ast::{Ast, Int};
 use crate::def_ids::type_ids;
 use crate::compat::GenericArgsRef;
 use crate::helpers::mir_utils;
-use crate::verify::contract::{ContractExpr, ContractProjection, PropertyKind, place::projected_field_ty};
+use crate::contract::{ContractExpr, ContractProjection, PropertyKind, place::projected_field_ty};
 
 use super::state::{AllocId, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue};
 
@@ -335,7 +335,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let Some(path) = self.container_ptr_field(ty) else {
             return false;
         };
-        let invariants = crate::verify::target::get_struct_invariants_from_annotation(
+        let invariants = crate::contract::annotation::get_struct_invariants_from_annotation(
             self.tcx, adt.did(), adt.did(),
         );
         let annotated = invariants.iter().any(|property| {
@@ -365,7 +365,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             _ => return false,
         };
         let key = crate::helpers::name::public_def_path(self.tcx, adt.did());
-        crate::verify::contract::json::get_std_type_invariants()
+        crate::contract::json::get_std_type_invariants()
             .get(&key)
             .is_some_and(|entries| entries.iter().any(|entry| {
                 entry.tag == tag

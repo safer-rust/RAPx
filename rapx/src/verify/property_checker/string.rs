@@ -3,7 +3,7 @@
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::Property;
 use crate::verify::report::{CheckResult, UnknownReason};
-use crate::verify::vm::state::VmExecutor;
+use crate::vm::state::VmExecutor;
 use z3::{SatResult, Solver};
 
 use super::PropertyChecker;
@@ -15,7 +15,7 @@ impl PropertyChecker {
         &self,
         vm_state: &VmExecutor<'z3, 'tcx>,
         solver: &Solver<'z3>,
-        alloc_id: crate::verify::vm::state::AllocId,
+        alloc_id: crate::vm::state::AllocId,
     ) -> CheckResult {
         if vm_state.alloc(alloc_id).facts.dead {
             return CheckResult::Failed;

@@ -8,7 +8,7 @@
 use crate::def_ids::type_ids;
 use crate::helpers::mir_utils;
 use crate::compat::GenericArgsRef;
-use super::alias_hazard::{self, AliasProducer, HazardKind};
+use crate::analysis::alias::hazard::{self as alias_hazard, AliasProducer, HazardKind};
 use crate::analysis::alias::FieldOrigin;
 use crate::analysis::dataflow::pointer_flow;
 use crate::verify::checkpoint::Checkpoint;
@@ -16,7 +16,7 @@ use crate::helpers::def_use::PlaceKey;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{Local, Operand, ProjectionElem, Rvalue, StatementKind};
 
-use super::state::{VmExecutor, VmValue};
+use crate::vm::state::{VmExecutor, VmValue};
 
 /// Information about a value's ultimate origin.
 #[derive(Clone, Debug)]
@@ -149,7 +149,7 @@ fn origin_alias_hazard_accepted<'z3, 'tcx>(
 ) -> bool {
     origin_val
         .provenance_alloc_id()
-        .map(|alloc_id| vm_state.path_state.alias_hazard_allocs.contains(&vm_state.root_alloc(alloc_id)))
+        .map(|alloc_id| vm_state.has_alias_hazard(alloc_id))
         .unwrap_or(false)
 }
 
@@ -225,7 +225,7 @@ fn escaped_parameter_origin<'z3, 'tcx>(
         return None;
     }
     let origin = mir_utils::operand_mir_place(origin_arg)?;
-    let (root, fields) = crate::verify::vm::alias_tree::AliasTree::build(
+    let (root, fields) = crate::analysis::alias::tree::AliasTree::build(
         vm_state.tcx,
         checkpoint.caller,
     )
@@ -441,7 +441,7 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(
             let arg_place =
                 alias_hazard::operand_mir_place(origin_arg).map(|p| PlaceKey::from_mir_place(p));
             if let Some(mir_place) = arg_place {
-                let tree = crate::verify::vm::alias_tree::AliasTree::build(tcx, caller);
+                let tree = crate::analysis::alias::tree::AliasTree::build(tcx, caller);
                 let local = mir_place
                     .local()
                     .unwrap_or(rustc_middle::mir::Local::from_usize(1));
@@ -744,12 +744,12 @@ fn escape_region_violation(
     // MIR `local_decls` erases lifetime regions (`ReErased`), so take the
     // precise (late-bound-liberated) regions from the function signature.
     let src_region =
-        super::region::fn_arg_ty(tcx, caller, local - 1).and_then(|ty| match ty.kind() {
+        crate::vm::region::fn_arg_ty(tcx, caller, local - 1).and_then(|ty| match ty.kind() {
             rustc_middle::ty::TyKind::Ref(region, _, _) => Some(*region),
             _ => None,
         })?;
-    let ret_region = super::region::fn_return_region(tcx, caller)?;
-    if !super::region::region_outlives(tcx, caller, src_region, ret_region) {
+    let ret_region = crate::vm::region::fn_return_region(tcx, caller)?;
+    if !crate::vm::region::region_outlives(tcx, caller, src_region, ret_region) {
         return Some(format!(
             "returned region `{ret_region:?}` outlives the source reference's region `{src_region:?}`"
         ));
@@ -902,7 +902,7 @@ fn resolve_origin_place_mir(
     let Some(local) = place.local() else {
         return place.clone();
     };
-    let tree = crate::verify::vm::alias_tree::AliasTree::build(tcx, caller);
+    let tree = crate::analysis::alias::tree::AliasTree::build(tcx, caller);
     let (root_local, mut root_fields) = tree.resolve_local_to_root(local);
 
     if root_local == local.as_usize() && root_fields.is_empty() && !place.fields.is_empty() {
@@ -983,9 +983,7 @@ fn check_read_memory_alias<'z3, 'tcx>(
     // origin's allocation (via `Alias(self, ret)` in its contract), the read is
     // the accepted hazard rather than a violation.
     if let Some(alloc_id) = origin_val.provenance_alloc_id()
-        && vm_state.path_state
-            .alias_hazard_allocs
-            .contains(&vm_state.root_alloc(alloc_id))
+        && vm_state.has_alias_hazard(alloc_id)
     {
         return VmAliasResult::Proved;
     }
@@ -1019,9 +1017,7 @@ fn check_copy_memory_alias<'z3, 'tcx>(
     };
     let origin_val = vm_state.value_of_operand(origin_arg);
     if let Some(alloc_id) = origin_val.provenance_alloc_id()
-        && vm_state.path_state
-            .alias_hazard_allocs
-            .contains(&vm_state.root_alloc(alloc_id))
+        && vm_state.has_alias_hazard(alloc_id)
     {
         return VmAliasResult::Proved;
     }

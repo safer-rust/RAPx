@@ -1,3 +1,5 @@
+pub(crate) mod hazard;
+pub(crate) mod tree;
 pub mod default;
 pub mod mfp;
 pub mod observer;

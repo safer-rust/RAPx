@@ -5,8 +5,8 @@ use rustc_middle::{
 };
 use z3::ast::Int;
 
-use crate::{compat::FxHashMap, def_ids::{diagnostic_api, intrinsic_api}, helpers::mir_utils, verify::api_classify};
-use crate::verify::call_summary::pointer_semantics;
+use crate::{compat::FxHashMap, def_ids::{diagnostic_api, intrinsic_api}, helpers::mir_utils, api_classify};
+use crate::call_summary::pointer_semantics;
 
 use super::state::{AllocId, VmExecutor, VmValue};
 

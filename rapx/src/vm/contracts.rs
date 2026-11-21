@@ -1,6 +1,6 @@
 use rustc_middle::mir::Local;
 
-use crate::verify::contract::{ContractExpr, PlaceBase, Property, PropertyArg, PropertyKind};
+use crate::contract::{ContractExpr, PlaceBase, Property, PropertyArg, PropertyKind};
 
 pub(crate) fn index_access_locals(property: &Property<'_>) -> Option<(Local, Local)> {
     let Property::Atom(atom) = property else { return None };

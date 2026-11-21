@@ -5,7 +5,7 @@ use rustc_middle::mir::{Local, TerminatorKind, UnwindAction};
 use rustc_middle::ty::TyKind;
 use z3::ast::Int;
 
-use crate::{analysis::path::CallArg, compat::FxHashSet, verify::slicer::RelevantItem};
+use crate::{analysis::path::CallArg, compat::FxHashSet, vm::RelevantItem};
 
 use super::diagnostics::{ActiveMirItem, ActiveMirLocation};
 use super::state::{ValueSource, VmExecutor, VmValue};
@@ -69,7 +69,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     item: ActiveMirItem::Statement(*stmt_index),
                     span: statement.source_info.span,
                 });
-                crate::verify::vm::mir_rules::exec_statement(self, statement);
+                crate::vm::mir_rules::exec_statement(self, statement);
                 true
             }
             RelevantItem::Terminator {
@@ -87,7 +87,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     span: terminator.source_info.span,
                 });
                 let viable =
-                    crate::verify::vm::mir_rules::exec_terminator(self, terminator, *switch_succ).continues();
+                    crate::vm::mir_rules::exec_terminator(self, terminator, *switch_succ).continues();
                 viable || (retain_cleanup
                     && matches!(&terminator.kind, TerminatorKind::Call { unwind: UnwindAction::Cleanup(target), .. } if Some(*target) == *switch_succ)
                 )
@@ -330,7 +330,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             }
             self.set_local(Local::from_usize(dest), v);
             if let Some(owner) =
-                crate::verify::call_summary::shared_owner::shared_raw_owner_type(self.tcx, callee)
+                crate::call_summary::shared_owner::shared_raw_owner_type(self.tcx, callee)
             {
                 self.begin_ownership_transfer(Local::from_usize(dest), owner);
             }
@@ -362,9 +362,9 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
 
     /// A `ManuallyDrop<Owner>` retained at return keeps its strong share alive.
     pub(super) fn recover_leaked_owner_shares(&mut self, callee: DefId) {
-        use crate::verify::contract::{PlaceBase, PropertyKind};
+        use crate::contract::{PlaceBase, PropertyKind};
 
-        let raw_args: Vec<_> = crate::verify::contract::json::query_json_contracts(self.tcx, callee)
+        let raw_args: Vec<_> = crate::contract::json::query_json_contracts(self.tcx, callee)
             .iter()
             .filter(|property| property.kind() == Some(PropertyKind::RefCountShare))
             .filter_map(|property| match property.target_place()?.base {

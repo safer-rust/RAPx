@@ -23,6 +23,7 @@
 //! `PropertyArg::Expr` and `PropertyArg::ForEach` (`ContractPlace`, `ContractExpr`,
 //! `ContractProjection`).
 
+pub(crate) mod annotation;
 pub(crate) mod attr;
 pub(crate) mod builder;
 pub(crate) mod compound;

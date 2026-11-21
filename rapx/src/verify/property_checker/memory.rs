@@ -10,7 +10,7 @@ use crate::helpers::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
 use crate::verify::contract::{ContractExpr, Property, PropertyArg, PropertyKind, is_static_lifetime_ident};
 use crate::verify::report::{CheckResult, UnknownReason};
-use crate::verify::vm::state::{AllocId, OffsetKind, VmExecutor, VmValue};
+use crate::vm::state::{AllocId, OffsetKind, VmExecutor, VmValue};
 use rustc_hash::FxHashSet;
 use rustc_middle::{mir::{Local, Operand, Rvalue, StatementKind}, ty::TyKind};
 use z3::{
@@ -163,8 +163,8 @@ impl PropertyChecker {
             // even when the full generic layout is symbolic.
             if !alloc.is_external()
                 && let Some(required) = align.simplify().as_u64()
-                && let Some(local) = vm_state.path_state.current_frame.local_alloc.iter().find_map(|(local, id)| {
-                    (*id == prov.alloc_id).then_some(*local)
+                && let Some(local) = vm_state.local_allocations().find_map(|(local, id)| {
+                    (id == prov.alloc_id).then_some(local)
                 })
             {
                 let mut local_ty = vm_state.body().local_decls[local].ty;
@@ -368,11 +368,11 @@ impl PropertyChecker {
             let root = vm_state.root_alloc(id);
             vm_state.alloc(root).facts.drop_may_free
                 && !vm_state.has_available_transfer(root)
-                && !vm_state.path_state.current_frame.local_alloc.iter().any(|(local, header)| {
-                    let ty = vm_state.body().local_decls[*local].ty;
-                    !vm_state.alloc(*header).facts.dead
+                && !vm_state.local_allocations().any(|(local, header)| {
+                    let ty = vm_state.body().local_decls[local].ty;
+                    !vm_state.alloc(header).facts.dead
                         && vm_state.owner_ptr_has_invariant(ty, PropertyKind::Allocated)
-                        && vm_state.container_data_alloc(*header, ty)
+                        && vm_state.container_data_alloc(header, ty)
                             .is_some_and(|data| vm_state.root_alloc(data) == root)
                 })
         }) {
@@ -849,8 +849,8 @@ impl PropertyChecker {
         local: Local,
     ) -> Vec<AllocId> {
         let mut result = Vec::new();
-        if let Some(id) = vm_state.path_state.current_frame.local_alloc.get(&local) {
-            result.push(*id);
+        if let Some(id) = vm_state.local_alloc_id(local) {
+            result.push(id);
         }
         let mut worklist = vec![local];
         let mut visited = FxHashSet::default();
@@ -881,8 +881,8 @@ impl PropertyChecker {
                         if let Some(src) = src_local
                             && visited.insert(src)
                         {
-                            if let Some(id) = vm_state.path_state.current_frame.local_alloc.get(&src) {
-                                result.push(*id);
+                            if let Some(id) = vm_state.local_alloc_id(src) {
+                                result.push(id);
                             }
                             worklist.push(src);
                         }
@@ -936,7 +936,7 @@ impl PropertyChecker {
             PropertyArg::Ident(name) if is_static_lifetime_ident(name) => {
                 Some(vm_state.tcx.lifetimes.re_static)
             }
-            PropertyArg::Ident(_) => crate::verify::vm::region::fn_return_region(
+            PropertyArg::Ident(_) => crate::vm::region::fn_return_region(
                 vm_state.tcx,
                 checkpoint.caller,
             ),
@@ -952,9 +952,9 @@ impl PropertyChecker {
                 && !vm_state.alloc(root_id).facts.dead
             {
                 if check_region == Some(vm_state.tcx.lifetimes.re_static) {
-                    let owned_here = vm_state.path_state.current_frame.local_alloc.iter().any(|(local, &id)| {
+                    let owned_here = vm_state.local_allocations().any(|(local, id)| {
                         !vm_state.alloc(id).facts.dead
-                            && vm_state.container_data_alloc(id, vm_state.body().local_decls[*local].ty)
+                            && vm_state.container_data_alloc(id, vm_state.body().local_decls[local].ty)
                                 == Some(root_id)
                     });
                     return if owned_here {
@@ -980,19 +980,19 @@ impl PropertyChecker {
             if !vm_state.alloc(root_id).facts.dead
                 && let Some(src_region) = &vm_state.alloc(root_id).facts.liveness {
                     if let Some(r) = check_region {
-                        let outlives = crate::verify::vm::region::region_outlives(
+                        let outlives = crate::vm::region::region_outlives(
                             vm_state.tcx,
                             checkpoint.caller,
                             *src_region,
                             r,
                         );
-                        let implied = crate::verify::vm::region::fn_arg_ty(
+                        let implied = crate::vm::region::fn_arg_ty(
                             vm_state.tcx,
                             checkpoint.caller,
                             0,
                         )
                         .is_some_and(|self_ty| {
-                            crate::verify::vm::region::region_outlives_implied(
+                            crate::vm::region::region_outlives_implied(
                                 vm_state.tcx,
                                 *src_region,
                                 self_ty,

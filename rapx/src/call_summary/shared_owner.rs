@@ -30,13 +30,13 @@ pub(crate) fn has_ref_count_share_reconstruction(tcx: TyCtxt<'_>, owner: DefId) 
     tcx.inherent_impls(owner).iter().any(|impl_id| {
         tcx.associated_item_def_ids(*impl_id).iter().any(|item| {
             matches!(tcx.def_kind(*item), DefKind::Fn | DefKind::AssocFn)
-                && crate::verify::contract::json::query_json_contracts(tcx, *item)
+                && crate::contract::json::query_json_contracts(tcx, *item)
                     .iter()
                     .any(|property| {
                         property.kind()
-                            == Some(crate::verify::contract::PropertyKind::RefCountShare)
+                            == Some(crate::contract::PropertyKind::RefCountShare)
                     })
-                && crate::verify::vm::alias_hazard::reconstructed_owner(tcx, *item)
+                && crate::analysis::alias::hazard::reconstructed_owner(tcx, *item)
                     .is_some_and(|(_, reconstructed)| reconstructed == owner)
         })
     })

@@ -4,9 +4,9 @@ use crate::def_ids::type_ids;
 use crate::analysis::dataflow::{call_read, call_write, pointer_copy};
 use crate::analysis::dataflow::pointer_flow::{self, trace_source_arg};
 use crate::helpers::mir_utils;
-use crate::verify::call_summary::VerifierCallSemantics;
-use crate::verify::call_summary::pointer_semantics;
-use crate::verify::contract::PropertyKind;
+use crate::call_summary::VerifierCallSemantics;
+use crate::call_summary::pointer_semantics;
+use crate::contract::PropertyKind;
 use std::collections::{HashMap, HashSet};
 
 use rustc_hir::{Safety, def::DefKind, def_id::DefId};
@@ -26,20 +26,20 @@ use crate::{
 };
 
 // Re-export the mir_utils helpers still consumed by `vm/alias.rs`.
-pub(super) use crate::helpers::mir_utils::{operand_mir_place, operand_place};
+pub(crate) use crate::helpers::mir_utils::{operand_mir_place, operand_place};
 // Remaining mir_utils helpers used only within this module.
 use crate::helpers::mir_utils::{blocks_reachable_after_call, rvalue_any_place_matching};
 
 // ── Shared types ─────────────────────────────────────────────────
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum HazardKind {
+pub(crate) enum HazardKind {
     SharedView,
     UniqueView,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum AliasProducer {
+pub(crate) enum AliasProducer {
     View(HazardKind, usize),
     OwnershipTransfer(usize),
     ReadMemory(usize),
@@ -61,7 +61,7 @@ struct LocalCallsite<'tcx> {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum HazardCheck {
+pub(crate) enum HazardCheck {
     Safe(String),
     Violation(String),
     Inconclusive,
@@ -69,7 +69,7 @@ pub(super) enum HazardCheck {
 
 // ── API classification ───────────────────────────────────────────
 
-pub(super) fn alias_producer(tcx: TyCtxt<'_>, callee: DefId) -> Option<AliasProducer> {
+pub(crate) fn alias_producer(tcx: TyCtxt<'_>, callee: DefId) -> Option<AliasProducer> {
     if let Some(source_arg) = ownership_transfer_source_arg(tcx, callee) {
         return Some(AliasProducer::OwnershipTransfer(source_arg));
     }
@@ -96,13 +96,13 @@ fn share_transfer_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Option<usize> {
     {
         return None;
     }
-    let requires = crate::verify::contract::json::query_json_contracts(tcx, callee);
+    let requires = crate::contract::json::query_json_contracts(tcx, callee);
     requires.iter().find_map(|property| {
         (property.kind() == Some(PropertyKind::RefCountShare))
             .then(|| property.target_place())
             .flatten()
             .and_then(|place| match place.base {
-                crate::verify::contract::PlaceBase::Arg(index) => Some(index),
+                crate::contract::PlaceBase::Arg(index) => Some(index),
                 _ => None,
             })
     })
@@ -152,7 +152,7 @@ fn raw_pointer_view_from_mir(tcx: TyCtxt<'_>, callee: DefId) -> Option<(HazardKi
     Some((kind, source_arg))
 }
 
-pub(super) fn pointer_result_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Option<usize> {
+pub(crate) fn pointer_result_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Option<usize> {
     if !tcx.is_mir_available(callee) {
         return None;
     }
@@ -171,13 +171,13 @@ fn ownership_transfer_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Option<usize
         return None;
     };
     let invariants =
-        crate::verify::type_invariants::build_type_invariants_for_ty(tcx, callee, output);
+        crate::type_invariants::build_type_invariants_for_ty(tcx, callee, output);
     let mut paths: Vec<_> = invariants
         .iter()
         .filter(|invariant| invariant.kind() == Some(PropertyKind::Owning))
         .filter_map(|invariant| invariant.target_place()?.plain_field_path())
         .collect();
-    paths.extend(crate::verify::target::owning_field_paths_from_annotation(tcx, output));
+    paths.extend(crate::contract::annotation::owning_field_paths_from_annotation(tcx, output));
     let opaque_source = if tcx.is_mir_available(callee) {
         None
     } else {
@@ -210,7 +210,7 @@ fn ownership_transfer_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Option<usize
 }
 
 fn opaque_ownership_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Option<usize> {
-    let contracts = crate::verify::contract::json::get_std_contracts_from_json(tcx, callee)?;
+    let contracts = crate::contract::json::get_std_contracts_from_json(tcx, callee)?;
     let has_transfer_hazard = contracts.iter().any(|alias| {
         alias.tag == "Alias"
             && alias.kind.as_deref() == Some("hazard")
@@ -422,7 +422,7 @@ fn operand_local(operand: &Operand<'_>) -> Option<Local> {
 
 // ── Origin-based parameter safety ────────────────────────────────
 
-pub(super) fn alias_proved_for_param_local(
+pub(crate) fn alias_proved_for_param_local(
     tcx: TyCtxt<'_>,
     caller: DefId,
     local_index: usize,
@@ -458,7 +458,7 @@ pub(super) fn alias_proved_for_param_local(
     }
 }
 
-pub(super) fn is_origin_a_reference(tcx: TyCtxt<'_>, caller: DefId, origin: &PlaceKey) -> bool {
+pub(crate) fn is_origin_a_reference(tcx: TyCtxt<'_>, caller: DefId, origin: &PlaceKey) -> bool {
     let body = tcx.optimized_mir(caller);
     let PlaceBaseKey::Local(mut local) = origin.base else {
         return false;
@@ -466,7 +466,7 @@ pub(super) fn is_origin_a_reference(tcx: TyCtxt<'_>, caller: DefId, origin: &Pla
     if let ty::Ref(..) = body.local_decls[Local::from_usize(local)].ty.kind() {
         return true;
     }
-    let (resolved, _) = crate::verify::vm::alias_tree::AliasTree::build(tcx, caller)
+    let (resolved, _) = crate::analysis::alias::tree::AliasTree::build(tcx, caller)
         .resolve_local_to_root(Local::from_usize(local));
     if resolved >= 1 && resolved <= body.arg_count {
         local = resolved;
@@ -482,7 +482,7 @@ pub(super) fn is_origin_a_reference(tcx: TyCtxt<'_>, caller: DefId, origin: &Pla
 ///
 /// Returns a 1-based MIR local index (usable directly with `Local::from_usize`),
 /// or `None` when the origin does not trace back to a parameter.
-pub(super) fn resolve_param_origin(
+pub(crate) fn resolve_param_origin(
     tcx: TyCtxt<'_>,
     caller: DefId,
     origin: &PlaceKey,
@@ -492,7 +492,7 @@ pub(super) fn resolve_param_origin(
         if local >= 1 && local <= body.arg_count {
             return Some(local);
         }
-        let (resolved, _fields) = crate::verify::vm::alias_tree::AliasTree::build(tcx, caller)
+        let (resolved, _fields) = crate::analysis::alias::tree::AliasTree::build(tcx, caller)
             .resolve_local_to_root(Local::from_usize(local));
         if resolved >= 1 && resolved <= body.arg_count {
             return Some(resolved);
@@ -524,7 +524,7 @@ fn param_index_of_origin(tcx: TyCtxt<'_>, caller: DefId, origin: &PlaceKey) -> O
 
 // ── Escape analysis ──────────────────────────────────────────────
 
-pub(super) fn destination_flows_to_return(
+pub(crate) fn destination_flows_to_return(
     tcx: TyCtxt<'_>,
     caller: DefId,
     destination: Option<Local>,
@@ -565,7 +565,7 @@ pub(super) fn destination_flows_to_return(
     false
 }
 
-pub(super) fn self_field_origin(
+pub(crate) fn self_field_origin(
     tcx: TyCtxt<'_>,
     caller: DefId,
     place: &PlaceKey,
@@ -576,7 +576,7 @@ pub(super) fn self_field_origin(
     resolve_self_field_origin(tcx, caller, local, &place.fields)
 }
 
-pub(super) fn any_struct_field_origin(
+pub(crate) fn any_struct_field_origin(
     tcx: TyCtxt<'_>,
     caller: DefId,
     place: &PlaceKey,
@@ -605,7 +605,7 @@ fn self_borrow_mutability(
     }
 }
 
-pub(super) fn escaped_self_field_violation(
+pub(crate) fn escaped_self_field_violation(
     tcx: TyCtxt<'_>,
     current: DefId,
     origin: &FieldOrigin,
@@ -807,7 +807,7 @@ fn method_writes_self_field(
     field_index: usize,
 ) -> bool {
     let body = tcx.optimized_mir(method);
-    let tree = crate::verify::vm::alias_tree::AliasTree::build(tcx, method);
+    let tree = crate::analysis::alias::tree::AliasTree::build(tcx, method);
     let origin = self_field_key(self_local, field_index);
 
     for block in body.basic_blocks.iter() {
@@ -938,7 +938,7 @@ fn method_exposes_self_field(
         return false;
     }
 
-    let tree = crate::verify::vm::alias_tree::AliasTree::build(tcx, method);
+    let tree = crate::analysis::alias::tree::AliasTree::build(tcx, method);
     let origin = self_field_key(self_local, field_index);
 
     for block in body.basic_blocks.iter() {
@@ -959,7 +959,7 @@ fn method_exposes_self_field(
 fn rvalue_mentions_origin(
     rvalue: &Rvalue<'_>,
     origin: &PlaceKey,
-    tree: &crate::verify::vm::alias_tree::AliasTree,
+    tree: &crate::analysis::alias::tree::AliasTree,
 ) -> bool {
     rvalue_any_place_matching(rvalue, &mut |place| {
         let key = PlaceKey::from_mir_place(place);
@@ -1006,7 +1006,7 @@ fn raw_access_conflicts(kind: HazardKind, access: RawAccessKind) -> bool {
     }
 }
 
-pub(super) fn local_hazard_violation(
+pub(crate) fn local_hazard_violation(
     tcx: TyCtxt<'_>,
     caller: DefId,
     call_block: BasicBlock,
@@ -1039,7 +1039,7 @@ fn local_hazard_violation_with(
     view_len_place: Option<PlaceKey>,
 ) -> Option<String> {
     let body = tcx.optimized_mir(caller);
-    let tree = crate::verify::vm::alias_tree::AliasTree::build(tcx, caller);
+    let tree = crate::analysis::alias::tree::AliasTree::build(tcx, caller);
     let mut origins = origins.to_vec();
     expand_origin_aliases(&tree, &mut origins);
     let mut hazard_locals: HashSet<Local> = destination.into_iter().collect();
@@ -1256,7 +1256,7 @@ pub(crate) fn live_locals_at(
 }
 
 fn expand_origin_aliases(
-    tree: &crate::verify::vm::alias_tree::AliasTree,
+    tree: &crate::analysis::alias::tree::AliasTree,
     origins: &mut Vec<PlaceKey>,
 ) {
     let mut changed = true;
@@ -1399,7 +1399,7 @@ fn terminator_uses_any_local(terminator: &TerminatorKind<'_>, locals: &HashSet<L
 /// Resolve a MIR place through the alias tree: a field-projected place resolves
 /// to itself; a whole-local place resolves to its ultimate origin.
 fn resolve_mir_place_tree(
-    tree: &crate::verify::vm::alias_tree::AliasTree,
+    tree: &crate::analysis::alias::tree::AliasTree,
     place: &Place<'_>,
 ) -> PlaceKey {
     let fields = PlaceKey::from_mir_place(place).fields;
@@ -1410,7 +1410,7 @@ fn resolve_mir_place_tree(
 /// Resolve a place's *local* through the alias tree (ignoring the place's own
 /// field projections), falling back to the MIR place itself when unmapped.
 fn resolve_place_key_tree(
-    tree: &crate::verify::vm::alias_tree::AliasTree,
+    tree: &crate::analysis::alias::tree::AliasTree,
     place: &Place<'_>,
 ) -> PlaceKey {
     if tree.tag_of(place.local).is_some() {
@@ -1424,7 +1424,7 @@ fn resolve_place_key_tree(
 fn place_is_raw_access_to_any_origin(
     place: &Place<'_>,
     origins: &[PlaceKey],
-    tree: &crate::verify::vm::alias_tree::AliasTree,
+    tree: &crate::analysis::alias::tree::AliasTree,
     local_decls: &LocalDecls<'_>,
 ) -> bool {
     origins
@@ -1435,7 +1435,7 @@ fn place_is_raw_access_to_any_origin(
 fn place_is_raw_access_to_origin(
     place: &Place<'_>,
     origin: &PlaceKey,
-    tree: &crate::verify::vm::alias_tree::AliasTree,
+    tree: &crate::analysis::alias::tree::AliasTree,
     local_decls: &LocalDecls<'_>,
 ) -> bool {
     let local = place.local;
@@ -1458,7 +1458,7 @@ fn rvalue_reads_like_view(
     tcx: TyCtxt<'_>,
     caller: DefId,
     origins: &[PlaceKey],
-    tree: &crate::verify::vm::alias_tree::AliasTree,
+    tree: &crate::analysis::alias::tree::AliasTree,
 ) -> bool {
     let Some(place) = mir_utils::rvalue_source_place(rvalue) else {
         return false;
@@ -1480,7 +1480,7 @@ fn rvalue_reads_like_view(
 fn rvalue_reads_any_origin(
     rvalue: &Rvalue<'_>,
     origins: &[PlaceKey],
-    tree: &crate::verify::vm::alias_tree::AliasTree,
+    tree: &crate::analysis::alias::tree::AliasTree,
     local_decls: &LocalDecls<'_>,
 ) -> bool {
     rvalue_any_place_matching(rvalue, &mut |place| {
@@ -1492,13 +1492,13 @@ fn terminator_writes_origin<'tcx>(
     tcx: TyCtxt<'tcx>,
     terminator: &TerminatorKind<'tcx>,
     origin: &PlaceKey,
-    tree: &crate::verify::vm::alias_tree::AliasTree,
+    tree: &crate::analysis::alias::tree::AliasTree,
 ) -> bool {
     let TerminatorKind::Call { func, args, .. } = terminator else {
         return false;
     };
     let callee = mir_utils::dep_callee_def_id(func);
-    if !crate::verify::api_classify::is_ptr_write(tcx, callee) {
+    if !crate::api_classify::is_ptr_write(tcx, callee) {
         return false;
     }
     let Some(arg0) = args.first() else {
@@ -1513,7 +1513,7 @@ fn terminator_writes_origin<'tcx>(
 fn terminator_uses_origin<'tcx>(
     terminator: &TerminatorKind<'tcx>,
     origin: &PlaceKey,
-    tree: &crate::verify::vm::alias_tree::AliasTree,
+    tree: &crate::analysis::alias::tree::AliasTree,
 ) -> bool {
     let TerminatorKind::Call { args, .. } = terminator else {
         return false;
@@ -1543,7 +1543,7 @@ fn terminator_invalidates_vec_owner<'tcx>(
     caller: DefId,
     terminator: &TerminatorKind<'tcx>,
     owners: &[PlaceKey],
-    tree: &crate::verify::vm::alias_tree::AliasTree,
+    tree: &crate::analysis::alias::tree::AliasTree,
 ) -> bool {
     let TerminatorKind::Call { func, args, .. } = terminator else {
         return false;
@@ -1577,7 +1577,7 @@ fn find_as_ptr_receivers(
     tcx: TyCtxt<'_>,
     caller: DefId,
     origins: &[PlaceKey],
-    tree: &crate::verify::vm::alias_tree::AliasTree,
+    tree: &crate::analysis::alias::tree::AliasTree,
     check_alias_dest: bool,
 ) -> Vec<PlaceKey> {
     let body = tcx.optimized_mir(caller);
@@ -1637,7 +1637,7 @@ fn is_ptr_add_offset_eq(
     view_len: &PlaceKey,
 ) -> bool {
     let body = tcx.optimized_mir(caller);
-    let tree = crate::verify::vm::alias_tree::AliasTree::build(tcx, caller);
+    let tree = crate::analysis::alias::tree::AliasTree::build(tcx, caller);
     let view_len_root = view_len.local().map(|l| tree.resolve_local_to_root(l));
     for (_bb, data) in body.basic_blocks.iter_enumerated() {
         if let TerminatorKind::Call {
@@ -1689,7 +1689,7 @@ fn is_ptr_from_ptr_add(tcx: TyCtxt<'_>, caller: DefId, ptr_place: &PlaceKey) -> 
 
 // ── Ownership transfer violation scanning ────────────────────────
 
-pub(super) fn ownership_transfer_violation(
+pub(crate) fn ownership_transfer_violation(
     tcx: TyCtxt<'_>,
     caller: DefId,
     call_block: BasicBlock,
@@ -2041,7 +2041,7 @@ fn pre_existing_view_on_origin(
     origin_holders: &[PlaceKey],
 ) -> Option<String> {
     let body = tcx.optimized_mir(caller);
-    let tree = crate::verify::vm::alias_tree::AliasTree::build(tcx, caller);
+    let tree = crate::analysis::alias::tree::AliasTree::build(tcx, caller);
 
     let holder_origins: Vec<(usize, Vec<usize>)> = origin_holders
         .iter()
@@ -2136,7 +2136,7 @@ fn pre_existing_view_on_origin(
 /// a field path resolves to itself; a whole-local place resolves to its ultimate
 /// `(root, fields)` origin.
 fn resolve_via_tree(
-    tree: &crate::verify::vm::alias_tree::AliasTree,
+    tree: &crate::analysis::alias::tree::AliasTree,
     local: Local,
     fields: &[usize],
 ) -> (usize, Vec<usize>) {
@@ -2148,7 +2148,7 @@ fn resolve_via_tree(
 
 // ── Cross-crate callsite analysis ────────────────────────────────
 
-pub(super) fn private_fn_callsite_delegation(
+pub(crate) fn private_fn_callsite_delegation(
     tcx: TyCtxt<'_>,
     caller: DefId,
     origin: &PlaceKey,
@@ -2163,7 +2163,7 @@ pub(super) fn private_fn_callsite_delegation(
         if origins.is_empty() {
             continue;
         }
-        let tree = crate::verify::vm::alias_tree::AliasTree::build(tcx, site.caller);
+        let tree = crate::analysis::alias::tree::AliasTree::build(tcx, site.caller);
         let extra = find_as_ptr_receivers(tcx, site.caller, &origins, &tree, false);
         for place in extra {
             if !origins.contains(&place) {
@@ -2248,7 +2248,7 @@ fn callsite_arg_origins(
     }) else {
         return Vec::new();
     };
-    let tree = crate::verify::vm::alias_tree::AliasTree::build(tcx, caller);
+    let tree = crate::analysis::alias::tree::AliasTree::build(tcx, caller);
     let mut origins = vec![place.clone()];
     if let Some(local) = place.local()
         && tree.tag_of(local).is_some()

@@ -15,13 +15,13 @@ use super::super::state::{VmExecutor, VmValue};
 use super::RuleFlow;
 use self::comparison::ComparisonPlan;
 use self::index::BuiltinIndexPlan;
-use crate::verify::config::ConstructorMirMode;
+use crate::vm::constructor_policy::ConstructorMirMode;
 use crate::compat::Spanned;
 use crate::def_ids::diagnostic_api;
 use crate::helpers::fn_info::{self, FnKind};
 use crate::helpers::mir_utils;
-use crate::verify::call_summary::CallEffect;
-use crate::verify::{api_classify, call_summary, config::{constructor_result_has_invariant, effective_constructor_mir_mode}};
+use crate::call_summary::CallEffect;
+use crate::{api_classify, call_summary, vm::constructor_policy::{constructor_result_has_invariant, effective_constructor_mir_mode}};
 
 #[derive(Clone, Copy)]
 struct CallSite<'a, 'z3, 'tcx> {
@@ -96,7 +96,7 @@ pub(super) fn exec_call<'z3, 'tcx>(
         .collect();
     let callee = mir_utils::resolve_callee_def_id(state.tcx, caller_def_id, func);
     if let Some((source, owner)) = callee
-        .and_then(|id| super::super::alias_hazard::reconstructed_owner(state.tcx, id))
+        .and_then(|id| crate::analysis::alias::hazard::reconstructed_owner(state.tcx, id))
         && let Some(value) = arg_values.get(source)
     {
         state.consume_ownership_share(value, owner, false);
@@ -210,7 +210,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 return CallModel::BuiltinIndex(plan);
             }
             if callee
-                .is_some_and(|id| crate::verify::contract::ensures::has_slice_offset_ensures(self.tcx, id))
+                .is_some_and(|id| crate::contract::ensures::has_slice_offset_ensures(self.tcx, id))
             {
                 return CallModel::PostconditionsOnly;
             }
@@ -405,7 +405,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     ) {
         let callee = site.callee;
         if let Some(owner) = callee
-            .and_then(|id| crate::verify::call_summary::shared_owner::shared_raw_owner_type(self.tcx, id))
+            .and_then(|id| crate::call_summary::shared_owner::shared_raw_owner_type(self.tcx, id))
         {
             self.begin_ownership_transfer(site.destination, owner);
         }

@@ -2,13 +2,14 @@ use crate::analysis::path::PathTree;
 use crate::check::safedrop::bug_records::{BugRecords, BugType, LocalSpot, TyBug};
 use crate::compat::FxHashMap;
 use crate::def_ids::type_ids;
-use crate::verify::config::ConstructorMirMode;
 use crate::utils::source::{get_filename, get_name};
-use crate::verify::{AllocId, Diagnostics, MemoryEvent, MemoryEventKind, RelevantItem, ValueFacts, VmExecutor, VmValue};
+use crate::vm::{
+    RelevantItem, VmExecutor, constructor_policy::ConstructorMirMode, diagnostics::Diagnostics,
+    state::{AllocId, MemoryEvent, MemoryEventKind, ValueFacts, VmValue},
+};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{mir::{BasicBlock, Local, TerminatorKind}, ty::{TyCtxt, TyKind}};
 use rustc_span::{Span, Symbol};
-use std::cell::RefCell;
 use z3::{Config, Context};
 
 #[derive(Clone, Copy)]
@@ -54,7 +55,7 @@ fn execute_item<'z3, 'tcx>(states: Vec<VmExecutor<'z3, 'tcx>>, item: &RelevantIt
                     let value = state.value_of_operand(&arg.node);
                     value.provenance.is_none() && !matches!(value.ty.kind(), TyKind::Ref(..) | TyKind::RawPtr(..))
                 });
-                Some((state.path_state.diagnostics.clone(), destination.local, scalar_args))
+                Some((state.diagnostics().clone(), destination.local, scalar_args))
             } else {
                 None
             }
@@ -73,19 +74,19 @@ fn execute_item<'z3, 'tcx>(states: Vec<VmExecutor<'z3, 'tcx>>, item: &RelevantIt
 
 fn recover_opaque_call<'z3, 'tcx>(state: &mut VmExecutor<'z3, 'tcx>, before: &Diagnostics, destination: Local, scalar_args: bool) {
     let ty = state.body().local_decls[destination].ty;
-    if state.path_state.diagnostics.only_copy_memory_target_unavailable_since(before)
+    if state.diagnostics().only_copy_memory_target_unavailable_since(before)
         && matches!(ty.kind(), TyKind::Adt(def, _) if type_ids::is_std_string(def.did()))
     {
         let mut facts = ValueFacts::default();
         if state.init_box_vec_param(destination, ty, destination.as_usize(), &mut facts) {
-            state.path_state.diagnostics.recover_copy_memory_target(before);
+            state.recover_copy_memory_target(before);
         }
-    } else if scalar_args && state.path_state.diagnostics.only_missing_mir_since(before) {
+    } else if scalar_args && state.diagnostics().only_missing_mir_since(before) {
         let mut facts = ValueFacts::default();
         if !state.init_box_vec_param(destination, ty, destination.as_usize(), &mut facts) {
             state.set_local(destination, VmValue::new(state.fresh_int("opaque_result"), ty));
         }
-        state.path_state.diagnostics.recover_missing_mir(before);
+        state.recover_missing_mir(before);
     }
 }
 
@@ -96,7 +97,7 @@ pub(crate) fn analyze<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, paths: &PathTree) 
     let mut bugs = BugRecords::new();
     for path in paths.to_vecs() {
         let mut state = VmExecutor::new(&context, tcx, def_id, None, ConstructorMirMode::Default);
-        state.path_state.memory_events = Some(RefCell::default());
+        state.enable_memory_events();
         let mut states = state.execute_items(&[]);
         for (position, &bb_idx) in path.iter().enumerate() {
             let block = BasicBlock::from_usize(bb_idx);
@@ -119,8 +120,8 @@ pub(crate) fn analyze<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, paths: &PathTree) 
             states = execute_item(states, &item);
         }
         for state in &states {
-            let trace = state.path_state.memory_events.as_ref().expect("memory trace enabled");
-            let mut events: Vec<_> = trace.borrow().iter().filter_map(classify_event).collect();
+            let trace = state.memory_events().expect("memory trace enabled");
+            let mut events: Vec<_> = trace.iter().filter_map(classify_event).collect();
             if let Some(&last) = path.last() {
                 record_dangling_exit(state, body, last, &mut events);
             }
