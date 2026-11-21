@@ -264,7 +264,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             }
             let mut items = Vec::new();
             let skip_terminator = bind_checkpoint.is_some()
-                || crate::verify::api_classify::is_manually_drop_drop(
+                || crate::def_ids::is_manually_drop_drop(
                     visitor.tcx,
                     bind_checkpoint.and_then(|c| c.callee),
                 );

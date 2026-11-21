@@ -1498,7 +1498,7 @@ fn terminator_writes_origin<'tcx>(
         return false;
     };
     let callee = mir_utils::dep_callee_def_id(func);
-    if !crate::def_ids::api_classify::is_ptr_write(tcx, callee) {
+    if !crate::def_ids::is_ptr_write(tcx, callee) {
         return false;
     }
     let Some(arg0) = args.first() else {

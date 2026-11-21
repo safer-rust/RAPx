@@ -20,8 +20,9 @@ use crate::compat::Spanned;
 use crate::def_ids::diagnostic_api;
 use crate::helpers::fn_info::{self, FnKind};
 use crate::helpers::mir_utils;
-use crate::analysis::dataflow::call_summary::CallEffect;
-use crate::{analysis::dataflow::call_summary, def_ids::api_classify, vm::constructor_policy::{constructor_result_has_invariant, effective_constructor_mir_mode}};
+use crate::analysis::dataflow::call_summary::{self, CallEffect};
+use crate::def_ids;
+use crate::vm::constructor_policy::{constructor_result_has_invariant, effective_constructor_mir_mode};
 
 #[derive(Clone, Copy)]
 struct CallSite<'a, 'z3, 'tcx> {
@@ -115,7 +116,7 @@ pub(super) fn exec_call<'z3, 'tcx>(
     {
         Some(DropCall::Value)
     } else if callee.is_some_and(|id| mir_utils::is_drop_in_place(state.tcx, id))
-        || api_classify::is_manually_drop_drop(state.tcx, callee)
+        || def_ids::is_manually_drop_drop(state.tcx, callee)
     {
         Some(DropCall::Pointee)
     } else {

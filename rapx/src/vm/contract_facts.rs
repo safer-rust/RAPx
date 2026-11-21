@@ -935,7 +935,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         // initialized — the `Init ⇒ Typed` subsumption records the element type.
         let is_maybe_uninit = property
             .try_type_arg_at(1)
-            .map(crate::def_ids::api_classify::strips_to_maybe_uninit)
+            .map(crate::def_ids::strips_to_maybe_uninit)
             .unwrap_or(false);
         if is_maybe_uninit {
             return;

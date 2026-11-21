@@ -394,7 +394,7 @@ impl PropertyChecker {
             if value.facts.dangling {
                 return CheckResult::Failed;
             }
-            if crate::verify::api_classify::is_manually_drop_drop(vm_state.tcx, checkpoint.callee) {
+            if crate::def_ids::is_manually_drop_drop(vm_state.tcx, checkpoint.callee) {
                 return CheckResult::ProvedByRule;
             }
             if value.z3_term.simplify().as_u64() == Some(0) {

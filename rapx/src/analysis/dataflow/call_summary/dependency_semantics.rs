@@ -12,9 +12,8 @@ use crate::analysis::dataflow::{
     pointer_copy, pointer_flow, pointer_offset,
 };
 use crate::compat::Spanned;
-use crate::def_ids::{intrinsic_api, other_api};
+use crate::def_ids::{self, intrinsic_api, other_api};
 use crate::helpers::mir_utils as helpers;
-use crate::def_ids::api_classify;
 
 use super::{CallEffect, effects, function_var};
 
@@ -60,7 +59,7 @@ impl WriteSemantics for VerifierCallSemantics {
 
     fn direct_write_arg(&self, tcx: TyCtxt<'_>, func: &Operand<'_>) -> Option<usize> {
         let callee = helpers::dep_callee_def_id(func);
-        if api_classify::is_ptr_write(tcx, callee) {
+        if def_ids::is_ptr_write(tcx, callee) {
             Some(0)
         } else if let Some(flow) = callee.and_then(|id| pointer_copy::copy_flow(tcx, id)) {
             Some(flow.destination_arg)

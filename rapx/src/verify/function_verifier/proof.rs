@@ -10,10 +10,10 @@ use rustc_middle::{
 use std::cell::Cell;
 
 use crate::analysis::path::PathTree;
+use crate::def_ids;
 use crate::helpers::mir_utils;
 use crate::vm::VmExecutor;
 use crate::verify::{
-    api_classify,
     checkpoint::{Checkpoint, CheckpointKind, CheckpointLocation},
     contract::{self, AndProperty, AtomProperty, OrProperty, Property, PropertyKind},
     property_checker::PropertyChecker,
@@ -105,7 +105,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         checkpoint: &Checkpoint<'tcx>,
         properties: &[&Property<'tcx>],
     ) -> Vec<Vec<Option<(CheckResult, String)>>> {
-        let manual_drop = api_classify::is_manually_drop_drop(self.tcx, checkpoint.callee);
+        let manual_drop = def_ids::is_manually_drop_drop(self.tcx, checkpoint.callee);
         let drop_alias = manual_drop && properties.iter().any(|property| property.kind() == Some(PropertyKind::Alias));
         let selected: Vec<_> = properties.iter().enumerate()
             .filter(|(_, property)| !(manual_drop && property.kind() == Some(PropertyKind::Alias)))

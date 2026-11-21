@@ -250,7 +250,7 @@ impl PropertyChecker {
     }
 
     pub(super) fn ty_is_maybe_uninit(ty: Ty<'_>) -> bool {
-        crate::verify::api_classify::strips_to_maybe_uninit(ty)
+        crate::def_ids::strips_to_maybe_uninit(ty)
     }
 
     pub(super) fn check_size<'z3, 'tcx>(
