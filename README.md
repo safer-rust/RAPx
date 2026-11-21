@@ -121,21 +121,23 @@ Usage: cargo rapx opt
 
 ### `verify` command
 
-The `verify` command provides a contract-based verification pipeline for functions annotated with `#[rapx::verify]`. It uses path-sensitive backward/forward analysis and Z3-based SMT solving to prove safety properties.
+The `verify` command checks contract obligations using path-sensitive analysis, structural rules, and Z3. By default it scans functions with unsafe calls or struct invariants; `--mode targeted` selects functions annotated with `#[rapx::verify]`.
 
 ```
 Usage: cargo rapx verify [OPTIONS]
 
 Options:
-      --prepare-targets            identify #[rapx::verify] functions and list their safety contracts
-      --postfix-repeat <N|auto>  number of extra SCC postfix repetitions during path enumeration; `auto` enables automatic loop-depth detection (default auto)
-      --mode <MODE>               verification mode: scan, targeted (default scan)
-      --no-invariant-target       skip struct invariant checks and derive safety via constructor-mutator-method chains
-      --expand-ctor <MODE>        constructor expansion: true, false, default (default: default)
-      --debug-contracts          print expanded contract assertions for debug purposes
-      --crate <CRATE>             filter verification targets to a specific crate (Rust crate name or Cargo package name)
-      --module <MODULE_PATH>     filter verification targets to a specific module path within the crate
-  -h, --help                      Print help
+      --prepare-targets           list targets and resolved contracts without verification
+      --postfix-repeat <N|auto>   extra SCC repetitions; auto estimates per target (default: auto)
+      --mode <MODE>               scan or targeted (default: scan)
+      --no-invariant-target       verify constructor-mutator-method sequences instead of standalone invariants
+      --expand-ctor <MODE>        constructor MIR mode: true, false, or default (default: default)
+      --crate <CRATE>             filter targets by Rust crate or Cargo package name
+      --module <MODULE_PATH>      filter targets by module path
+      --path-limit <N>            cap paths collected per checkpoint (0 selects the built-in default)
+      --trait-impl-limit <N>      cap virtual-call impls and generic combinations (default: 1)
+      --debug-contracts          print expanded contracts without verification
+  -h, --help                     Print help
 ```
 
 Verification modes:
@@ -144,7 +146,8 @@ Verification modes:
 
 Options:
 - `--no-invariant-target` — works with both modes; skips struct invariant checks and instead derives safety requirements automatically from constructor-mutator-method chains
-- `--expand-ctor` — `true` forces constructor MIR when available; `false` never uses constructor MIR and uses a summary when available; `default` usually uses invariants and otherwise uses available MIR. `--no-invariant-target` makes `default` behave like `true`.
+- `--expand-ctor` — `true` prioritizes available constructor MIR over call models; `false` skips constructor MIR; `default` skips MIR when the direct result has an invariant, and otherwise tries call models before MIR. `--no-invariant-target` makes `default` behave like `true`.
+- `--path-limit` — lowering the cap can speed up verification, but paths omitted by the cap are currently treated as proved in the verdict.
 
 **Filtering targets:** `--crate` and `--module` work in any mode and can be combined. When analyzing standard-library workspaces or sub-workspaces:
 
@@ -204,7 +207,7 @@ struct List {
 }
 ```
 
-See `tests/verify_cases/linked_list_rawptr` and `tests/verify_cases/linked_list_nonnull` for complete examples proved SOUND end-to-end (including `Box::from_raw` in `Drop`).
+See `rapx/tests/verify_cases/linked_list_rawptr` and `rapx/tests/verify_cases/linked_list_nonnull` for complete examples proved SOUND end-to-end (including `Box::from_raw` in `Drop`).
 
 Safety properties include: `Align`, `NonNull`, `Allocated`, `InBound`, `Init`, `ValidPtr`, `Deref`, `Ptr2Ref`, and more. See the [RAPx-Book](https://safer-rust.github.io/RAPx-Book/) for the full list.
 
@@ -212,9 +215,9 @@ Safety properties include: `Align`, `NonNull`, `Allocated`, `InBound`, `Init`, `
 
 This checklist maps RAPx's contract verification to the [Primitive Safety Properties](https://github.com/safer-rust/safety-tags/blob/main/primitive-sp.md) defined in `safer-rust/safety-tags`.
 
-> **Legend**: ✅ = full Z3-based SMT verification (produces SOUND/UNSOUND verdicts)　— = not yet verified (parsed but no SMT lowering)
+> **Legend**: ✅ = implemented checker using structural rules and/or SMT (individual checks may still be `UNKNOWN`); — = unsupported checker, reported as `UNKNOWN`; assumption = treated as satisfied without a corresponding VM model.
 
-| safety-tag     | Example                     | Supported |
+| safety-tag     | Example                     | Status |
 |----------------|-----------------------------|:---------:|
 | `Align`        | Align(p, T)                 |     ✅    |
 | `Size`         | Size(T, c)                  |     ✅    |
@@ -235,7 +238,7 @@ This checklist maps RAPx's contract verification to the [Primitive Safety Proper
 | `Alias`        | Alias(p1, p2)               |     ✅    |
 | `Alive`        | Alive(p, l)                 |     ✅    |
 | `Pinned`       | Pinned(p, l)                |     —     |
-| `NonVolatile`  | !Volatile(p, T, len)        |     —     |
+| `NonVolatile`  | !Volatile(p, T, len)        | assumption |
 | `Opened`       | Opened(fd)                  |     —     |
 | `Trait`        | Trait(T, trait)             |     ✅    |
 | `Unreachable`  | !Reachable()                |     —     |
@@ -244,11 +247,11 @@ This checklist maps RAPx's contract verification to the [Primitive Safety Proper
 | `Ptr2Ref` \*   | Ptr2Ref(p, T)               |     ✅    |
 | `Layout` \*    | Layout(p, layout)           |     ✅    |
 
-> \* Compound safety properties are composed from primitive SPs: `Deref(p, T, len) = Allocated(p, T, len) && InBound(p, T, len)`, `ValidPtr(p, T, len) = Size(T, 0) || Deref(p, T, len)`, `Ptr2Ref(p, T) = Init(p, T, 1) && Align(p, T) && Alias(p)`, and `Layout(p, l) = Allocated(p)`.
+> \* Compound safety properties are composed from primitive SPs: `Deref(p, T, len) = Allocated(p, T, len) && InBound(p, T, len)`, `ValidPtr(p, T, len) = NonNull(p) && (Size(T, 0) || Deref(p, T, len))`, `Ptr2Ref(p, T) = Init(p, T, 1) && ValidPtr(p, T, 1) && Align(p, T) && Alias(p)`, and `Layout(p, l) = ValidNum(p % l.align == 0) && Allocated(p, u8, l.size, Global)`.
 >
 > \*† `ValidTransmute` and `SplitTransmute` are specializations of `Typed` for transmute operations: `ValidTransmute(T, U)` checks that a `T`-typed value is a valid bit-pattern of `U`, while `SplitTransmute` checks that every `size_of(U)`-byte contiguous chunk of a `T`-typed value is a valid `U` bit-pattern.
 
-RAPx ships with a curated set of `std` library safety contracts (`std-contracts.json`) that annotate standard library functions with property tags. This enables contract-based verification for common `std`/`core` APIs without requiring user annotations.
+RAPx ships with [standard-library API contracts](rapx/src/contract/assets/std-api-requires.json) that annotate `std` and `core` functions with property tags. These contracts support verification without requiring user annotations.
 
 Beyond the built-in tags, users can define their own named contracts inside their crate with the `pred!` macro (from `rapx_macros`) — a boolean combination of the primitive safety properties — and reference them from `#[rapx::requires(MyTag(...))]` without rebuilding `rapx`:
 
@@ -262,7 +265,7 @@ pred!(Readable(p: Ptr, T: Ty, n: Expr) { NonNull(p) && Align(p, T) && Allocated(
 unsafe fn read_byte(ptr: *const u8, len: usize) -> u8 { unsafe { *ptr } }
 ```
 
-The verifier is exercised against real-world safe abstractions built on top of unsafe code — for example `core::slice`-style methods such as `split_at`, `as_chunks`/`as_rchunks`, `as_flattened`, `binary_search`, `partition_dedup`, and `get_disjoint_mut` — where RAPx proves that the internal unsafe operations cannot cause undefined behavior. Each SMT query is bounded by a per-query timeout so that undecidable nonlinear goals return `unknown` instead of hanging.
+The verifier is exercised against safe abstractions built on unsafe code — for example `core::slice`-style methods such as `split_at`, `as_chunks`/`as_rchunks`, `as_flattened`, `binary_search`, `partition_dedup`, and `get_disjoint_mut`. RAPx reports `SOUND` when it discharges the collected obligations, `UNSOUND` when it finds a possible violation, and `UNKNOWN` when it cannot complete a proof. Each SMT query has a timeout, so unresolved goals can return `UNKNOWN`.
 
 ### Environment Variables (values are case insensitive)
 
