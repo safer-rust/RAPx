@@ -26,7 +26,7 @@ use super::{
     checkpoint::{Checkpoint, CheckpointKind, CheckpointLocation},
     path::PathExtractor,
     proof_cache::{VmCache, new_z3_context},
-    report::{CheckResult, PATH_LIMIT_DESCRIPTION, PropertyCheckResult, UnknownReason},
+    report::{CheckResult, PropertyCheckResult, UnknownReason, VerificationLimits},
     slicer::BackwardSlicer,
     target::FunctionTarget,
 };
@@ -52,9 +52,12 @@ pub(crate) struct FunctionVerifier<'target, 'tcx> {
 }
 
 impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
-    /// Whether path extraction reached its trait implementation limit.
-    pub(crate) fn is_trait_impl_limited(&self) -> bool {
-        self.path_tree.is_trait_impl_limited()
+    /// Coverage limits reached while extracting this function's paths.
+    pub(crate) fn limits(&self) -> VerificationLimits {
+        VerificationLimits {
+            path_limited: self.path_tree.is_truncated(),
+            mono_limited: self.path_tree.is_trait_impl_limited(),
+        }
     }
 
     pub(crate) fn new_with_repeat(tcx: TyCtxt<'tcx>, target: &'target FunctionTarget<'tcx>, allow_repeat: usize, config: Rc<VerifyConfig>) -> Self {
@@ -90,19 +93,19 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
     }
 
     /// Enumerate and check paths independently for each unsafe operation.
-    pub(crate) fn verify_checkpoints(tcx: TyCtxt<'tcx>, target: &'target FunctionTarget<'tcx>, allow_repeat: usize, config: Rc<VerifyConfig>, cache: &mut VmCache<'_, 'tcx>) -> (Vec<PropertyCheckResult<'tcx>>, bool) {
+    pub(crate) fn verify_checkpoints(tcx: TyCtxt<'tcx>, target: &'target FunctionTarget<'tcx>, allow_repeat: usize, config: Rc<VerifyConfig>, cache: &mut VmCache<'_, 'tcx>) -> (Vec<PropertyCheckResult<'tcx>>, VerificationLimits) {
         let mut results = Vec::new();
-        let mut trait_impl_limited = false;
+        let mut limits = VerificationLimits::default();
         for (checkpoint_index, checkpoint) in target.all_checkpoints().enumerate() {
             if target.properties_for_callsite(checkpoint).is_empty()
                 && !(checkpoint.kind == CheckpointKind::UnsafeCall && checkpoint.callee.is_none()) {
                 continue;
             }
             let verifier = Self::new_for_checkpoint(tcx, target, allow_repeat, checkpoint, Rc::clone(&config));
-            trait_impl_limited |= verifier.is_trait_impl_limited();
+            limits.merge(verifier.limits());
             verifier.verify_checkpoint(cache, checkpoint, checkpoint_index, &mut results);
         }
-        (results, trait_impl_limited)
+        (results, limits)
     }
 
     /// Append a checkpoint's property results or an unresolved-call UNKNOWN.
@@ -128,14 +131,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
             });
             return;
         }
-        let mut path_results = self.check_checkpoint_properties(cache, checkpoint, properties);
-        // The path limit bounds precision. Mark omitted paths as proved
-        // so only results from enumerated paths affect the verdict.
-        if self.path_tree.is_truncated() {
-            for property_index in 0..properties.len() {
-                path_results.push((PATH_LIMIT_DESCRIPTION.to_string(), property_index, CheckResult::ProvedByRule));
-            }
-        }
+        let path_results = self.check_checkpoint_properties(cache, checkpoint, properties);
         for (path_desc, property_index, result) in path_results {
             results.push(PropertyCheckResult {
                 checkpoint: checkpoint.location(),

@@ -7,7 +7,19 @@
 use crate::contract::Property;
 use crate::verify::checkpoint::CheckpointLocation;
 
-pub(crate) const PATH_LIMIT_DESCRIPTION: &str = "[not enumerated: path limit reached]";
+/// Incomplete coverage of a verification target, separate from property results.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct VerificationLimits {
+    pub path_limited: bool,
+    pub mono_limited: bool,
+}
+
+impl VerificationLimits {
+    pub(crate) fn merge(&mut self, other: Self) {
+        self.path_limited |= other.path_limited;
+        self.mono_limited |= other.mono_limited;
+    }
+}
 
 /// Why a [`CheckResult::Unknown`] could not be discharged.
 ///
@@ -185,7 +197,7 @@ pub(crate) struct PropertyCheckResult<'tcx> {
     pub property: Property<'tcx>,
     /// Current verification status.
     pub result: CheckResult,
-    /// Human-readable path or path-limit marker.
+    /// Human-readable path description.
     pub path_desc: String,
     /// Callee name or synthetic obligation label.
     pub callee_name: String,

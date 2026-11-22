@@ -16,7 +16,7 @@ use crate::contract::{ContractExpr, ContractKind, Property, PropertyArg, Propert
 
 use super::{
     checkpoint::CheckpointLocation,
-    report::{CheckResult, PropertyCheckResult, Soundness},
+    report::{CheckResult, PropertyCheckResult, Soundness, VerificationLimits},
 };
 
 type CountEntry = (Option<PropertyKind>, Option<(String, Vec<String>)>, bool, bool, CheckResult, usize);
@@ -372,7 +372,7 @@ pub(crate) fn emit_verify_summary<'tcx>(
     def_id: DefId,
     all_results: &[PropertyCheckResult<'tcx>],
     skip_invariant: bool,
-    mono_limited: bool,
+    limits: VerificationLimits,
 ) {
     rap_info!("============================================================");
     rap_info!("[rapx::verify] function: {target_path}");
@@ -383,26 +383,25 @@ pub(crate) fn emit_verify_summary<'tcx>(
             rap_info!("  + constructor: {}", tcx.def_path_str(*con));
         }
     }
-    emit_results_and_verdict(all_results, mono_limited);
+    emit_results_and_verdict(all_results, limits);
     rap_info!("");
 }
 
 /// Print checkpoint results, the overall verdict, and any unknown diagnostics.
-pub(crate) fn emit_results_and_verdict<'tcx>(all_results: &[PropertyCheckResult<'tcx>], mono_limited: bool) {
+pub(crate) fn emit_results_and_verdict<'tcx>(all_results: &[PropertyCheckResult<'tcx>], limits: VerificationLimits) {
     let (failed, unknown) = emit_results_counts_and_checkpoints(all_results);
     if failed == 0 && unknown == 0 {
-        let path_limited = all_results.iter().any(|result| result.path_desc == super::report::PATH_LIMIT_DESCRIPTION);
-        let mut limits = Vec::new();
-        if path_limited {
-            limits.push("path limit");
+        let mut labels = Vec::new();
+        if limits.path_limited {
+            labels.push("path limit");
         }
-        if mono_limited {
-            limits.push("mono limit");
+        if limits.mono_limited {
+            labels.push("mono limit");
         }
-        if limits.is_empty() {
+        if labels.is_empty() {
             rap_info!(green, "  result: SOUND");
         } else {
-            rap_info!(green, "  result: SOUND (with {})", limits.join(", "));
+            rap_info!(green, "  result: SOUND (with {})", labels.join(", "));
         }
     } else if failed > 0 {
         rap_warn!("  result: UNSOUND ({failed} failed, {unknown} unknown)");
@@ -456,9 +455,6 @@ pub(crate) fn emit_property_rows<'tcx>(results: &[&PropertyCheckResult<'tcx>]) {
         entries
     };
     for (path_desc, props) in &path_groups {
-        if *path_desc == super::report::PATH_LIMIT_DESCRIPTION {
-            continue;
-        }
         let verdict = props.iter().filter(|r| r.property.contract_kind() != ContractKind::Option_)
             .fold(Soundness::Sound, |acc, r| acc.join(r.result.soundness()));
         rap_info!("        path {path_desc} | {}:", verdict.label());
