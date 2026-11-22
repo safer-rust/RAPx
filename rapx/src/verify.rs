@@ -237,8 +237,9 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
             // Check each repeat depth, collecting checkpoint results and coverage limits.
             self.run_repeat_rounds(target, max_repeat, &mut all_results, &mut limits);
 
+            // Recheck collected invariants at function exits after checkpoint verification.
             if !target.invariants.is_empty() && !self.config.skip_invariant {
-                let verifier = FunctionVerifier::new_with_repeat(self.tcx, target, max_repeat, Rc::clone(&self.config));
+                let verifier = FunctionVerifier::new(self.tcx, target, max_repeat, None, Rc::clone(&self.config));
                 limits.merge(verifier.limits());
                 all_results.extend(verifier.verify_invariants());
             }
@@ -346,7 +347,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
                     let mut results = Vec::new();
                     let mut limits = VerificationLimits::default();
                     for repeat in 0..=max_repeat {
-                        let verifier = FunctionVerifier::new_with_repeat(self.tcx, &target, repeat, Rc::clone(&self.config));
+                        let verifier = FunctionVerifier::new(self.tcx, &target, repeat, None, Rc::clone(&self.config));
                         limits.merge(verifier.limits());
                         results.extend(verifier.verify_postconditions(&postconditions));
                     }

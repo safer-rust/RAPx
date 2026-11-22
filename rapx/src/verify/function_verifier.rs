@@ -60,16 +60,8 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         }
     }
 
-    pub(crate) fn new_with_repeat(tcx: TyCtxt<'tcx>, target: &'target FunctionTarget<'tcx>, allow_repeat: usize, config: Rc<VerifyConfig>) -> Self {
-        Self::new_with_repeat_checkpoint(tcx, target, allow_repeat, None, config)
-    }
-
-    /// Build paths for one checkpoint; Alias checks retain the path suffix.
-    fn new_for_checkpoint(tcx: TyCtxt<'tcx>, target: &'target FunctionTarget<'tcx>, allow_repeat: usize, checkpoint: &Checkpoint<'tcx>, config: Rc<VerifyConfig>) -> Self {
-        Self::new_with_repeat_checkpoint(tcx, target, allow_repeat, Some(checkpoint), config)
-    }
-
-    fn new_with_repeat_checkpoint(tcx: TyCtxt<'tcx>, target: &'target FunctionTarget<'tcx>, allow_repeat: usize, checkpoint: Option<&Checkpoint<'tcx>>, config: Rc<VerifyConfig>) -> Self {
+    /// Build paths for all checkpoints, or one checkpoint when specified.
+    pub(crate) fn new(tcx: TyCtxt<'tcx>, target: &'target FunctionTarget<'tcx>, allow_repeat: usize, checkpoint: Option<&Checkpoint<'tcx>>, config: Rc<VerifyConfig>) -> Self {
         let locations = checkpoint.map_or_else(
             || target.all_checkpoints().map(Checkpoint::location).collect::<Vec<_>>(),
             |checkpoint| vec![checkpoint.location()],
@@ -101,7 +93,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                 && !(checkpoint.kind == CheckpointKind::UnsafeCall && checkpoint.callee.is_none()) {
                 continue;
             }
-            let verifier = Self::new_for_checkpoint(tcx, target, allow_repeat, checkpoint, Rc::clone(&config));
+            let verifier = Self::new(tcx, target, allow_repeat, Some(checkpoint), Rc::clone(&config));
             limits.merge(verifier.limits());
             verifier.verify_checkpoint(cache, checkpoint, checkpoint_index, &mut results);
         }
