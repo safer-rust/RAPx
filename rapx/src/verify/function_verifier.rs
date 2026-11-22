@@ -144,30 +144,25 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         }
     }
 
-    /// Recheck declared and built-in invariants at exits, returning the declared verdict for marker traits.
-    pub(crate) fn verify_invariants(&self) -> (Vec<PropertyCheckResult<'tcx>>, Option<CheckResult>) {
+    /// Recheck declared and built-in invariants at exits.
+    pub(crate) fn verify_invariants(&self) -> Vec<PropertyCheckResult<'tcx>> {
         let declared = self.target.declared_invariants();
         let builtin = self.target.builtin_invariants();
         let mut results = Vec::new();
-        let declared_verdict = if declared.is_empty() {
-            None
-        } else {
+        if !declared.is_empty() {
             let is_constructor = get_type(self.tcx, self.target.def_id) == FnKind::Constructor;
             // Methods also recheck declared invariants on unwinding exits.
             let entry_facts: Vec<Property<'tcx>> = self.target.caller_requires.iter()
                 .filter(|c| !matches!(c.kind(), Some(PropertyKind::Unknown)))
                 .cloned()
                 .collect();
-            let checked = self.check_exit_properties(declared, &entry_facts, !is_constructor, "struct");
-            let verdict = checked.iter().fold(CheckResult::ProvedByRule, |acc, r| acc.and(r.result.clone()));
-            results.extend(checked);
-            Some(verdict)
-        };
+            results.extend(self.check_exit_properties(declared, &entry_facts, !is_constructor, "struct"));
+        }
         // Built-in invariants are rechecked only around unsafe operations; moved subjects are skipped.
         if !builtin.is_empty() && self.target.has_checkable_checkpoint() {
             results.extend(self.check_exit_properties(builtin, builtin, false, "type"));
         }
-        (results, declared_verdict)
+        results
     }
 
     /// Check postconditions at normal return blocks using entry requirements.

@@ -23,7 +23,6 @@ use rustc_middle::{
 };
 
 use crate::analysis::dataflow::pointer_flow::trace_source_arg;
-use crate::compat::FxHashMap;
 use crate::contract::{PropertyKind, annotation::get_struct_invariants_from_annotation};
 use crate::def_ids::{
     intrinsic_api,
@@ -168,16 +167,12 @@ pub(crate) fn atomic_update_check<'tcx>(
 /// Type-level `Allocated(ptr, T, n)` / `Owning(ptr)` obligation check (no VM
 /// state required): `Proved` when `T` declares a matching
 /// `#[rapx::invariant(Allocated(ptr))]` / `#[rapx::invariant(Owning(ptr))]`
-/// annotation (optionally restricted to the `field` named in the property) *and*
-/// the already-run struct-invariant verification discharged it.
-/// `invariant_results` carries the per-struct verdict; when a struct's
-/// invariants failed to verify, the check fails too.
+/// annotation (optionally restricted to the `field` named in the property).
 pub(crate) fn field_invariant_check<'tcx>(
     tcx: TyCtxt<'tcx>,
     ty: Ty<'tcx>,
     kind: PropertyKind,
     field: Option<&str>,
-    invariant_results: &FxHashMap<DefId, CheckResult>,
 ) -> CheckResult {
     let TyKind::Adt(adt_def, _) = ty.kind() else {
         return CheckResult::Failed;
@@ -201,12 +196,6 @@ pub(crate) fn field_invariant_check<'tcx>(
         return CheckResult::Failed;
     }
 
-    // The invariant must actually hold, not just be annotated.
-    if let Some(result) = invariant_results.get(&adt_def_id)
-        && *result != CheckResult::ProvedByRule
-    {
-        return CheckResult::Failed;
-    }
     CheckResult::ProvedByRule
 }
 

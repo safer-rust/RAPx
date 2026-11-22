@@ -51,7 +51,7 @@ use self::{
     loop_handling::LoopSensitivityAnalyzer,
     marker_trait::MarkerTraitVerifier,
     proof_cache::{VmCache, new_z3_context},
-    report::{CheckResult, PropertyCheckResult, VerificationLimits},
+    report::{PropertyCheckResult, VerificationLimits},
     target::{FunctionTarget, VerifyTargetCollector},
     trait_ensurance::TraitEnsuranceKind,
 };
@@ -229,8 +229,6 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
 
         // Merge target results per function so monomorphized instances are reported once.
         let mut function_verdicts: FxHashMap<DefId, FunctionVerdicts<'tcx>> = FxHashMap::default();
-        // Keep struct-invariant verdicts for later marker-trait obligations.
-        let mut marker_trait_invariant_verdicts: FxHashMap<DefId, CheckResult> = FxHashMap::default();
 
         for target in &collector.function_targets {
             let mut all_results: Vec<PropertyCheckResult<'_>> = Vec::new();
@@ -242,13 +240,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
             if !target.invariants.is_empty() && !self.config.skip_invariant {
                 let verifier = FunctionVerifier::new_with_repeat(self.tcx, target, max_repeat, Rc::clone(&self.config));
                 limits.merge(verifier.limits());
-                let (invariant_results, declared_verdict) = verifier.verify_invariants();
-                if let (Some(struct_id), Some(verdict)) = (target.owner_struct_def_id, declared_verdict) {
-                    marker_trait_invariant_verdicts.entry(struct_id)
-                        .and_modify(|v| *v = v.clone().and(verdict.clone()))
-                        .or_insert(verdict);
-                }
-                all_results.extend(invariant_results);
+                all_results.extend(verifier.verify_invariants());
             }
 
             let no_obligations = all_results.is_empty()
@@ -379,7 +371,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
         let marker_targets: Vec<_> = collector.trait_targets.iter()
             .filter(|t| matches!(&t.kind, TraitEnsuranceKind::Marker(..))).collect();
         if !marker_targets.is_empty() {
-            MarkerTraitVerifier::new(self.tcx, &marker_trait_invariant_verdicts).emit(&marker_targets);
+            MarkerTraitVerifier::new(self.tcx).emit(&marker_targets);
         }
 
         if self.config.skip_invariant {

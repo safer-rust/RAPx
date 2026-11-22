@@ -3,7 +3,6 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{Ty, TyCtxt, TyKind};
 
-use crate::compat::FxHashMap;
 use crate::contract::{Property, PropertyArg, PropertyKind, place::field_name_from_arg};
 
 use super::{
@@ -15,20 +14,13 @@ use super::{
     trait_ensurance::{MarkerTraitKind, TraitEnsurance, TraitEnsuranceKind},
 };
 
-pub(super) struct MarkerTraitVerifier<'a, 'tcx> {
+pub(super) struct MarkerTraitVerifier<'tcx> {
     tcx: TyCtxt<'tcx>,
-    struct_invariant_results: &'a FxHashMap<DefId, CheckResult>,
 }
 
-impl<'a, 'tcx> MarkerTraitVerifier<'a, 'tcx> {
-    pub(super) fn new(
-        tcx: TyCtxt<'tcx>,
-        struct_invariant_results: &'a FxHashMap<DefId, CheckResult>,
-    ) -> Self {
-        Self {
-            tcx,
-            struct_invariant_results,
-        }
+impl<'tcx> MarkerTraitVerifier<'tcx> {
+    pub(super) fn new(tcx: TyCtxt<'tcx>) -> Self {
+        Self { tcx }
     }
 
     /// Structurally verify collected `Send`/`Sync` marker-trait impls.
@@ -149,7 +141,7 @@ impl<'a, 'tcx> MarkerTraitVerifier<'a, 'tcx> {
                     // Type-level `Allocated(ptr, T, n)` / `Owning(ptr)` reached
                     // through a `TamedRawPtr` compound: check that the type declares
                     // a matching `#[rapx::invariant(...)]` (optionally restricted to
-                    // the field named in the property) and that it verified.
+                    // the field named in the property).
                     let adt_def_id = match self_ty.kind() {
                         TyKind::Adt(adt_def, _) => adt_def.did(),
                         _ => return CheckResult::Unknown(UnknownReason::Unimplemented),
@@ -158,13 +150,7 @@ impl<'a, 'tcx> MarkerTraitVerifier<'a, 'tcx> {
                         .args
                         .first()
                         .and_then(|a| field_name_from_arg(self.tcx, adt_def_id, a));
-                    field_invariant_check(
-                        self.tcx,
-                        self_ty,
-                        atom.kind,
-                        field.as_deref(),
-                        &self.struct_invariant_results,
-                    )
+                    field_invariant_check(self.tcx, self_ty, atom.kind, field.as_deref())
                 }
                 PropertyKind::AtomicUpdate => {
                     let Some(ty) = atom.args.first().and_then(|a| match a {
