@@ -1,8 +1,8 @@
 //! Collection of verification targets and their contract obligations.
 //!
 //! [`VerifyTargetCollector`] walks the current crate in targeted or scan mode.
-//! It collects function checkpoints, their required contracts, struct and type
-//! invariants, and obligations from unsafe trait implementations.
+//! It collects function checkpoints, their required contracts, invariants, and
+//! obligations from unsafe trait implementations.
 
 use crate::analysis::Analysis;
 use crate::analysis::safety_flow::root::{
@@ -88,12 +88,10 @@ pub(crate) struct FunctionTarget<'tcx> {
     /// Entry assumptions from this function's preconditions and invariants.
     pub caller_requires: FnContracts<'tcx>,
 
-    /// Invariants declared on the owning struct and checked by this method.
-    pub struct_invariants: Vec<Property<'tcx>>,
-
-    /// Built-in invariants for parameter and return types.
-    /// They also contribute to `caller_requires` at function entry.
-    pub type_invariants: Vec<Property<'tcx>>,
+    /// Declared struct invariants followed by built-in parameter and return invariants.
+    pub invariants: Vec<Property<'tcx>>,
+    /// Boundary of the declared invariants needed by marker-trait obligations.
+    pub declared_invariant_count: usize,
 
     /// Checkpoints and obligations for raw pointer dereferences.
     /// Obligations include `Allocated`, `InBound`, and `Align`, plus `Typed`
@@ -106,6 +104,14 @@ pub(crate) struct FunctionTarget<'tcx> {
 }
 
 impl<'tcx> FunctionTarget<'tcx> {
+    pub(crate) fn declared_invariants(&self) -> &[Property<'tcx>] {
+        &self.invariants[..self.declared_invariant_count]
+    }
+
+    pub(crate) fn builtin_invariants(&self) -> &[Property<'tcx>] {
+        &self.invariants[self.declared_invariant_count..]
+    }
+
     pub(crate) fn has_checkable_checkpoint(&self) -> bool {
         self.all_checkpoints().any(|checkpoint| {
             !self.properties_for_callsite(checkpoint).is_empty()
@@ -571,7 +577,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                 }
 
                 if requires.is_empty() {
-                    // An empty JSON entry or verified body may have no `requires`.
+                    // An empty JSON contract or a verified body without obligations needs no requirements.
                     let has_json_entry = is_std
                         && crate::contract::json::get_std_contracts_from_json(
                             self.tcx,
@@ -581,7 +587,14 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                     let is_verify_target = callee_def_id
                         .as_local()
                         .is_some_and(|id| has_rapx_verify_attr(self.tcx, id));
-                    if !has_json_entry && !is_verify_target {
+                    let verified_body_has_no_obligations = follow_chain
+                        && is_verify_target
+                        && self.tcx.is_mir_available(callee_def_id)
+                        && !function_has_rapx_struct_invariant(self.tcx, callee_def_id)
+                        && collect_unsafe_callsites(self.tcx, callee_def_id).is_empty()
+                        && collect_raw_ptr_deref_checkpoints(self.tcx, callee_def_id).is_empty()
+                        && collect_static_mut_checkpoints(self.tcx, callee_def_id).is_empty();
+                    if !has_json_entry && (!is_verify_target || (follow_chain && !verified_body_has_no_obligations)) {
                         requires.push(Property::new(self.tcx, callee_def_id, "Unknown", &[]));
                     }
                 }
@@ -725,9 +738,11 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
             struct_invariants.clear();
         }
 
-        // Type invariants for parameters and returns are entry facts.
-        let type_invariants = build_type_invariants_from_params(self.tcx, def_id);
-        caller_requires.extend(type_invariants.clone());
+        // Built-in invariants for parameters and returns are entry facts.
+        let mut invariants = struct_invariants;
+        let declared_invariant_count = invariants.len();
+        invariants.extend(build_type_invariants_from_params(self.tcx, def_id));
+        caller_requires.extend(invariants[declared_invariant_count..].iter().cloned());
 
         FunctionTarget {
             def_id,
@@ -737,8 +752,8 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
             checkpoints,
             callee_requires,
             caller_requires,
-            struct_invariants,
-            type_invariants,
+            invariants,
+            declared_invariant_count,
             raw_ptr_deref_checks,
             static_mut_checks,
         }
@@ -973,7 +988,7 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
                     && first.raw_ptr_deref_checks.is_empty()
                     && first.static_mut_checks.is_empty()
                 {
-                    if !first.struct_invariants.is_empty() {
+                    if !first.declared_invariants().is_empty() {
                         if self.config.skip_invariant {
                             return;
                         }

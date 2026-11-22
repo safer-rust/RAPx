@@ -6,9 +6,9 @@
 //! database, keyed by a normalized type path (e.g. `core::num::NonZero`) or by
 //! the built-in `[T]` slice key.
 //!
-//! The results feed the `type_invariants` field of a verification target,
-//! whose entry facts are synthesized by the VM's
-//! `init_parameters` and re-proved at return by `FunctionVerifier::verify_type_invariants`.
+//! The results join declared invariants on a verification target. Their entry
+//! facts are synthesized by the VM's `init_parameters` and re-proved at return
+//! by `FunctionVerifier::verify_invariants`.
 
 use crate::def_ids::type_ids;
 use crate::util::fn_info;

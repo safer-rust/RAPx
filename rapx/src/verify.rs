@@ -67,7 +67,7 @@ pub(crate) struct VerifyDriver<'tcx> {
 #[derive(Default)]
 struct FunctionVerdicts<'tcx> {
     results: Vec<PropertyCheckResult<'tcx>>,
-    no_checkpoints: bool,
+    has_obligations: bool,
     limits: VerificationLimits,
 }
 
@@ -154,8 +154,8 @@ impl<'tcx> VerifyDriver<'tcx> {
             checkpoints: read_target.checkpoints.clone(),
             callee_requires: read_target.callee_requires.clone(),
             caller_requires: accumulated_requires,
-            struct_invariants: Vec::new(),
-            type_invariants: Vec::new(),
+            invariants: Vec::new(),
+            declared_invariant_count: 0,
             raw_ptr_deref_checks: read_target.raw_ptr_deref_checks.clone(),
             static_mut_checks: read_target.static_mut_checks.clone(),
         }
@@ -236,60 +236,44 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
             let mut all_results: Vec<PropertyCheckResult<'_>> = Vec::new();
             let mut limits = VerificationLimits::default();
             let max_repeat = self.max_repeat_for_target(target);
+            // Check each repeat depth, collecting checkpoint results and coverage limits.
             self.run_repeat_rounds(target, max_repeat, &mut all_results, &mut limits);
 
-            if !target.struct_invariants.is_empty() && !self.config.skip_invariant {
+            if !target.invariants.is_empty() && !self.config.skip_invariant {
                 let verifier = FunctionVerifier::new_with_repeat(self.tcx, target, max_repeat, Rc::clone(&self.config));
                 limits.merge(verifier.limits());
-                let struct_results = verifier.verify_struct_invariants();
-                if let Some(struct_id) = target.owner_struct_def_id {
-                    let verdict = struct_results.iter()
-                        .fold(CheckResult::ProvedByRule, |acc, r| acc.and(r.result.clone()));
+                let (invariant_results, declared_verdict) = verifier.verify_invariants();
+                if let (Some(struct_id), Some(verdict)) = (target.owner_struct_def_id, declared_verdict) {
                     marker_trait_invariant_verdicts.entry(struct_id)
                         .and_modify(|v| *v = v.clone().and(verdict.clone()))
                         .or_insert(verdict);
                 }
-                all_results.extend(struct_results);
+                all_results.extend(invariant_results);
             }
 
-            if !target.type_invariants.is_empty() && !self.config.skip_invariant {
-                let verifier = FunctionVerifier::new_with_repeat(self.tcx, target, max_repeat, Rc::clone(&self.config));
-                limits.merge(verifier.limits());
-                all_results.extend(verifier.verify_type_invariants());
-            }
-
-            let all_callees_skipped = !target.checkpoints.is_empty()
-                && target.checkpoints.iter().all(|ckpt| {
-                    ckpt.callee.is_some_and(|callee| {
-                        target
-                            .callee_requires
-                            .get(&callee)
-                            .is_none_or(|c| c.is_empty())
-                    })
-                });
-            let no_checkpoints = all_results.is_empty()
-                && (target.checkpoints.is_empty() || all_callees_skipped)
+            let no_obligations = all_results.is_empty()
+                && target.checkpoints.iter().all(|ckpt| ckpt.callee.is_some() && target.properties_for_callsite(ckpt).is_empty())
                 && target.raw_ptr_deref_checks.is_empty()
                 && target.static_mut_checks.is_empty()
-                && target.struct_invariants.is_empty()
-                && (target.type_invariants.is_empty() || !target.has_checkable_checkpoint());
+                && target.declared_invariants().is_empty()
+                && (target.builtin_invariants().is_empty() || !target.has_checkable_checkpoint());
 
             limits.mono_limited |= target.body.is_some();
             let entry = function_verdicts.entry(target.def_id).or_default();
             entry.results.extend(all_results);
-            entry.no_checkpoints |= no_checkpoints;
+            entry.has_obligations |= !no_obligations;
             entry.limits.merge(limits);
         }
 
         let mut ordered: Vec<DefId> = function_verdicts.keys().copied().collect();
         ordered.sort_by_key(|d| self.tcx.def_path_str(*d));
         for def_id in ordered {
-            let FunctionVerdicts { results: all_results, no_checkpoints, limits } =
+            let FunctionVerdicts { results: all_results, has_obligations, limits } =
                 function_verdicts.remove(&def_id).unwrap();
             let target_path = fmt_fn_path_with_bounds(self.tcx, def_id);
 
             if all_results.is_empty() && !limits.path_limited {
-                if no_checkpoints {
+                if !has_obligations {
                     rap_info!("============================================================");
                     rap_info!("[rapx::verify] function: {target_path}");
                     rap_info!("============================================================");
@@ -299,10 +283,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
                             rap_info!("  + constructor: {}", self.tcx.def_path_str(*con));
                         }
                     }
-                    rap_info!("  --- unsafe checkpoints ---");
-                    rap_info!("      <none>");
-                    rap_info!("        <none>");
-                    rap_info!("  result: SOUND (no unsafe checkpoints)");
+                    rap_info!("  result: SOUND (no properties to check)");
                     rap_info!("");
                 }
                 continue;

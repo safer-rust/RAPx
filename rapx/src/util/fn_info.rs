@@ -102,11 +102,10 @@ pub fn get_type(tcx: TyCtxt<'_>, def_id: DefId) -> FnKind {
 /// `Option<Self>` / `Result<Self, _>` rather than a bare `Self`.
 ///
 /// `get_type` classifies these as [`FnKind::Constructor`], but for the wrapped
-/// forms the `None`/`Err` paths do not produce a `Self`, so a struct invariant
-/// can only be meaningfully discharged on the `Some`/`Ok` paths. This helper
-/// lets `verify_struct_invariants` skip the benign `Unknown` results on the
-/// non-`Self` paths. (`Box<Self>` is intentionally *not* included: every path
-/// still produces a `Self` behind the pointer.)
+/// forms the `None`/`Err` paths do not produce a `Self`. Contract place
+/// resolution uses this to select the `Some`/`Ok` field of the return value.
+/// (`Box<Self>` is intentionally *not* included: every path still produces a
+/// `Self` behind the pointer.)
 pub fn returns_wrapped_self(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     let Some(assoc_item) = tcx.opt_associated_item(def_id) else {
         return false;

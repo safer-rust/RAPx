@@ -34,7 +34,7 @@ use super::{
 /// Verifies one function at a selected path repetition limit.
 ///
 /// Borrows the collected target and owns the extracted paths and backward
-/// slicer. Checks unsafe checkpoints, struct/type invariants, and postconditions.
+/// slicer. Checks unsafe checkpoints, invariants, and postconditions.
 ///
 /// # Agent Rules
 /// Do not add new fields without human approval.
@@ -144,43 +144,30 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         }
     }
 
-    /// Recheck the target's struct invariants at its exits.
-    ///
-    /// For constructors (functions returning `Self`), paths are filtered to
-    /// return blocks to avoid unwinding paths where the struct may not be
-    /// fully initialised. For methods, the invariant is re-proved at every
-    /// exit block of the shared whole-CFG path tree.
-    pub(crate) fn verify_struct_invariants(&self) -> Vec<PropertyCheckResult<'tcx>> {
-        let invariants = &self.target.struct_invariants;
-        if invariants.is_empty() {
-            return Vec::new();
+    /// Recheck declared and built-in invariants at exits, returning the declared verdict for marker traits.
+    pub(crate) fn verify_invariants(&self) -> (Vec<PropertyCheckResult<'tcx>>, Option<CheckResult>) {
+        let declared = self.target.declared_invariants();
+        let builtin = self.target.builtin_invariants();
+        let mut results = Vec::new();
+        let declared_verdict = if declared.is_empty() {
+            None
+        } else {
+            let is_constructor = get_type(self.tcx, self.target.def_id) == FnKind::Constructor;
+            // Methods also recheck declared invariants on unwinding exits.
+            let entry_facts: Vec<Property<'tcx>> = self.target.caller_requires.iter()
+                .filter(|c| !matches!(c.kind(), Some(PropertyKind::Unknown)))
+                .cloned()
+                .collect();
+            let checked = self.check_exit_properties(declared, &entry_facts, !is_constructor, "struct");
+            let verdict = checked.iter().fold(CheckResult::ProvedByRule, |acc, r| acc.and(r.result.clone()));
+            results.extend(checked);
+            Some(verdict)
+        };
+        // Built-in invariants are rechecked only around unsafe operations; moved subjects are skipped.
+        if !builtin.is_empty() && self.target.has_checkable_checkpoint() {
+            results.extend(self.check_exit_properties(builtin, builtin, false, "type"));
         }
-
-        let is_constructor = get_type(self.tcx, self.target.def_id) == FnKind::Constructor;
-        let caller_contracts = &self.target.caller_requires;
-
-        // Entry facts: the full `caller_requires` (explicit `#[rapx::requires]`
-        // preconditions + the implicit struct invariants). The preconditions
-        // are needed to re-prove the invariant after a field mutation — e.g.
-        // `set_len` sets `self.len = new_len`, so `len <= cap` only follows
-        // from the `new_len <= self.cap` precondition.
-        let entry_facts: Vec<Property<'tcx>> = caller_contracts.iter()
-            .filter(|c| !matches!(c.kind(), Some(PropertyKind::Unknown)))
-            .cloned()
-            .collect();
-        self.check_exit_properties(invariants, &entry_facts, !is_constructor, "struct")
-    }
-
-    /// Recheck built-in type invariants at exits when unsafe operations are
-    /// present. Skip paths where the subject was moved or dropped.
-    pub(crate) fn verify_type_invariants(&self) -> Vec<PropertyCheckResult<'tcx>> {
-        let invariants = &self.target.type_invariants;
-        if invariants.is_empty() || !self.target.has_checkable_checkpoint() {
-            return Vec::new();
-        }
-
-        let entry_facts = invariants.clone();
-        self.check_exit_properties(invariants, &entry_facts, false, "type")
+        (results, declared_verdict)
     }
 
     /// Check postconditions at normal return blocks using entry requirements.
