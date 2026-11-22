@@ -195,7 +195,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
             let stable: Vec<_> = invariants.iter().map(|invariant| {
                 label == "type"
                     && entry_facts.contains(invariant)
-                    && stable_reference_metadata(self.tcx, self.target.def_id, invariant)
+                    && is_preserved_slice_ref_invariant(self.tcx, self.target.def_id, invariant)
             }).collect();
             let mut groups: IndexMap<Vec<usize>, FxHashSet<Vec<usize>>> = IndexMap::new();
             for path in &all_paths {
@@ -303,12 +303,13 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
 }
 
 fn targets_return_value(property: &Property<'_>) -> bool {
-    property
-        .target_place()
-        .is_some_and(|cp| matches!(cp.base, PlaceBase::Return))
+    property.target_place().is_some_and(|cp| matches!(cp.base, PlaceBase::Return))
 }
 
-fn stable_reference_metadata(tcx: TyCtxt<'_>, def_id: DefId, property: &Property<'_>) -> bool {
+/// Reuse a slice reference's entry `NonNull`, `Align`, or `ValidNum` fact at exits
+/// when its MIR local is neither changed nor exposed by address. Memory-state
+/// properties such as `Allocated`, `Init`, and `Typed` still need VM checks.
+fn is_preserved_slice_ref_invariant(tcx: TyCtxt<'_>, def_id: DefId, property: &Property<'_>) -> bool {
     let Some(kind) = property.kind() else {
         return false;
     };

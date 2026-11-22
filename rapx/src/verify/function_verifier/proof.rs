@@ -2,12 +2,13 @@
 //!
 //! Slice paths, replay retained MIR through the symbolic VM, and check properties.
 
+use std::cell::Cell;
+
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{BasicBlock, Local, Operand, Rvalue, StatementKind, TerminatorKind},
     ty::TyCtxt,
 };
-use std::cell::Cell;
 
 use crate::analysis::path::PathTree;
 use crate::def_ids;
@@ -89,7 +90,8 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                 Self::combine_conjuncts_on_path(child, conjunct_results, next_conjunct)
             }).collect();
             let description = children.iter().find_map(|child| child.as_ref().map(|(_, path)| path.clone()))?;
-            let result = children.into_iter().map(|child| child.expect("each path checks every conjunct"))
+            let result = children.into_iter()
+                .map(|child| child.expect("each path checks every conjunct"))
                 .fold(CheckResult::ProvedByRule, |acc, (result, _)| acc.and(result));
             return Some((result, description));
         }
@@ -193,12 +195,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
 
     /// Follow the borrow passed to `ManuallyDrop::drop` on the current path.
     /// A reference temporary can point at different slots on different paths.
-    fn drop_referent_local(
-        &self,
-        tree: &PathTree,
-        checkpoint: &Checkpoint<'tcx>,
-        prefix: &[usize],
-    ) -> Option<Local> {
+    fn drop_referent_local(&self, tree: &PathTree, checkpoint: &Checkpoint<'tcx>, prefix: &[usize]) -> Option<Local> {
         let arg = checkpoint.args.first()?;
         let place = mir_utils::operand_mir_place(arg)?;
         let mut cur = place.local;
@@ -244,10 +241,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                     return Some(referent.local);
                 }
                 Rvalue::Ref(_, _, referent)
-                    if matches!(
-                        referent.projection.first(),
-                        Some(rustc_middle::mir::ProjectionElem::Deref)
-                    ) =>
+                    if matches!(referent.projection.first(), Some(rustc_middle::mir::ProjectionElem::Deref)) =>
                 {
                     cur = referent.local;
                 }
@@ -262,12 +256,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
     }
 
     /// Classify the first access to `local` in `block` after a manual drop.
-    fn block_local_access(
-        tcx: TyCtxt<'tcx>,
-        caller: DefId,
-        block: usize,
-        local: Local,
-    ) -> LocalAccess {
+    fn block_local_access(tcx: TyCtxt<'tcx>, caller: DefId, block: usize, local: Local) -> LocalAccess {
         let body = tcx.optimized_mir(caller);
         let data = &body.basic_blocks[BasicBlock::from(block)];
         for stmt in &data.statements {
@@ -287,9 +276,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         }
         if let Some(terminator) = &data.terminator {
             match &terminator.kind {
-                TerminatorKind::Call {
-                    args, destination, ..
-                } => {
+                TerminatorKind::Call { args, destination, .. } => {
                     if args.iter().any(|a| match &a.node {
                         Operand::Copy(p) | Operand::Move(p) => p.local == local,
                         Operand::Constant(_) => false,
@@ -333,13 +320,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         LocalAccess::None
     }
 
-    fn drop_suffix_reads(
-        &self,
-        tree: &PathTree,
-        caller: DefId,
-        slot: Local,
-        suffix: &[usize],
-    ) -> bool {
+    fn drop_suffix_reads(&self, tree: &PathTree, caller: DefId, slot: Local, suffix: &[usize]) -> bool {
         for &block in suffix {
             let Some((def_id, local_block)) = tree.block_fn_of(block) else {
                 continue;
@@ -357,46 +338,26 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
     }
 
     /// Insert callee boundaries from each retained item's callsite ancestry.
-    fn inject_inline_boundaries(
-        &self,
-        items: Vec<RelevantItem<'tcx>>,
-        tree: &PathTree,
-    ) -> Vec<RelevantItem<'tcx>> {
+    fn inject_inline_boundaries(&self, items: Vec<RelevantItem<'tcx>>, tree: &PathTree) -> Vec<RelevantItem<'tcx>> {
         let mut out = Vec::new();
         let mut active: Vec<(usize, usize)> = Vec::new();
 
         for item in items {
             let entry = match &item {
-                RelevantItem::Statement {
-                    block,
-                    global_block,
-                    ..
-                }
-                | RelevantItem::Terminator {
-                    block,
-                    global_block,
-                    ..
-                } => Some(
-                    global_block.expect("sliced MIR item has no global block") - block.as_usize(),
-                ),
+                RelevantItem::Statement { block, global_block, .. }
+                | RelevantItem::Terminator { block, global_block, .. } =>
+                    Some(global_block.expect("sliced MIR item has no global block") - block.as_usize()),
                 _ => None,
             };
             if let Some(mut entry) = entry {
-                if active
-                    .last()
-                    .map(|(active_entry, _)| *active_entry)
-                    .unwrap_or(0)
-                    == entry
-                {
+                if active.last().map(|(active_entry, _)| *active_entry).unwrap_or(0) == entry {
                     out.push(item);
                     continue;
                 }
                 let mut ancestry = Vec::new();
                 while entry != 0 {
                     ancestry.push(entry);
-                    entry = tree
-                        .call_parent_entry(entry)
-                        .expect("inlined callee has no parent entry");
+                    entry = tree.call_parent_entry(entry).expect("inlined callee has no parent entry");
                 }
                 ancestry.reverse();
 
@@ -410,12 +371,8 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                     out.push(RelevantItem::CalleeExit { dest });
                 }
                 for entry in ancestry.into_iter().skip(shared) {
-                    let (callee, _) = tree
-                        .block_fn_of(entry)
-                        .expect("inlined callee entry has no block metadata");
-                    let binding = tree
-                        .call_binding(entry)
-                        .expect("inlined callee entry has no call binding");
+                    let (callee, _) = tree.block_fn_of(entry).expect("inlined callee entry has no block metadata");
+                    let binding = tree.call_binding(entry).expect("inlined callee entry has no call binding");
                     out.push(RelevantItem::CalleeEntry {
                         callee,
                         body: self.slicer.body_for_entry(entry, callee),
@@ -437,27 +394,15 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
     /// argument positions at `checkpoint` rather than the callee's local
     /// numbering. Recurses through `Atom`/`And`/`Or` nodes and clears `origin`
     /// metadata (which only applies to the source-level property).
-    fn bind_property_to_checkpoint(
-        property: &Property<'tcx>,
-        checkpoint: &Checkpoint<'tcx>,
-    ) -> Property<'tcx> {
+    fn bind_property_to_checkpoint(property: &Property<'tcx>, checkpoint: &Checkpoint<'tcx>) -> Property<'tcx> {
         match property {
             Property::Atom(atom) => {
-                let new_args: Vec<contract::PropertyArg<'tcx>> = atom
-                    .args
-                    .iter()
+                let new_args: Vec<contract::PropertyArg<'tcx>> = atom.args.iter()
                     .map(|a| match a {
-                        contract::PropertyArg::Expr(expr) => {
-                            contract::PropertyArg::Expr(Self::rebind_contract_expr(
-                                expr, checkpoint,
-                            ))
-                        }
-                        contract::PropertyArg::ForEach(expr) => contract::PropertyArg::ForEach(
-                            Self::rebind_contract_expr(expr, checkpoint),
-                        ),
+                        contract::PropertyArg::Expr(expr) => contract::PropertyArg::Expr(Self::rebind_contract_expr(expr, checkpoint)),
+                        contract::PropertyArg::ForEach(expr) => contract::PropertyArg::ForEach(Self::rebind_contract_expr(expr, checkpoint)),
                         contract::PropertyArg::Predicates(predicates) => {
-                            let rebound: Vec<_> = predicates
-                                .iter()
+                            let rebound: Vec<_> = predicates.iter()
                                 .map(|p| {
                                     let lhs = Self::rebind_contract_expr(&p.lhs, checkpoint);
                                     let rhs = Self::rebind_contract_expr(&p.rhs, checkpoint);
@@ -477,17 +422,13 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                 })
             }
             Property::And(and) => Property::And(AndProperty {
-                conjuncts: and
-                    .conjuncts
-                    .iter()
+                conjuncts: and.conjuncts.iter()
                     .map(|p| Self::bind_property_to_checkpoint(p, checkpoint))
                     .collect(),
                 origin: None,
             }),
             Property::Or(or) => Property::Or(OrProperty {
-                disjuncts: or
-                    .disjuncts
-                    .iter()
+                disjuncts: or.disjuncts.iter()
                     .map(|p| Self::bind_property_to_checkpoint(p, checkpoint))
                     .collect(),
                 origin: None,
@@ -523,37 +464,23 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
 
     /// Recursively rewrite every place embedded in a contract expression,
     /// rebinding `Local` bases to argument positions via [`Self::rebind_place`].
-    fn rebind_contract_expr(
-        expr: &contract::ContractExpr<'tcx>,
-        checkpoint: &Checkpoint<'tcx>,
-    ) -> contract::ContractExpr<'tcx> {
+    fn rebind_contract_expr(expr: &contract::ContractExpr<'tcx>, checkpoint: &Checkpoint<'tcx>) -> contract::ContractExpr<'tcx> {
         match expr {
             contract::ContractExpr::Place(place) => {
                 contract::ContractExpr::Place(Self::rebind_place(place, checkpoint))
             }
             contract::ContractExpr::Len(inner, method) => {
-                contract::ContractExpr::Len(
-                    Box::new(Self::rebind_contract_expr(inner, checkpoint)),
-                    *method,
-                )
+                contract::ContractExpr::Len(Box::new(Self::rebind_contract_expr(inner, checkpoint)), *method)
             }
-            contract::ContractExpr::MethodCall {
-                receiver,
-                method,
-                args,
-            } => contract::ContractExpr::MethodCall {
+            contract::ContractExpr::MethodCall { receiver, method, args } => contract::ContractExpr::MethodCall {
                 receiver: Box::new(Self::rebind_contract_expr(receiver, checkpoint)),
                 method: *method,
-                args: args
-                    .iter()
+                args: args.iter()
                     .map(|arg| Self::rebind_contract_expr(arg, checkpoint))
                     .collect(),
             },
             contract::ContractExpr::IsEmpty(inner, method) => {
-                contract::ContractExpr::IsEmpty(
-                    Box::new(Self::rebind_contract_expr(inner, checkpoint)),
-                    *method,
-                )
+                contract::ContractExpr::IsEmpty(Box::new(Self::rebind_contract_expr(inner, checkpoint)), *method)
             }
             contract::ContractExpr::SizeOf(_)
             | contract::ContractExpr::AlignOf(_)
@@ -579,11 +506,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                     expr: Box::new(Self::rebind_contract_expr(inner, checkpoint)),
                 }
             }
-            contract::ContractExpr::If {
-                cond,
-                then_expr,
-                else_expr,
-            } => contract::ContractExpr::If {
+            contract::ContractExpr::If { cond, then_expr, else_expr } => contract::ContractExpr::If {
                 cond: Box::new(contract::NumericPredicate::new(
                     Self::rebind_contract_expr(&cond.lhs, checkpoint),
                     cond.op,
@@ -621,24 +544,16 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         let cached = cache.states_for(self.tcx, self.target.def_id, self.target.body, goal);
         properties.iter().map(|property| {
             cached.states.iter().zip(&cached.reachability)
-                .map(|(state, reachability)| {
-                    PropertyChecker.check(state, &fake_checkpoint, property, tree.is_structural(), reachability)
-                })
+                .map(|(state, reachability)| PropertyChecker.check(state, &fake_checkpoint, property, tree.is_structural(), reachability))
                 .fold(CheckResult::ProvedByRule, CheckResult::and)
         }).collect()
     }
 
-    fn prepare_goal(
-        &self,
-        tree: &PathTree,
-        goal: SlicedPath<'tcx>,
-        entry_facts: &[Property<'tcx>],
-    ) -> ProofGoal<'tcx> {
+    fn prepare_goal(&self, tree: &PathTree, goal: SlicedPath<'tcx>, entry_facts: &[Property<'tcx>]) -> ProofGoal<'tcx> {
         ProofGoal {
             path: goal.path,
             items: self.inject_inline_boundaries(goal.items, tree),
             entry_facts: entry_facts.to_vec(),
         }
     }
-
 }
