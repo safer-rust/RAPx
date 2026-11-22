@@ -6,7 +6,6 @@
 
 mod alias;
 mod auto_trait;
-pub(crate) use crate::analysis::dataflow::call_summary;
 mod checkpoint;
 pub(crate) mod config;
 mod display;
@@ -22,9 +21,10 @@ mod target;
 mod trait_ensurance;
 mod vm;
 
+pub(crate) use crate::analysis::dataflow::call_summary;
 pub(crate) use self::target::PrepareTargets;
 
-use std::{sync::Arc, time::Instant};
+use std::rc::Rc;
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
@@ -43,12 +43,12 @@ use crate::contract::{
     ensures::get_trait_method_ensures,
 };
 use self::{
+    config::{PostfixRepeat, VerifyConfig},
     display::{
         dedup_compound_props, emit_results_and_verdict, emit_verify_summary, fmt_contract_expanded,
         fmt_fn_path_with_bounds, print_contracts_debug,
     },
     function_verifier::FunctionVerifier,
-    config::{PostfixRepeat, VerifyConfig},
     loop_handling::LoopSensitivityAnalyzer,
     marker_trait::MarkerTraitVerifier,
     proof_cache::{VmCache, new_z3_context},
@@ -62,12 +62,12 @@ pub(crate) struct VerifyDriver<'tcx> {
     /// Compiler context for target collection and verification.
     tcx: TyCtxt<'tcx>,
     /// Verification options shared with target preparation and call handling.
-    config: Arc<VerifyConfig>,
+    config: Rc<VerifyConfig>,
 }
 
 impl<'tcx> VerifyDriver<'tcx> {
     /// Create a verification pass with the selected options.
-    pub(crate) fn new(tcx: TyCtxt<'tcx>, config: Arc<VerifyConfig>) -> Self {
+    pub(crate) fn new(tcx: TyCtxt<'tcx>, config: Rc<VerifyConfig>) -> Self {
         Self { tcx, config }
     }
 
@@ -90,6 +90,7 @@ impl<'tcx> VerifyDriver<'tcx> {
     ///
     /// Each sequence propagates the constructor's `#[rapx::requires]` through
     /// the mutator chain to serve as entry assumptions for the read method.
+    /// TODO: This sequence analysis is incomplete; it currently considers at most one mutator.
     fn run_invless_sequences(&self, targets: &[FunctionTarget<'tcx>]) {
         for target in targets {
             let read_def_id = target.def_id;
@@ -128,10 +129,7 @@ impl<'tcx> VerifyDriver<'tcx> {
             .collect();
         accumulated_requires.extend(con_contracts);
 
-        let mutated_fields: FxHashSet<_> = mut_ids
-            .iter()
-            .flat_map(|&mut_id| get_mutated_fields(self.tcx, mut_id))
-            .collect();
+        let mutated_fields: FxHashSet<_> = mut_ids.iter().flat_map(|&id| get_mutated_fields(self.tcx, id)).collect();
         if !mutated_fields.is_empty() {
             accumulated_requires.retain(|prop| {
                 let prop_fields = property_field_indices(prop);
@@ -172,18 +170,11 @@ impl<'tcx> VerifyDriver<'tcx> {
         trait_impl_limited: &mut bool,
     ) -> Option<String> {
         let z3_ctx = new_z3_context();
-        let mut cache = VmCache::new(&z3_ctx, Arc::clone(&self.config));
+        let mut cache = VmCache::new(&z3_ctx, Rc::clone(&self.config));
         for &repeat in repeat_rounds {
-            let verification_started = Instant::now();
-            match mir_utils::catch_panic(|| FunctionVerifier::verify_checkpoints(self.tcx, target, repeat, Arc::clone(&self.config), &mut cache)) {
+            match mir_utils::catch_panic(|| FunctionVerifier::verify_checkpoints(self.tcx, target, repeat, Rc::clone(&self.config), &mut cache)) {
                 Ok((results, limited)) => {
                     *trait_impl_limited |= limited;
-                    rap_debug!(
-                        "checked checkpoint paths for {} repeat {} in {:?}",
-                        skip_label,
-                        repeat,
-                        verification_started.elapsed()
-                    );
                     all_results.extend(results);
                 }
                 Err(msg) => {
@@ -249,15 +240,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
     fn run(&mut self) {
         register_compound_properties(self.tcx);
 
-        let collection_started = Instant::now();
-        rap_debug!("collecting verification targets");
-        let mut collector = VerifyTargetCollector::collect_all(self.tcx, Arc::clone(&self.config));
-        rap_debug!(
-            "collected {} function targets and {} trait targets in {:?}",
-            collector.function_targets.len(),
-            collector.trait_targets.len(),
-            collection_started.elapsed()
-        );
+        let mut collector = VerifyTargetCollector::collect_all(self.tcx, Rc::clone(&self.config));
 
         if self.config.debug_contracts {
             print_contracts_debug(self.tcx, &collector.function_targets, &collector.trait_targets);
@@ -266,17 +249,13 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
 
         // Verify every target, then merge results per function so that a
         // generic function's monomorphized instances are reported once.
-        let mut by_fn: FxHashMap<
-            DefId,
-            (Vec<PropertyCheckResult<'tcx>>, Option<String>, bool, bool),
-        > = FxHashMap::default();
+        let mut by_fn: FxHashMap<DefId, (Vec<PropertyCheckResult<'tcx>>, Option<String>, bool, bool)> =
+            FxHashMap::default();
         // Keep struct-invariant verdicts for later marker-trait obligations.
         let mut struct_invariant_results: FxHashMap<DefId, CheckResult> = FxHashMap::default();
 
         for target in &collector.function_targets {
             let target_path = fmt_fn_path_with_bounds(self.tcx, target.def_id);
-            let target_started = Instant::now();
-            rap_debug!("verifying target {target_path}");
             let mut all_results: Vec<PropertyCheckResult<'_>> = Vec::new();
             let mut fn_crashed: Option<String>;
             let mut trait_impl_limited = false;
@@ -290,23 +269,16 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
                 &mut all_results,
                 &mut trait_impl_limited,
             );
-            rap_debug!(
-                "verified function paths for {target_path} in {:?}",
-                target_started.elapsed()
-            );
 
             if !target.struct_invariants.is_empty() && !self.config.skip_invariant {
-                let verifier = FunctionVerifier::new_with_repeat(self.tcx, target, planned_repeat, Arc::clone(&self.config));
+                let verifier = FunctionVerifier::new_with_repeat(self.tcx, target, planned_repeat, Rc::clone(&self.config));
                 trait_impl_limited |= verifier.is_trait_impl_limited();
                 match mir_utils::catch_panic(|| verifier.verify_struct_invariants()) {
                     Ok(struct_results) => {
                         if let Some(struct_id) = target.owner_struct_def_id {
                             let verdict = struct_results.iter()
-                                .fold(CheckResult::ProvedByRule, |acc, r| {
-                                    acc.and(r.result.clone())
-                                });
-                            struct_invariant_results
-                                .entry(struct_id)
+                                .fold(CheckResult::ProvedByRule, |acc, r| acc.and(r.result.clone()));
+                            struct_invariant_results.entry(struct_id)
                                 .and_modify(|v| *v = v.clone().and(verdict.clone()))
                                 .or_insert(verdict);
                         }
@@ -321,7 +293,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
             }
 
             if !target.type_invariants.is_empty() && !self.config.skip_invariant {
-                let verifier = FunctionVerifier::new_with_repeat(self.tcx, target, planned_repeat, Arc::clone(&self.config));
+                let verifier = FunctionVerifier::new_with_repeat(self.tcx, target, planned_repeat, Rc::clone(&self.config));
                 trait_impl_limited |= verifier.is_trait_impl_limited();
                 match mir_utils::catch_panic(|| verifier.verify_type_invariants()) {
                     Ok(type_results) => all_results.extend(type_results),
@@ -349,9 +321,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
                 && target.struct_invariants.is_empty()
                 && (target.type_invariants.is_empty() || !target.has_checkable_checkpoint());
 
-            let entry = by_fn
-                .entry(target.def_id)
-                .or_insert_with(|| (Vec::new(), None, false, false));
+            let entry = by_fn.entry(target.def_id).or_insert_with(|| (Vec::new(), None, false, false));
             entry.0.extend(all_results);
             if fn_crashed.is_some() {
                 entry.1 = fn_crashed;
@@ -423,18 +393,12 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
                 continue;
             };
             rap_info!("============================================================");
-            rap_info!(
-                "[rapx::verify] unsafe trait impl: {}",
-                self.tcx.def_path_str(trait_target.def_id)
-            );
+            rap_info!("[rapx::verify] unsafe trait impl: {}", self.tcx.def_path_str(trait_target.def_id));
             rap_info!("============================================================");
             if let Some(self_ty) = trait_target.self_ty_def_id {
                 rap_info!("  impl for: {}", self.tcx.def_path_str(self_ty));
             } else {
-                rap_info!(
-                    "  impl: {}",
-                    self.tcx.def_path_str(trait_target.impl_def_id)
-                );
+                rap_info!("  impl: {}", self.tcx.def_path_str(trait_target.impl_def_id));
             }
             if ensures.is_empty() {
                 rap_info!("  ensures: <none>");
@@ -445,10 +409,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
                     let Some(trait_method) = item.trait_item_def_id() else {
                         continue;
                     };
-                    if !ensures
-                        .iter()
-                        .any(|(name, _)| *name == self.tcx.def_path_str(trait_method))
-                    {
+                    if !ensures.iter().any(|(name, _)| *name == self.tcx.def_path_str(trait_method)) {
                         continue;
                     }
                     checked_methods.insert(self.tcx.def_path_str(trait_method));
@@ -456,10 +417,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
                     rap_info!("    fn {}:", item.name());
                     for property in dedup_compound_props(postconditions.iter()) {
                         let (call, _) = fmt_contract_expanded(
-                            self.tcx,
-                            property,
-                            trait_target.self_ty_def_id,
-                            Some(item.def_id),
+                            self.tcx, property, trait_target.self_ty_def_id, Some(item.def_id),
                         );
                         rap_info!("      - {call}");
                     }
@@ -472,7 +430,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
                     let mut results = Vec::new();
                     let mut crashed = None;
                     for repeat in repeats {
-                        let verifier = FunctionVerifier::new_with_repeat(self.tcx, &target, repeat, Arc::clone(&self.config));
+                        let verifier = FunctionVerifier::new_with_repeat(self.tcx, &target, repeat, Rc::clone(&self.config));
                         match mir_utils::catch_panic(|| verifier.verify_postconditions(&postconditions)) {
                             Ok(postcondition_results) => results.extend(postcondition_results),
                             Err(message) => {
@@ -493,12 +451,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
                     }
                     rap_info!("    fn {method_name}:");
                     for property in dedup_compound_props(contracts.iter()) {
-                        let (call, _) = fmt_contract_expanded(
-                            self.tcx,
-                            property,
-                            trait_target.self_ty_def_id,
-                            None,
-                        );
+                        let (call, _) = fmt_contract_expanded(self.tcx, property, trait_target.self_ty_def_id, None);
                         rap_info!("      - {call}");
                     }
                     rap_warn!("      result: UNKNOWN (default method body not checked)");
@@ -508,11 +461,8 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
         }
 
         // Verify marker-trait (`Send`/`Sync`) impls structurally.
-        let marker_targets: Vec<_> = collector
-            .trait_targets
-            .iter()
-            .filter(|t| matches!(&t.kind, TraitEnsuranceKind::Marker(..)))
-            .collect();
+        let marker_targets: Vec<_> = collector.trait_targets.iter()
+            .filter(|t| matches!(&t.kind, TraitEnsuranceKind::Marker(..))).collect();
         if !marker_targets.is_empty() {
             MarkerTraitVerifier::new(self.tcx, &struct_invariant_results).emit(&marker_targets);
         }
@@ -563,10 +513,7 @@ fn remap_constructor_contract<'tcx>(property: Property<'tcx>) -> Property<'tcx> 
             return arg.clone();
         };
         let projection = ContractProjection::Field { index: field_idx };
-        let mut new_place = ContractPlace {
-            base: PlaceBase::Arg(0),
-            projections: vec![projection],
-        };
+        let mut new_place = ContractPlace { base: PlaceBase::Arg(0), projections: vec![projection] };
         new_place.projections.extend(place.projections.iter().cloned());
         match arg {
             PropertyArg::ForEach(_) => PropertyArg::ForEach(ContractExpr::Place(new_place)),

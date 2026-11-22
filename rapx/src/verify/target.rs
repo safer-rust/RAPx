@@ -34,7 +34,7 @@ use rustc_middle::{
 };
 use rustc_span::Span;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::rc::Rc;
 
 use super::{
     config::VerifyConfig,
@@ -471,7 +471,7 @@ fn resolve_chain_contracts<'tcx>(
 /// Visitor that collects targets annotated with `#[rapx::verify]`.
 pub(crate) struct VerifyTargetCollector<'tcx> {
     tcx: TyCtxt<'tcx>,
-    config: Arc<VerifyConfig>,
+    config: Rc<VerifyConfig>,
     crate_filter_matched: bool,
     module_filter_matched: bool,
     /// All function targets to verify collected from the current crate.
@@ -487,7 +487,7 @@ pub(crate) struct VerifyTargetCollector<'tcx> {
 
 impl<'tcx> VerifyTargetCollector<'tcx> {
     /// Collect verification targets from the crate currently being compiled.
-    pub(crate) fn collect_all(tcx: TyCtxt<'tcx>, config: Arc<VerifyConfig>) -> Self {
+    pub(crate) fn collect_all(tcx: TyCtxt<'tcx>, config: Rc<VerifyConfig>) -> Self {
         let mut collector = Self {
             tcx,
             config,
@@ -999,12 +999,12 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
 /// resulting functions, structs, trait impls, and their obligations.
 pub(crate) struct PrepareTargets<'tcx> {
     tcx: TyCtxt<'tcx>,
-    config: Arc<VerifyConfig>,
+    config: Rc<VerifyConfig>,
 }
 
 impl<'tcx> Analysis for PrepareTargets<'tcx> {
     fn run(&mut self) {
-        let collector = VerifyTargetCollector::collect_all(self.tcx, Arc::clone(&self.config));
+        let collector = VerifyTargetCollector::collect_all(self.tcx, Rc::clone(&self.config));
 
         let free_targets: Vec<_> = collector
             .function_targets
@@ -1098,7 +1098,7 @@ impl<'tcx> Analysis for PrepareTargets<'tcx> {
 }
 
 impl<'tcx> PrepareTargets<'tcx> {
-    pub(crate) fn new(tcx: TyCtxt<'tcx>, config: Arc<VerifyConfig>) -> Self {
+    pub(crate) fn new(tcx: TyCtxt<'tcx>, config: Rc<VerifyConfig>) -> Self {
         Self { tcx, config }
     }
 
@@ -1266,7 +1266,7 @@ impl<'tcx> PrepareTargets<'tcx> {
             return path_map;
         }
 
-        let tree = PathExtractor::new_with_body(self.tcx, Arc::clone(&self.config), target.def_id, 0, target.body)
+        let tree = PathExtractor::new_with_body(self.tcx, Rc::clone(&self.config), target.def_id, 0, target.body)
             .with_callee_bodies(target.callee_bodies.clone())
             .run();
 

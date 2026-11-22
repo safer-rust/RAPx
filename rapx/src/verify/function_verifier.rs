@@ -4,7 +4,7 @@
 
 mod proof;
 
-use std::sync::Arc;
+use std::rc::Rc;
 
 use indexmap::IndexMap;
 use rustc_hir::def_id::DefId;
@@ -42,7 +42,7 @@ pub(crate) struct FunctionVerifier<'target, 'tcx> {
     /// Compiler context for type and MIR queries.
     tcx: TyCtxt<'tcx>,
     /// Options shared by path extraction and VM execution.
-    config: Arc<VerifyConfig>,
+    config: Rc<VerifyConfig>,
     /// Collected checkpoints, contracts, and invariants for this function.
     target: &'target FunctionTarget<'tcx>,
     /// Paths through the function and expanded callees for this verification run.
@@ -57,16 +57,16 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         self.path_tree.is_trait_impl_limited()
     }
 
-    pub(crate) fn new_with_repeat(tcx: TyCtxt<'tcx>, target: &'target FunctionTarget<'tcx>, allow_repeat: usize, config: Arc<VerifyConfig>) -> Self {
+    pub(crate) fn new_with_repeat(tcx: TyCtxt<'tcx>, target: &'target FunctionTarget<'tcx>, allow_repeat: usize, config: Rc<VerifyConfig>) -> Self {
         Self::new_with_repeat_checkpoint(tcx, target, allow_repeat, None, config)
     }
 
     /// Build paths for one checkpoint; Alias checks retain the path suffix.
-    fn new_for_checkpoint(tcx: TyCtxt<'tcx>, target: &'target FunctionTarget<'tcx>, allow_repeat: usize, checkpoint: &Checkpoint<'tcx>, config: Arc<VerifyConfig>) -> Self {
+    fn new_for_checkpoint(tcx: TyCtxt<'tcx>, target: &'target FunctionTarget<'tcx>, allow_repeat: usize, checkpoint: &Checkpoint<'tcx>, config: Rc<VerifyConfig>) -> Self {
         Self::new_with_repeat_checkpoint(tcx, target, allow_repeat, Some(checkpoint), config)
     }
 
-    fn new_with_repeat_checkpoint(tcx: TyCtxt<'tcx>, target: &'target FunctionTarget<'tcx>, allow_repeat: usize, checkpoint: Option<&Checkpoint<'tcx>>, config: Arc<VerifyConfig>) -> Self {
+    fn new_with_repeat_checkpoint(tcx: TyCtxt<'tcx>, target: &'target FunctionTarget<'tcx>, allow_repeat: usize, checkpoint: Option<&Checkpoint<'tcx>>, config: Rc<VerifyConfig>) -> Self {
         let locations = checkpoint.map_or_else(
             || target.all_checkpoints().map(Checkpoint::location).collect::<Vec<_>>(),
             |checkpoint| vec![checkpoint.location()],
@@ -75,7 +75,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
             .filter(|checkpoint| !target.properties_for_callsite(checkpoint).iter().any(Self::property_contains_alias))
             .map(|checkpoint| checkpoint.block.as_usize());
         let (path_tree, callee_bodies, entry_bodies) =
-            PathExtractor::new_with_body(tcx, Arc::clone(&config), target.def_id, allow_repeat, target.body)
+            PathExtractor::new_with_body(tcx, Rc::clone(&config), target.def_id, allow_repeat, target.body)
                 .with_callee_bodies(target.callee_bodies.clone())
                 .with_checkpoints(&locations)
                 .with_terminal_target(terminal_target)
@@ -90,7 +90,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
     }
 
     /// Enumerate and check paths independently for each unsafe operation.
-    pub(crate) fn verify_checkpoints(tcx: TyCtxt<'tcx>, target: &'target FunctionTarget<'tcx>, allow_repeat: usize, config: Arc<VerifyConfig>, cache: &mut VmCache<'_, 'tcx>) -> (Vec<PropertyCheckResult<'tcx>>, bool) {
+    pub(crate) fn verify_checkpoints(tcx: TyCtxt<'tcx>, target: &'target FunctionTarget<'tcx>, allow_repeat: usize, config: Rc<VerifyConfig>, cache: &mut VmCache<'_, 'tcx>) -> (Vec<PropertyCheckResult<'tcx>>, bool) {
         let mut results = Vec::new();
         let mut trait_impl_limited = false;
         for (checkpoint_index, checkpoint) in target.all_checkpoints().enumerate() {
@@ -98,7 +98,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                 && !(checkpoint.kind == CheckpointKind::UnsafeCall && checkpoint.callee.is_none()) {
                 continue;
             }
-            let verifier = Self::new_for_checkpoint(tcx, target, allow_repeat, checkpoint, Arc::clone(&config));
+            let verifier = Self::new_for_checkpoint(tcx, target, allow_repeat, checkpoint, Rc::clone(&config));
             trait_impl_limited |= verifier.is_trait_impl_limited();
             verifier.verify_checkpoint(cache, checkpoint, checkpoint_index, &mut results);
         }
@@ -207,9 +207,9 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         let mut results = Vec::new();
         let z3_ctx = new_z3_context();
         let mut cache = if label == "type" {
-            VmCache::new_with_capacity(&z3_ctx, 512, Arc::clone(&self.config))
+            VmCache::new_with_capacity(&z3_ctx, 512, Rc::clone(&self.config))
         } else {
-            VmCache::new(&z3_ctx, Arc::clone(&self.config))
+            VmCache::new(&z3_ctx, Rc::clone(&self.config))
         };
         for (checkpoint, tree) in self.build_exit_trees(check_unwind) {
             let all_paths = tree.to_vecs();

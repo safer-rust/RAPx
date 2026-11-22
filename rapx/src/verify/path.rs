@@ -30,7 +30,7 @@ use crate::analysis::path::{
 };
 use crate::compat::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
-use std::{rc::Rc, sync::Arc};
+use std::rc::Rc;
 
 use crate::verify::{checkpoint::CheckpointLocation, config::VerifyConfig};
 
@@ -49,7 +49,7 @@ pub(crate) type CalleeBodies<'tcx> = FxHashMap<DefId, &'tcx Body<'tcx>>;
 pub(crate) struct PathExtractor<'tcx> {
     /// Compiler type context used for MIR access and name resolution.
     tcx: TyCtxt<'tcx>,
-    config: Arc<VerifyConfig>,
+    config: Rc<VerifyConfig>,
     /// The function whose MIR body is being analyzed.
     def_id: DefId,
     /// Number of extra SCC postfix repetitions allowed (default 0).
@@ -72,7 +72,7 @@ impl<'tcx> PathExtractor<'tcx> {
     /// is allowed beyond the first occurrence. Default is 0 (no extra repeats).
     pub(crate) fn new_with_body(
         tcx: TyCtxt<'tcx>,
-        config: Arc<VerifyConfig>,
+        config: Rc<VerifyConfig>,
         def_id: DefId,
         allow_repeat: usize,
         body: Option<&'tcx rustc_middle::mir::Body<'tcx>>,
@@ -128,7 +128,7 @@ impl<'tcx> PathExtractor<'tcx> {
             .enumerate_paths_repeat(self.allow_repeat);
         let mut call_index = CallSiteIndex::new(
             self.tcx,
-            Arc::clone(&self.config),
+            Rc::clone(&self.config),
             self.def_id,
             self.body.cloned(),
             self.callee_bodies,

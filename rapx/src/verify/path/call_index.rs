@@ -9,7 +9,7 @@ use crate::limit::{HINTED_CALLEE_BLOCK_LIMIT, LOCAL_CALLEE_BLOCK_LIMIT};
 use crate::contract::ensures::has_slice_offset_ensures;
 use crate::verify::config::VerifyConfig;
 use crate::vm::constructor_policy::effective_constructor_mir_mode;
-use std::sync::Arc;
+use std::rc::Rc;
 #[cfg(rapx_has_attr_ir)]
 use rustc_attr_ir::InlineAttr;
 #[cfg(not(rapx_has_attr_ir))]
@@ -25,7 +25,7 @@ pub(crate) type EntryBodies<'tcx> = FxHashMap<usize, &'tcx Body<'tcx>>;
 /// Maps callsites to callee block identities and argument bindings.
 pub(crate) struct CallSiteIndex<'tcx> {
     tcx: TyCtxt<'tcx>,
-    config: Arc<VerifyConfig>,
+    config: Rc<VerifyConfig>,
     blocks: Vec<(DefId, usize)>,
     bodies: FxHashMap<usize, Body<'tcx>>,
     instances: FxHashMap<usize, Instance<'tcx>>,
@@ -38,7 +38,7 @@ pub(crate) struct CallSiteIndex<'tcx> {
 impl<'tcx> CallSiteIndex<'tcx> {
     pub(crate) fn new(
         tcx: TyCtxt<'tcx>,
-        config: Arc<VerifyConfig>,
+        config: Rc<VerifyConfig>,
         root: DefId,
         body: Option<Body<'tcx>>,
         callee_bodies: CalleeBodies<'tcx>,

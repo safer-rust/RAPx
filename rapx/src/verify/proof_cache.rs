@@ -5,7 +5,7 @@ use rustc_middle::{
     mir::{BasicBlock, Body},
     ty::TyCtxt,
 };
-use std::{cell::Cell, sync::Arc};
+use std::{cell::Cell, rc::Rc, sync::Arc};
 use z3::Config;
 
 use crate::analysis::path::CallArg;
@@ -45,7 +45,7 @@ struct PrefixEdge<'tcx> {
 /// Symbolic states shared by properties that retain the same MIR and entry facts.
 pub(crate) struct VmCache<'z3, 'tcx> {
     context: &'z3 z3::Context,
-    config: Arc<VerifyConfig>,
+    config: Rc<VerifyConfig>,
     states: FxHashMap<Vec<GoalItemKey<'tcx>>, CachedGoal<'z3, 'tcx>>,
     prefix_edges: FxHashMap<PrefixEdge<'tcx>, usize>,
     prefix_states: Vec<Arc<Vec<VmExecutor<'z3, 'tcx>>>>,
@@ -61,11 +61,11 @@ const VM_CACHE_MAX_ENTRIES: usize = 128;
 const VM_PREFIX_STRIDE: usize = 16;
 
 impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
-    pub(crate) fn new(context: &'z3 z3::Context, config: Arc<VerifyConfig>) -> Self {
+    pub(crate) fn new(context: &'z3 z3::Context, config: Rc<VerifyConfig>) -> Self {
         Self::new_with_capacity(context, VM_CACHE_MAX_ENTRIES, config)
     }
 
-    pub(crate) fn new_with_capacity(context: &'z3 z3::Context, max_entries: usize, config: Arc<VerifyConfig>) -> Self {
+    pub(crate) fn new_with_capacity(context: &'z3 z3::Context, max_entries: usize, config: Rc<VerifyConfig>) -> Self {
         Self {
             context,
             config,

@@ -63,7 +63,7 @@ use rustc_driver::{Callbacks, Compilation};
 use rustc_interface::interface::{self, Compiler};
 use rustc_middle::{ty::TyCtxt, util::Providers};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::{rc::Rc, sync::Arc};
 
 pub static RAPX_DEFAULT_ARGS: &[&str] = &[
     "-Zalways-encode-mir",
@@ -269,7 +269,7 @@ pub fn start_analyzer(tcx: TyCtxt, callback: &RapCallback) {
         },
 
         Commands::Verify(args) => {
-            let config = Arc::new(args.clone());
+            let config = Rc::new(args.clone());
             if config.prepare_targets {
                 PrepareTargets::new(tcx, config).run();
             } else {
