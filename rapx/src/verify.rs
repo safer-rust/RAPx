@@ -65,7 +65,7 @@ pub(crate) struct VerifyDriver<'tcx> {
 }
 
 #[derive(Default)]
-struct FunctionOutcome<'tcx> {
+struct FunctionVerdicts<'tcx> {
     results: Vec<PropertyCheckResult<'tcx>>,
     no_checkpoints: bool,
     limits: VerificationLimits,
@@ -77,13 +77,10 @@ impl<'tcx> VerifyDriver<'tcx> {
         Self { tcx, config }
     }
 
-    fn repeat_rounds_for_target(&self, target: &FunctionTarget<'tcx>) -> (usize, Vec<usize>) {
+    fn max_repeat_for_target(&self, target: &FunctionTarget<'tcx>) -> usize {
         match &self.config.postfix_repeat {
-            PostfixRepeat::Fixed(n) => (*n, (0..=*n).collect()),
-            PostfixRepeat::Auto => {
-                let repeat = LoopSensitivityAnalyzer::new(self.tcx).analyze(target);
-                (repeat, (0..=repeat).collect())
-            }
+            PostfixRepeat::Fixed(n) => *n,
+            PostfixRepeat::Auto => LoopSensitivityAnalyzer::new(self.tcx).analyze(target),
         }
     }
 
@@ -164,17 +161,17 @@ impl<'tcx> VerifyDriver<'tcx> {
         }
     }
 
-    /// Run `verify_checkpoints` across `repeat_rounds`, collecting results.
+    /// Run `verify_checkpoints` at every repeat depth up to `max_repeat`.
     fn run_repeat_rounds(
         &self,
         target: &FunctionTarget<'tcx>,
-        repeat_rounds: &[usize],
+        max_repeat: usize,
         all_results: &mut Vec<PropertyCheckResult<'tcx>>,
         limits: &mut VerificationLimits,
     ) {
         let z3_ctx = new_z3_context();
         let mut cache = VmCache::new(&z3_ctx, Rc::clone(&self.config));
-        for &repeat in repeat_rounds {
+        for repeat in 0..=max_repeat {
             let (results, round_limits) = FunctionVerifier::verify_checkpoints(self.tcx, target, repeat, Rc::clone(&self.config), &mut cache);
             limits.merge(round_limits);
             all_results.extend(results);
@@ -190,8 +187,8 @@ impl<'tcx> VerifyDriver<'tcx> {
     ) {
         let mut all_results: Vec<PropertyCheckResult<'_>> = Vec::new();
         let mut limits = VerificationLimits::default();
-        let (_, repeat_rounds) = self.repeat_rounds_for_target(con_target);
-        self.run_repeat_rounds(con_target, &repeat_rounds, &mut all_results, &mut limits);
+        let max_repeat = self.max_repeat_for_target(con_target);
+        self.run_repeat_rounds(con_target, max_repeat, &mut all_results, &mut limits);
 
         let read_name = short_fn_name(self.tcx, read_def_id);
         let con_name = short_fn_name(self.tcx, con_id);
@@ -230,25 +227,25 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
             return;
         }
 
-        // Merge target outcomes per function so monomorphized instances are reported once.
-        let mut function_outcomes: FxHashMap<DefId, FunctionOutcome<'tcx>> = FxHashMap::default();
+        // Merge target results per function so monomorphized instances are reported once.
+        let mut function_verdicts: FxHashMap<DefId, FunctionVerdicts<'tcx>> = FxHashMap::default();
         // Keep struct-invariant verdicts for later marker-trait obligations.
-        let mut struct_invariant_verdicts: FxHashMap<DefId, CheckResult> = FxHashMap::default();
+        let mut marker_trait_invariant_verdicts: FxHashMap<DefId, CheckResult> = FxHashMap::default();
 
         for target in &collector.function_targets {
             let mut all_results: Vec<PropertyCheckResult<'_>> = Vec::new();
             let mut limits = VerificationLimits::default();
-            let (planned_repeat, repeat_rounds) = self.repeat_rounds_for_target(target);
-            self.run_repeat_rounds(target, &repeat_rounds, &mut all_results, &mut limits);
+            let max_repeat = self.max_repeat_for_target(target);
+            self.run_repeat_rounds(target, max_repeat, &mut all_results, &mut limits);
 
             if !target.struct_invariants.is_empty() && !self.config.skip_invariant {
-                let verifier = FunctionVerifier::new_with_repeat(self.tcx, target, planned_repeat, Rc::clone(&self.config));
+                let verifier = FunctionVerifier::new_with_repeat(self.tcx, target, max_repeat, Rc::clone(&self.config));
                 limits.merge(verifier.limits());
                 let struct_results = verifier.verify_struct_invariants();
                 if let Some(struct_id) = target.owner_struct_def_id {
                     let verdict = struct_results.iter()
                         .fold(CheckResult::ProvedByRule, |acc, r| acc.and(r.result.clone()));
-                    struct_invariant_verdicts.entry(struct_id)
+                    marker_trait_invariant_verdicts.entry(struct_id)
                         .and_modify(|v| *v = v.clone().and(verdict.clone()))
                         .or_insert(verdict);
                 }
@@ -256,7 +253,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
             }
 
             if !target.type_invariants.is_empty() && !self.config.skip_invariant {
-                let verifier = FunctionVerifier::new_with_repeat(self.tcx, target, planned_repeat, Rc::clone(&self.config));
+                let verifier = FunctionVerifier::new_with_repeat(self.tcx, target, max_repeat, Rc::clone(&self.config));
                 limits.merge(verifier.limits());
                 all_results.extend(verifier.verify_type_invariants());
             }
@@ -278,17 +275,17 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
                 && (target.type_invariants.is_empty() || !target.has_checkable_checkpoint());
 
             limits.mono_limited |= target.body.is_some();
-            let entry = function_outcomes.entry(target.def_id).or_default();
+            let entry = function_verdicts.entry(target.def_id).or_default();
             entry.results.extend(all_results);
             entry.no_checkpoints |= no_checkpoints;
             entry.limits.merge(limits);
         }
 
-        let mut ordered: Vec<DefId> = function_outcomes.keys().copied().collect();
+        let mut ordered: Vec<DefId> = function_verdicts.keys().copied().collect();
         ordered.sort_by_key(|d| self.tcx.def_path_str(*d));
         for def_id in ordered {
-            let FunctionOutcome { results: all_results, no_checkpoints, limits } =
-                function_outcomes.remove(&def_id).unwrap();
+            let FunctionVerdicts { results: all_results, no_checkpoints, limits } =
+                function_verdicts.remove(&def_id).unwrap();
             let target_path = fmt_fn_path_with_bounds(self.tcx, def_id);
 
             if all_results.is_empty() && !limits.path_limited {
@@ -372,10 +369,10 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
                         continue;
                     }
                     let target = collector.build_function_target(item.def_id, None);
-                    let (_, repeats) = self.repeat_rounds_for_target(&target);
+                    let max_repeat = self.max_repeat_for_target(&target);
                     let mut results = Vec::new();
                     let mut limits = VerificationLimits::default();
-                    for repeat in repeats {
+                    for repeat in 0..=max_repeat {
                         let verifier = FunctionVerifier::new_with_repeat(self.tcx, &target, repeat, Rc::clone(&self.config));
                         limits.merge(verifier.limits());
                         results.extend(verifier.verify_postconditions(&postconditions));
@@ -401,7 +398,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
         let marker_targets: Vec<_> = collector.trait_targets.iter()
             .filter(|t| matches!(&t.kind, TraitEnsuranceKind::Marker(..))).collect();
         if !marker_targets.is_empty() {
-            MarkerTraitVerifier::new(self.tcx, &struct_invariant_verdicts).emit(&marker_targets);
+            MarkerTraitVerifier::new(self.tcx, &marker_trait_invariant_verdicts).emit(&marker_targets);
         }
 
         if self.config.skip_invariant {
