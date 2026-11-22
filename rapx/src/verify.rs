@@ -35,7 +35,6 @@ use crate::util::{
     fn_info::{get_cons, get_mutated_fields, get_muts},
     name::short_fn_name,
 };
-
 use crate::contract::{
     ContractExpr, ContractPlace, ContractProjection, PlaceBase, Property, PropertyArg,
     annotation::get_contract_from_annotation, compound::register_compound_properties,
@@ -229,7 +228,6 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
 
         // Merge target results per function so monomorphized instances are reported once.
         let mut function_verdicts: FxHashMap<DefId, FunctionVerdicts<'tcx>> = FxHashMap::default();
-
         for target in &collector.function_targets {
             let mut all_results: Vec<PropertyCheckResult<'_>> = Vec::new();
             let mut limits = VerificationLimits::default();
@@ -297,15 +295,10 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
             );
         }
 
-        let mut unsafe_traits: Vec<_> = collector
-            .trait_targets
-            .iter()
-            .filter(|t| matches!(&t.kind, TraitEnsuranceKind::Unsafe(_)))
-            .cloned()
-            .collect();
-        unsafe_traits.sort_by_key(|t| self.tcx.def_path_str(t.def_id));
-        for trait_target in unsafe_traits {
+        let marker_verifier = MarkerTraitVerifier::new(self.tcx);
+        for trait_target in std::mem::take(&mut collector.trait_targets) {
             let TraitEnsuranceKind::Unsafe(ensures) = &trait_target.kind else {
+                marker_verifier.emit(&[&trait_target]);
                 continue;
             };
             rap_info!("============================================================");
@@ -365,13 +358,6 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
                 }
             }
             rap_info!("");
-        }
-
-        // Verify marker-trait (`Send`/`Sync`) impls structurally.
-        let marker_targets: Vec<_> = collector.trait_targets.iter()
-            .filter(|t| matches!(&t.kind, TraitEnsuranceKind::Marker(..))).collect();
-        if !marker_targets.is_empty() {
-            MarkerTraitVerifier::new(self.tcx).emit(&marker_targets);
         }
 
         if self.config.skip_invariant {
