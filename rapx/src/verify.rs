@@ -248,8 +248,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
                 && target.checkpoints.iter().all(|ckpt| ckpt.callee.is_some() && target.properties_for_callsite(ckpt).is_empty())
                 && target.raw_ptr_deref_checks.is_empty()
                 && target.static_mut_checks.is_empty()
-                && target.declared_invariants().is_empty()
-                && (target.builtin_invariants().is_empty() || !target.has_checkable_checkpoint());
+                && target.declared_invariants().is_empty();
 
             limits.mono_limited |= target.body.is_some();
             let entry = function_verdicts.entry(target.def_id).or_default();
