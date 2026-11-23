@@ -1,7 +1,7 @@
 //! Backward data-dependency slicer.
 //!
-//! Given a path tree, a checkpoint, and a property, it walks each path backward
-//! to keep only the MIR items that are data-relevant to the property, producing
+//! Given a path tree, a checkpoint, and properties, it walks each path backward
+//! to keep only the MIR items relevant to those properties, producing
 //! one [`SlicedPath`] per path for the symbolic VM to execute forward.
 
 mod relevance;
@@ -25,8 +25,7 @@ use crate::verify::path::{CalleeBodies, EntryBodies};
 use super::path::Path;
 pub(crate) use crate::vm::RelevantItem;
 
-/// A proof goal for one `(checkpoint, path)` item: the set of relevant items
-/// plus the path context needed to verify the target property.
+/// Relevant MIR items and path context for one checkpoint occurrence.
 #[derive(Clone, Debug)]
 pub(crate) struct SlicedPath<'tcx> {
     /// Path being visited; `path.target` identifies the checkpoint.
@@ -41,6 +40,7 @@ type LeafItem<'tcx> = (
     RelevantPlaces,
     Vec<(DefId, Vec<CallArg>, RelevantPlaces)>,
 );
+type EntryData<'tcx> = (&'tcx Body<'tcx>, Rc<DataflowGraph>);
 
 #[derive(Clone, Copy)]
 struct SliceOptions {
@@ -72,7 +72,7 @@ impl SliceOptions {
 
 /// Entry point for backward path visiting.
 pub(crate) struct BackwardSlicer<'tcx> {
-    pub(in crate::verify::slicer) tcx: TyCtxt<'tcx>,
+    tcx: TyCtxt<'tcx>,
     caller_def_id: DefId,
     instance_body: Option<&'tcx Body<'tcx>>,
     callee_bodies: CalleeBodies<'tcx>,
@@ -99,7 +99,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         }
     }
 
-    pub(in crate::verify::slicer) fn body_for(&self, def_id: DefId) -> &'tcx Body<'tcx> {
+    fn body_for(&self, def_id: DefId) -> &'tcx Body<'tcx> {
         if def_id == self.caller_def_id
             && let Some(body) = self.instance_body
         {
@@ -113,10 +113,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
 
     /// Return the selected MIR body for an inlined call entry, if available.
     pub(crate) fn body_for_entry(&self, entry: usize, callee: DefId) -> Option<&'tcx Body<'tcx>> {
-        self.entry_bodies
-            .get(&entry)
-            .copied()
-            .or_else(|| self.callee_bodies.get(&callee).copied())
+        self.entry_bodies.get(&entry).copied().or_else(|| self.callee_bodies.get(&callee).copied())
     }
 
     /// Visit the path tree once for the union of checkpoint requirements.
@@ -161,8 +158,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         )
     }
 
-    /// Internal: post-order recursion returning per-leaf
-    /// `(block_path, backward_items)`.
+    /// Walk the path tree backward and convert each leaf into a sliced path.
     fn visit_path_tree_impl(
         &self,
         tree: &PathTree,
@@ -176,19 +172,15 @@ impl<'tcx> BackwardSlicer<'tcx> {
         let Some(root) = tree.root() else {
             return Vec::new();
         };
-        let checkpoint_loc = CheckpointLocation {
-            caller,
-            block: checkpoint_block,
-        };
+        let checkpoint_loc = CheckpointLocation { caller, block: checkpoint_block };
 
         // Pre-build the MIR body and dataflow graph for every function reachable
         // through this tree (caller + inlined callees), so inlined blocks resolve
         // to the correct body/flow.
-        let mut bodies: HashMap<usize, &'tcx Body<'tcx>> = HashMap::new();
-        let mut flows: HashMap<usize, Rc<DataflowGraph>> = HashMap::new();
+        let mut entries: HashMap<usize, EntryData<'tcx>> = HashMap::new();
         for (global, &(def_id, local)) in tree.block_fns().iter().enumerate() {
             let entry = global - local;
-            if bodies.contains_key(&entry) {
+            if entries.contains_key(&entry) {
                 continue;
             }
             let body = self.entry_bodies.get(&entry).copied().unwrap_or_else(|| self.body_for(def_id));
@@ -196,8 +188,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             let flow = self.flow_cache.borrow_mut().entry(key)
                 .or_insert_with(|| Rc::new(build_dataflow_graph_from_body(def_id, body)))
                 .clone();
-            flows.insert(entry, flow);
-            bodies.insert(entry, body);
+            entries.insert(entry, (body, flow));
         }
 
         let leaf_results = Self::build_leaf_items(
@@ -210,8 +201,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             property,
             options,
             caller,
-            &bodies,
-            &flows,
+            &entries,
         );
 
         let mut results = Vec::new();
@@ -243,13 +233,11 @@ impl<'tcx> BackwardSlicer<'tcx> {
         property: &contract::Property<'tcx>,
         options: SliceOptions,
         caller: DefId,
-        bodies: &HashMap<usize, &'tcx Body<'tcx>>,
-        flows: &HashMap<usize, Rc<DataflowGraph>>,
+        entries: &HashMap<usize, EntryData<'tcx>>,
     ) -> Vec<LeafItem<'tcx>> {
         let (def_id, local_index) = tree.block_fn_of(node.block).unwrap_or((caller, node.block));
         let entry = node.block - local_index;
-        let body = &bodies[&entry];
-        let flow = &flows[&entry];
+        let (body, flow) = &entries[&entry];
         let block = BasicBlock::from(local_index);
         let keep_inv = options.keep_invalidation;
         // `Allocated` also needs the construction chain of owners that may be
@@ -264,12 +252,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 bind_callsite_roots(visitor.tcx, &mut relevant, cs);
             }
             let mut items = Vec::new();
-            let skip_terminator = bind_checkpoint.is_some()
-                || crate::def_ids::is_manually_drop_drop(
-                    visitor.tcx,
-                    bind_checkpoint.and_then(|c| c.callee),
-                );
-            if !skip_terminator {
+            if bind_checkpoint.is_none() {
                 items.push(RelevantItem::Terminator {
                     def_id: caller,
                     block: checkpoint_block,
@@ -283,10 +266,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                     // memory-shape checks must inspect the state before it.
                     // Terminator calls use the index after the last statement.
                     checkpoint.stmt_index
-                        + usize::from(
-                            checkpoint.kind == CheckpointKind::RawPtrDeref
-                                && options.include_deref_statement,
-                        )
+                        + usize::from(checkpoint.kind == CheckpointKind::RawPtrDeref && options.include_deref_statement)
                 })
                 .unwrap_or(block_data.statements.len())
                 .min(block_data.statements.len());
@@ -337,8 +317,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 property,
                 options,
                 caller,
-                bodies,
-                flows,
+                entries,
             );
             for (mut child_path, child_items, child_relevant, mut frames) in child_results {
                 let mut relevant = child_relevant;
@@ -375,10 +354,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                     // `SwitchInt`, whose branch is resolved here rather than by
                     // the forward VM). `child.block` is a global index; map back
                     // to the local MIR block.
-                    let successor = tree
-                        .block_fn_of(child.block)
-                        .map(|(_, li)| BasicBlock::from(li))
-                        .or(Some(BasicBlock::from(child.block)));
+                    let successor = Some(BasicBlock::from(tree.block_fn_of(child.block).map_or(child.block, |(_, local)| local)));
                     visitor.visit_terminator(
                         def_id,
                         block,
@@ -392,7 +368,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
                         successor,
                     );
                 }
-                let block_stmt_count = block_data.statements.len();
                 let block_items_start = items.len();
                 for (si, stmt) in block_data.statements.iter().enumerate().rev() {
                     visitor.visit_statement(
@@ -409,7 +384,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                     );
                 }
                 let dist_to_target = child_path.iter().position(|&b| b == target_block);
-                if block_stmt_count > 0 && dist_to_target.is_some_and(|d| d <= 2) {
+                if !block_data.statements.is_empty() && dist_to_target.is_some_and(|d| d <= 2) {
                     Self::re_visit_newly_added(
                         visitor,
                         def_id,
@@ -459,12 +434,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         // that exit the loop (e.g. unwind/cleanup) without hitting the
         // target block again.
         if node.block == target_block {
-            results.push((
-                vec![node.block],
-                checkpoint_items,
-                checkpoint_relevant,
-                Vec::new(),
-            ));
+            results.push((vec![node.block], checkpoint_items, checkpoint_relevant, Vec::new()));
         }
 
         results
@@ -514,16 +484,12 @@ impl<'tcx> BackwardSlicer<'tcx> {
         let mut seen = HashSet::new();
         let mut block_items: Vec<_> = items.drain(block_items_start..).collect();
         block_items.retain(|item| match item {
-            RelevantItem::Statement {
-                stmt_index, ..
-            } => seen.insert(*stmt_index),
+            RelevantItem::Statement { stmt_index, .. } => seen.insert(*stmt_index),
             _ => true,
         });
         block_items.sort_by_key(|item| match item {
             RelevantItem::Terminator { .. } => (0, 0),
-            RelevantItem::Statement {
-                stmt_index, ..
-            } => (1, usize::MAX - stmt_index),
+            RelevantItem::Statement { stmt_index, .. } => (1, usize::MAX - stmt_index),
             _ => (2, 0),
         });
         items.extend(block_items);

@@ -14,22 +14,25 @@ use crate::contract::Property;
 use crate::limit::{VM_CACHE_MAX_ENTRIES, VM_PREFIX_STRIDE, Z3_TIMEOUT_MS};
 use crate::vm::{VmExecutor, constructor_policy::ConstructorMirMode};
 
-use super::{path::Path, slicer::RelevantItem};
+use super::slicer::RelevantItem;
 
-/// A sliced MIR path and the contract facts assumed before its first item.
-#[derive(Clone)]
+/// Sliced MIR items and the contract facts assumed before execution.
 pub(crate) struct ProofGoal<'tcx> {
-    pub(crate) path: Path,
     pub(crate) items: Vec<RelevantItem<'tcx>>,
     pub(crate) entry_facts: Vec<Property<'tcx>>,
 }
 
 #[derive(Clone, Hash, PartialEq, Eq)]
 enum GoalItemKey<'tcx> {
+    /// Contract facts assumed before execution; different facts produce different initial states.
     EntryFacts(Vec<Property<'tcx>>),
-    Statement(DefId, BasicBlock, Option<usize>, usize),
-    Terminator(DefId, BasicBlock, Option<usize>, Option<BasicBlock>),
+    /// Owning function, MIR block, and statement index.
+    Statement(DefId, BasicBlock, usize),
+    /// Owning function, MIR block, and chosen successor, if any.
+    Terminator(DefId, BasicBlock, Option<BasicBlock>),
+    /// Inlined callee, optional selected MIR body address, and bindings for its arguments.
     CalleeEntry(DefId, Option<usize>, Vec<CallArg>),
+    /// Caller local that receives the inlined callee's return value.
     CalleeExit(usize),
 }
 
@@ -137,10 +140,10 @@ fn goal_key<'tcx>(items: &[RelevantItem<'tcx>]) -> Vec<GoalItemKey<'tcx>> {
     items
         .iter()
         .map(|item| match item {
-            RelevantItem::Statement { def_id, block, global_block, stmt_index } =>
-                GoalItemKey::Statement(*def_id, *block, *global_block, *stmt_index),
-            RelevantItem::Terminator { def_id, block, global_block, switch_succ } =>
-                GoalItemKey::Terminator(*def_id, *block, *global_block, *switch_succ),
+            RelevantItem::Statement { def_id, block, stmt_index, .. } =>
+                GoalItemKey::Statement(*def_id, *block, *stmt_index),
+            RelevantItem::Terminator { def_id, block, switch_succ, .. } =>
+                GoalItemKey::Terminator(*def_id, *block, *switch_succ),
             RelevantItem::CalleeEntry { callee, body, args } =>
                 GoalItemKey::CalleeEntry(*callee, body.map(|body| body as *const _ as usize), args.clone()),
             RelevantItem::CalleeExit { dest } => GoalItemKey::CalleeExit(*dest),

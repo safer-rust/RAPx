@@ -152,7 +152,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                             && *stmt_index == checkpoint.stmt_index)
                 })).flatten();
                 let split = deref_position.unwrap_or(goal.items.len());
-                let pre_goal = ProofGoal { path: goal.path.clone(), items: goal.items[..split].to_vec(), entry_facts: goal.entry_facts.clone() };
+                let pre_goal = ProofGoal { items: goal.items[..split].to_vec(), entry_facts: goal.entry_facts.clone() };
                 let cached = cache.states_for(self.tcx, self.target.def_id, self.target.body, pre_goal);
                 let post_states = deref_position.map(|_| VmExecutor::execute_items_after(cached.states.as_ref().clone(), &goal.items[split..]));
                 let post_reachability = post_states.as_ref().map(|states| states.iter().map(|_| Cell::new(None)).collect::<Vec<_>>());
@@ -558,7 +558,6 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
     /// Add inline frame boundaries and entry facts to a sliced path.
     fn prepare_goal(&self, tree: &PathTree, goal: SlicedPath<'tcx>, entry_facts: &[Property<'tcx>]) -> ProofGoal<'tcx> {
         ProofGoal {
-            path: goal.path,
             items: self.inject_inline_boundaries(goal.items, tree),
             entry_facts: entry_facts.to_vec(),
         }
