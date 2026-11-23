@@ -87,6 +87,22 @@ pub(crate) enum StdAdtType {
     Vec,
 }
 
+/// Resolve names used by `ContainNoType` to known standard-library types.
+pub(crate) fn negative_type_by_name(name: &str) -> Option<StdAdtType> {
+    Some(match name {
+        "Rc" => StdAdtType::Rc,
+        "Cell" => StdAdtType::Cell,
+        "UnsafeCell" => StdAdtType::UnsafeCell,
+        "RefCell" => StdAdtType::RefCell,
+        "Ref" => StdAdtType::Ref,
+        "RefMut" => StdAdtType::RefMut,
+        "MutexGuard" => StdAdtType::MutexGuard,
+        "MappedMutexGuard" => StdAdtType::MappedMutexGuard,
+        "RwLockWriteGuard" => StdAdtType::RwLockWriteGuard,
+        _ => return None,
+    })
+}
+
 fn classify_type(
     tcx: TyCtxt<'_>,
     did: DefId,

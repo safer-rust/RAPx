@@ -3,6 +3,7 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{BasicBlock, Body, Local, Operand, Place, ProjectionElem, Rvalue};
 
+use crate::analysis::dataflow::slicing::SlicingGraph;
 use crate::analysis::dataflow::types::DataflowGraph;
 use crate::util::def_use::{RelevantPlaces, operand_uses};
 use crate::util::mir_utils;
@@ -20,7 +21,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         place: &Place<'tcx>,
         rvalue: &'tcx Rvalue<'tcx>,
         body: &'tcx Body<'tcx>,
-        flow: &DataflowGraph,
+        flow: &SlicingGraph,
         relevant: &mut RelevantPlaces,
         items: &mut Vec<RelevantItem<'tcx>>,
         keep_owner: bool,
@@ -57,20 +58,17 @@ impl<'tcx> BackwardSlicer<'tcx> {
         }
         // Keep the definition of a `needs_drop` local (an owner's construction
         // chain) so `Owning` can trace its field provenance.
-        if keep_owner {
-            let ty = body.local_decls[place.local].ty;
-            if super::may_need_drop(self.tcx, def_id, ty) {
-                let uses = collect_assignment_uses(rvalue, block, stmt_index, flow, &defs);
-                items.push(RelevantItem::Statement {
-                    global_block: None,
-                    def_id,
-                    block,
-                    stmt_index,
-                });
-                relevant.remove_all(&defs);
-                relevant.extend(uses);
-                return;
-            }
+        if keep_owner && flow.effects_at(block.as_usize(), stmt_index).owner_source {
+            let uses = collect_assignment_uses(rvalue, block, stmt_index, flow, &defs);
+            items.push(RelevantItem::Statement {
+                global_block: None,
+                def_id,
+                block,
+                stmt_index,
+            });
+            relevant.remove_all(&defs);
+            relevant.extend(uses);
+            return;
         }
 
         // A provenance-carrying assignment — a pointer cast (`*const T as

@@ -364,6 +364,15 @@ impl<'tcx> Property<'tcx> {
         }
     }
 
+    /// Whether any atom in this property tree has the requested kind.
+    pub(crate) fn contains_kind(&self, kind: PropertyKind) -> bool {
+        match self {
+            Property::Atom(atom) => atom.kind == kind,
+            Property::And(and) => and.conjuncts.iter().any(|property| property.contains_kind(kind)),
+            Property::Or(or) => or.disjuncts.iter().any(|property| property.contains_kind(kind)),
+        }
+    }
+
     /// The positional arguments of an atom (`And`/`Or` have none).
     pub(crate) fn args(&self) -> &[PropertyArg<'tcx>] {
         match self {

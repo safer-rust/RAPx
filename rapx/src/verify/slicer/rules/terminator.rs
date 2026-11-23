@@ -3,10 +3,9 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{BasicBlock, Body, Operand, Place, TerminatorKind};
 
-use crate::analysis::dataflow::types::DataflowGraph;
+use crate::analysis::dataflow::slicing::SlicingGraph;
 use crate::compat::Spanned;
 use crate::util::def_use::{RelevantPlaces, call_args_uses_at, terminator_use_def};
-use crate::util::mir_utils;
 
 use super::super::RelevantItem;
 use super::super::BackwardSlicer;
@@ -22,54 +21,41 @@ impl<'tcx> BackwardSlicer<'tcx> {
         func: &Operand<'tcx>,
         args: &[Spanned<Operand<'tcx>>],
         destination: &Place<'tcx>,
-        flow: &DataflowGraph,
+        flow: &SlicingGraph,
         body: &Body<'tcx>,
         relevant: &mut RelevantPlaces,
         items: &mut Vec<RelevantItem<'tcx>>,
         keep_invalidations: bool,
         keep_owner: bool,
     ) {
-        if keep_invalidations {
+        let effects = flow.effects_at(block.as_usize(), body.basic_blocks[block].statements.len());
+        if keep_invalidations && effects.memory_state {
             // Keep calls that can change an allocation's lifetime or consume
             // a raw ownership share, together with their argument sources.
-            let is_state_change = mir_utils::dep_callee_def_id(func).is_some_and(|c| {
-                crate::def_ids::other_api::is_drop_fn(self.tcx, c)
-                    || crate::contract::json::query_json_contracts(self.tcx, c)
-                        .iter()
-                        .any(|property| {
-                            property.kind()
-                                == Some(crate::contract::PropertyKind::RefCountShare)
-                        })
+            items.push(RelevantItem::Terminator {
+                global_block: None,
+                def_id,
+                block,
+                switch_succ: None,
             });
-            if is_state_change {
-                items.push(RelevantItem::Terminator {
-                    global_block: None,
-                    def_id,
-                    block,
-                    switch_succ: None,
-                });
-                relevant.extend(call_args_uses_at(args, &[0]));
-                return;
-            }
+            relevant.extend(call_args_uses_at(args, &[0]));
+            return;
         }
 
         // `Owning` traces an owner's construction chain: keep a call whose
         // destination is a `needs_drop` value even when that local is not
         // itself relevant, so its field provenance survives.
-        if keep_owner {
-            let dest_ty = body.local_decls[destination.local].ty;
-            if super::may_need_drop(self.tcx, def_id, dest_ty) {
-                let use_def = terminator_use_def(terminator);
-                items.push(RelevantItem::Terminator {
-                    global_block: None,
-                    def_id,
-                    block,
-                    switch_succ: None,
-                });
-                relevant.remove_all(&use_def.defs);
-                relevant.extend(use_def.uses);
-                return;
-            }
+        if keep_owner && effects.owner_source {
+            let use_def = terminator_use_def(terminator);
+            items.push(RelevantItem::Terminator {
+                global_block: None,
+                def_id,
+                block,
+                switch_succ: None,
+            });
+            relevant.remove_all(&use_def.defs);
+            relevant.extend(use_def.uses);
+            return;
         }
         call::visit(
             self.tcx,

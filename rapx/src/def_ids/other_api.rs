@@ -87,6 +87,19 @@ pub fn is_drop_fn(tcx: TyCtxt<'_>, target: DefId) -> bool {
         || is_manually_drop(tcx, target)
 }
 
+/// Identify standard `Atomic*` methods that update their stored value.
+pub(crate) fn is_atomic_update_method(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    let Some(impl_id) = tcx.inherent_impl_of_assoc(did) else { return false };
+    let Some(adt) = tcx.type_of(impl_id).skip_binder().ty_adt_def() else { return false };
+    let owner = tcx.def_path_str(adt.did());
+    (owner.starts_with("core::sync::atomic::Atomic") || owner.starts_with("std::sync::atomic::Atomic"))
+        && matches!(tcx.item_name(did).as_str(),
+            "store" | "swap" | "compare_exchange" | "compare_exchange_weak" | "fetch_add"
+            | "fetch_sub" | "fetch_and" | "fetch_nand" | "fetch_or" | "fetch_xor"
+            | "fetch_not" | "fetch_update" | "fetch_max" | "fetch_min" | "fetch_ptr_add"
+            | "fetch_ptr_sub" | "fetch_byte_add" | "fetch_byte_sub")
+}
+
 /// Identify `*const T::align_offset` and `*mut T::align_offset` for their call
 /// effect, which takes priority over expanding their available MIR. Their
 /// internal helper has costly branches and symbolic bitwise arithmetic:

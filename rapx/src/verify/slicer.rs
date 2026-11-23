@@ -14,8 +14,7 @@ use std::{cell::RefCell, collections::{HashMap, HashSet}, rc::Rc};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{mir::{BasicBlock, Body, Local}, ty::TyCtxt};
 
-use crate::analysis::dataflow::graph::build_dataflow_graph_from_body;
-use crate::analysis::dataflow::types::DataflowGraph;
+use crate::analysis::dataflow::slicing::SlicingGraph;
 use crate::analysis::path::{CallArg, PathNode, PathTree};
 use crate::contract;
 use crate::util::def_use::RelevantPlaces;
@@ -40,31 +39,29 @@ type LeafItem<'tcx> = (
     RelevantPlaces,
     Vec<(DefId, Vec<CallArg>, RelevantPlaces)>,
 );
-type EntryData<'tcx> = (&'tcx Body<'tcx>, Rc<DataflowGraph>);
+type EntryData<'tcx> = (&'tcx Body<'tcx>, Rc<SlicingGraph>);
 
 #[derive(Clone, Copy)]
 struct SliceOptions {
     keep_invalidation: bool,
     keep_owner: bool,
-    include_deref_statement: bool,
 }
 
 impl SliceOptions {
     fn for_property(property: &contract::Property<'_>) -> Self {
         Self {
-            keep_invalidation: property.kind().is_some_and(|kind| needs_invalidation_tracking(&kind)),
-            keep_owner: matches!(property.kind(), Some(contract::PropertyKind::Owning | contract::PropertyKind::Allocated)),
-            include_deref_statement: property.kind() == Some(contract::PropertyKind::Alias),
+            keep_invalidation: needs_invalidation_tracking(property),
+            keep_owner: property.contains_kind(contract::PropertyKind::Owning)
+                || property.contains_kind(contract::PropertyKind::Allocated),
         }
     }
 
     fn for_properties(properties: &[&contract::Property<'_>]) -> Self {
         properties.iter().map(|property| Self::for_property(property)).fold(
-            Self { keep_invalidation: false, keep_owner: false, include_deref_statement: false },
+            Self { keep_invalidation: false, keep_owner: false },
             |acc, next| Self {
                 keep_invalidation: acc.keep_invalidation || next.keep_invalidation,
                 keep_owner: acc.keep_owner || next.keep_owner,
-                include_deref_statement: acc.include_deref_statement || next.include_deref_statement,
             },
         )
     }
@@ -77,7 +74,7 @@ pub(crate) struct BackwardSlicer<'tcx> {
     instance_body: Option<&'tcx Body<'tcx>>,
     callee_bodies: CalleeBodies<'tcx>,
     entry_bodies: EntryBodies<'tcx>,
-    flow_cache: RefCell<HashMap<(DefId, usize), Rc<DataflowGraph>>>,
+    flow_cache: RefCell<HashMap<(DefId, usize), Rc<SlicingGraph>>>,
 }
 
 impl<'tcx> BackwardSlicer<'tcx> {
@@ -186,7 +183,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             let body = self.entry_bodies.get(&entry).copied().unwrap_or_else(|| self.body_for(def_id));
             let key = (def_id, body as *const Body<'tcx> as usize);
             let flow = self.flow_cache.borrow_mut().entry(key)
-                .or_insert_with(|| Rc::new(build_dataflow_graph_from_body(def_id, body)))
+                .or_insert_with(|| Rc::new(SlicingGraph::new(self.tcx, def_id, body)))
                 .clone();
             entries.insert(entry, (body, flow));
         }
@@ -250,6 +247,11 @@ impl<'tcx> BackwardSlicer<'tcx> {
             let mut relevant = RelevantPlaces::from_property(property);
             if let Some(cs) = bind_checkpoint {
                 bind_callsite_roots(visitor.tcx, &mut relevant, cs);
+                if cs.kind == CheckpointKind::RawPtrDeref && property.contains_kind(contract::PropertyKind::Alias)
+                    && let Some(destination) = cs.destination
+                {
+                    relevant.insert_local(destination);
+                }
             }
             let mut items = Vec::new();
             if bind_checkpoint.is_none() {
@@ -262,11 +264,11 @@ impl<'tcx> BackwardSlicer<'tcx> {
             }
             let statement_end = bind_checkpoint
                 .map(|checkpoint| {
-                    // Alias checks need the reference created by the deref itself;
-                    // memory-shape checks must inspect the state before it.
-                    // Terminator calls use the index after the last statement.
+                    // A relevant result includes the statement that creates it.
+                    // Other requirements use the state before the checkpoint.
                     checkpoint.stmt_index
-                        + usize::from(checkpoint.kind == CheckpointKind::RawPtrDeref && options.include_deref_statement)
+                        + usize::from(checkpoint.kind == CheckpointKind::RawPtrDeref
+                            && checkpoint.destination.is_some_and(|destination| relevant.locals.contains(&destination)))
                 })
                 .unwrap_or(block_data.statements.len())
                 .min(block_data.statements.len());
@@ -451,7 +453,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         block_data: &'tcx rustc_middle::mir::BasicBlockData<'tcx>,
         statement_end: usize,
         body: &'tcx Body<'tcx>,
-        flow: &DataflowGraph,
+        flow: &SlicingGraph,
         relevant: &mut RelevantPlaces,
         items: &mut Vec<RelevantItem<'tcx>>,
         block_items_start: usize,
@@ -500,16 +502,9 @@ impl<'tcx> BackwardSlicer<'tcx> {
 
 /// Whether a property can depend on state changes outside its direct value
 /// dependencies, including drops and raw-share updates before an index read.
-fn needs_invalidation_tracking(kind: &contract::PropertyKind) -> bool {
-    matches!(
-        kind,
-        contract::PropertyKind::InBound
-            | contract::PropertyKind::Allocated
-            | contract::PropertyKind::Init
-            | contract::PropertyKind::Alive
-            | contract::PropertyKind::ValidString
-            | contract::PropertyKind::ValidCStr
-            | contract::PropertyKind::Owning
-            | contract::PropertyKind::RefCountShare
-    )
+fn needs_invalidation_tracking(property: &contract::Property<'_>) -> bool {
+    use contract::PropertyKind;
+    [PropertyKind::InBound, PropertyKind::Allocated, PropertyKind::Init, PropertyKind::Alive,
+        PropertyKind::ValidString, PropertyKind::ValidCStr, PropertyKind::Owning, PropertyKind::RefCountShare]
+        .into_iter().any(|kind| property.contains_kind(kind))
 }

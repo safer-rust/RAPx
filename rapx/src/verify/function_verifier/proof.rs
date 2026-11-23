@@ -33,15 +33,6 @@ enum LocalAccess {
 }
 
 impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
-    /// Whether any atom in a property tree checks aliasing.
-    pub(super) fn property_contains_alias(property: &Property<'_>) -> bool {
-        match property {
-            Property::Atom(atom) => atom.kind == PropertyKind::Alias,
-            Property::And(and) => and.conjuncts.iter().any(Self::property_contains_alias),
-            Property::Or(or) => or.disjuncts.iter().any(Self::property_contains_alias),
-        }
-    }
-
     /// Check a checkpoint's properties in path order.
     pub(super) fn check_checkpoint_properties(
         &self,

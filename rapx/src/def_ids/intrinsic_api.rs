@@ -21,6 +21,16 @@ pub fn is_intrinsic(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     tcx.intrinsic(callee).is_some()
 }
 
+/// Identify atomic intrinsics that write memory; loads and fences are excluded.
+pub(crate) fn is_atomic_update(tcx: TyCtxt<'_>, callee: DefId) -> bool {
+    intrinsic_name(tcx, Some(callee)).is_some_and(|name| {
+        name.as_str().strip_prefix("atomic_").is_some_and(|op| {
+            ["store", "xchg", "cxchg", "xadd", "xsub", "and", "or", "xor", "nand", "min", "max", "umin", "umax"]
+                .iter().any(|prefix| op.starts_with(prefix))
+        })
+    })
+}
+
 /// Whether this is the pointer `copy` or `copy_nonoverlapping` intrinsic.
 pub(crate) fn is_ptr_copy(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     intrinsic_name(tcx, Some(callee))

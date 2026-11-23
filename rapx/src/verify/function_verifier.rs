@@ -67,7 +67,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
             |checkpoint| vec![checkpoint.location()],
         );
         let terminal_target = checkpoint
-            .filter(|checkpoint| !target.properties_for_callsite(checkpoint).iter().any(Self::property_contains_alias))
+            .filter(|checkpoint| !target.properties_for_callsite(checkpoint).iter().any(|property| property.contains_kind(PropertyKind::Alias)))
             .map(|checkpoint| checkpoint.block.as_usize());
         let (path_tree, callee_bodies, entry_bodies) =
             PathExtractor::new_with_body(tcx, Rc::clone(&config), target.def_id, allow_repeat, target.body)

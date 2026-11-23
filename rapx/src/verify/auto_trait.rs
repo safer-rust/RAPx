@@ -27,15 +27,14 @@ use crate::contract::{PropertyKind, annotation::get_struct_invariants_from_annot
 use crate::def_ids::{
     intrinsic_api,
     lang_api::{self, LangItem},
-    type_ids::{self, StdAdtType},
+    other_api,
+    type_ids,
 };
 use crate::util::{
     mir_scan::place_has_raw_deref,
     mir_utils::{self, dep_callee_def_id},
 };
-use crate::verify::{
-    report::{CheckResult, UnknownReason},
-};
+use crate::verify::report::{CheckResult, UnknownReason};
 
 /// Three-valued structural verdict: a type definitely contains a negative
 /// (`Yes`), definitely does not (`No`), or contains an unresolved generic
@@ -79,17 +78,8 @@ pub(crate) fn contain_no_type_check<'tcx>(
 ) -> CheckResult {
     let mut defs: Vec<DefId> = Vec::new();
     for name in negatives {
-        let group = match name.as_str() {
-            "Rc" => StdAdtType::Rc,
-            "Cell" => StdAdtType::Cell,
-            "UnsafeCell" => StdAdtType::UnsafeCell,
-            "RefCell" => StdAdtType::RefCell,
-            "Ref" => StdAdtType::Ref,
-            "RefMut" => StdAdtType::RefMut,
-            "MutexGuard" => StdAdtType::MutexGuard,
-            "MappedMutexGuard" => StdAdtType::MappedMutexGuard,
-            "RwLockWriteGuard" => StdAdtType::RwLockWriteGuard,
-            _ => return CheckResult::Unknown(UnknownReason::Unimplemented),
+        let Some(group) = type_ids::negative_type_by_name(name) else {
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
         let count = defs.len();
         defs.extend(type_ids::def_ids_for_type(group));
@@ -180,23 +170,10 @@ pub(crate) fn field_invariant_check<'tcx>(
     let adt_def_id = adt_def.did();
 
     let invariants = get_struct_invariants_from_annotation(tcx, adt_def_id, adt_def_id);
-    let matched = invariants.iter().any(|p| {
-        p.kind() == Some(kind)
-            && field.is_none_or(|f| {
-                p.args()
-                    .first()
-                    .and_then(|a| {
-                        crate::contract::place::field_name_from_arg(tcx, adt_def_id, a)
-                    })
-                    .as_deref()
-                    == Some(f)
-            })
-    });
-    if !matched {
-        return CheckResult::Failed;
-    }
-
-    CheckResult::ProvedByRule
+    let matched = invariants.iter().any(|p| p.kind() == Some(kind) && field.is_none_or(|f| {
+        p.args().first().and_then(|a| crate::contract::place::field_name_from_arg(tcx, adt_def_id, a)).as_deref() == Some(f)
+    }));
+    if matched { CheckResult::ProvedByRule } else { CheckResult::Failed }
 }
 
 /// Type-level `RefSend` obligation check (no VM state required).
@@ -222,10 +199,7 @@ fn type_implements_clone<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
 /// Whether a generic type parameter carries a `Send`/`Sync` bound on the impl,
 /// letting the checker treat it as satisfied instead of `Unknown`.
 fn param_bound_is_satisfied(
-    tcx: TyCtxt<'_>,
-    impl_def_id: DefId,
-    param_ty: ParamTy,
-    is_sync: bool,
+    tcx: TyCtxt<'_>, impl_def_id: DefId, param_ty: ParamTy, is_sync: bool,
 ) -> bool {
     let trait_did = if is_sync {
         tcx.get_diagnostic_item(rustc_span::sym::Sync)
@@ -254,14 +228,14 @@ fn param_bound_is_satisfied(
 
 /// Whether any inherent function of `ty` may write through its first parameter.
 fn has_raw_ptr_writes<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
-    let TyKind::Adt(adt_def, _) = ty.kind() else {
-        return false;
-    };
-    let adt_def_id = adt_def.did();
-    tcx.inherent_impls(adt_def_id).iter().any(|impl_id| {
-        tcx.associated_item_def_ids(*impl_id).iter().any(|item| {
-            matches!(tcx.def_kind(*item), DefKind::Fn | DefKind::AssocFn)
-                && has_raw_ptr_write(tcx, *item)
+    any_inherent_method(tcx, ty, |did| has_raw_ptr_write(tcx, did))
+}
+
+fn any_inherent_method<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>, predicate: impl Fn(DefId) -> bool) -> bool {
+    let TyKind::Adt(adt, _) = ty.kind() else { return false };
+    tcx.inherent_impls(adt.did()).iter().any(|impl_id| {
+        tcx.associated_item_def_ids(*impl_id).iter().any(|did| {
+            matches!(tcx.def_kind(*did), DefKind::Fn | DefKind::AssocFn) && predicate(*did)
         })
     })
 }
@@ -338,57 +312,12 @@ fn has_atomic_call(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     }
     let body = tcx.optimized_mir(def_id);
     body.basic_blocks.iter().any(|bb| {
-        if let TerminatorKind::Call { func, .. } | TerminatorKind::TailCall { func, .. } =
-            &bb.terminator().kind
-        {
-            let Some(callee) = dep_callee_def_id(func) else {
-                return false;
-            };
-            if intrinsic_api::intrinsic_name(tcx, Some(callee)).is_some_and(|name| {
-                name.as_str().strip_prefix("atomic_").is_some_and(|op| {
-                    [
-                        "store", "xchg", "cxchg", "xadd", "xsub", "and", "or", "xor", "nand",
-                        "min", "max", "umin", "umax",
-                    ]
-                    .iter()
-                    .any(|prefix| op.starts_with(prefix))
-                })
-            }) {
-                return true;
-            }
-            let Some(impl_id) = tcx.inherent_impl_of_assoc(callee) else {
-                return false;
-            };
-            let Some(adt) = tcx.type_of(impl_id).skip_binder().ty_adt_def() else {
-                return false;
-            };
-            let owner = tcx.def_path_str(adt.did());
-            (owner.starts_with("core::sync::atomic::Atomic")
-                || owner.starts_with("std::sync::atomic::Atomic"))
-                && matches!(
-                    tcx.item_name(callee).as_str(),
-                    "store"
-                        | "swap"
-                        | "compare_exchange"
-                        | "compare_exchange_weak"
-                        | "fetch_add"
-                        | "fetch_sub"
-                        | "fetch_and"
-                        | "fetch_nand"
-                        | "fetch_or"
-                        | "fetch_xor"
-                        | "fetch_not"
-                        | "fetch_update"
-                        | "fetch_max"
-                        | "fetch_min"
-                        | "fetch_ptr_add"
-                        | "fetch_ptr_sub"
-                        | "fetch_byte_add"
-                        | "fetch_byte_sub"
-                )
-        } else {
-            false
-        }
+        let (TerminatorKind::Call { func, .. } | TerminatorKind::TailCall { func, .. }) = &bb.terminator().kind else {
+            return false;
+        };
+        dep_callee_def_id(func).is_some_and(|callee| {
+            intrinsic_api::is_atomic_update(tcx, callee) || other_api::is_atomic_update_method(tcx, callee)
+        })
     })
 }
 
@@ -396,27 +325,13 @@ fn has_atomic_call(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
 /// atomic intrinsic or an `Atomic*` method (`fetch_add`/`store`/...), e.g. an
 /// `Arc`-style `fetch_add` on a reference count reached via a raw pointer.
 fn has_atomic_ptr_updates<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
-    let TyKind::Adt(adt_def, _) = ty.kind() else {
-        return false;
-    };
-    let adt_def_id = adt_def.did();
-    tcx.inherent_impls(adt_def_id).iter().any(|impl_id| {
-        tcx.associated_item_def_ids(*impl_id).iter().any(|item| {
-            matches!(tcx.def_kind(*item), DefKind::Fn | DefKind::AssocFn)
-                && has_atomic_call(tcx, *item)
-        })
-    })
+    any_inherent_method(tcx, ty, |did| has_atomic_call(tcx, did))
 }
 
 /// Structurally check whether `ty` (transitively) contains a raw pointer.
 /// A raw pointer may also appear as a pattern type (`pattern_type!(*const T
 /// is ..)`), so recurse into `TyKind::Pat`.
-fn find_raw_ptr<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    ty: Ty<'tcx>,
-    impl_def_id: DefId,
-    is_sync: bool,
-) -> Contains {
+fn find_raw_ptr<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>, impl_def_id: DefId, is_sync: bool) -> Contains {
     match ty.kind() {
         TyKind::RawPtr(..) => Contains::Yes,
         TyKind::Pat(inner, _) => find_raw_ptr(tcx, *inner, impl_def_id, is_sync),
@@ -531,12 +446,7 @@ fn type_structurally_contains<'tcx>(
 /// Find an interior-mutability / raw-pointer field that is not guarded by a
 /// synchronization primitive.  A raw pointer may also appear as a pattern type
 /// (`pattern_type!(*const T is ..)`), so recurse into `TyKind::Pat`.
-fn find_unsynchronized_mutation<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    ty: Ty<'tcx>,
-    impl_def_id: DefId,
-    is_sync: bool,
-) -> Contains {
+fn find_unsynchronized_mutation<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>, impl_def_id: DefId, is_sync: bool) -> Contains {
     match ty.kind() {
         TyKind::RawPtr(..) => Contains::Yes,
         TyKind::Pat(inner, _) => find_unsynchronized_mutation(tcx, *inner, impl_def_id, is_sync),

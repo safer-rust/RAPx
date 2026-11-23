@@ -6,7 +6,7 @@ use rustc_middle::mir::{
     Terminator, TerminatorKind,
 };
 
-use crate::analysis::dataflow::types::DataflowGraph;
+use crate::analysis::dataflow::slicing::SlicingGraph;
 use crate::util::def_use::{RelevantPlaces, operand_uses};
 
 use super::super::RelevantItem;
@@ -20,7 +20,7 @@ pub(super) struct StatementContext<'a, 'tcx> {
     pub stmt_index: usize,
     pub statement: &'tcx Statement<'tcx>,
     pub body: &'tcx Body<'tcx>,
-    pub flow: &'a DataflowGraph,
+    pub flow: &'a SlicingGraph,
     pub relevant: &'a mut RelevantPlaces,
     pub items: &'a mut Vec<RelevantItem<'tcx>>,
     pub keep_invalidations: bool,
@@ -32,7 +32,7 @@ pub(super) struct TerminatorContext<'a, 'tcx> {
     pub def_id: DefId,
     pub block: BasicBlock,
     pub terminator: &'a Terminator<'tcx>,
-    pub flow: &'a DataflowGraph,
+    pub flow: &'a SlicingGraph,
     pub body: &'a Body<'tcx>,
     pub relevant: &'a mut RelevantPlaces,
     pub items: &'a mut Vec<RelevantItem<'tcx>>,
@@ -94,12 +94,12 @@ pub(super) fn apply_statement(ctx: &mut StatementContext<'_, '_>) {
                 ctx.flow,
                 ctx.relevant,
                 ctx.items,
-                ctx.keep_invalidations,
+                ctx.keep_invalidations && ctx.flow.effects_at(ctx.block.as_usize(), ctx.stmt_index).memory_state,
             );
             "StorageDead"
         }
         StatementKind::StorageLive(..) => {
-            if ctx.keep_invalidations {
+            if ctx.keep_invalidations && ctx.flow.effects_at(ctx.block.as_usize(), ctx.stmt_index).memory_state {
                 ctx.items.push(RelevantItem::Statement {
                     global_block: None,
                     def_id: ctx.def_id,
@@ -241,7 +241,7 @@ fn visit_non_call(ctx: &mut TerminatorContext<'_, '_>) {
         ctx.terminator,
         ctx.relevant,
         ctx.items,
-        ctx.keep_invalidations,
+        ctx.keep_invalidations && ctx.flow.effects_at(ctx.block.as_usize(), ctx.body.basic_blocks[ctx.block].statements.len()).memory_state,
         ctx.successor,
     );
 }
