@@ -465,6 +465,13 @@ pub(crate) enum ValueSource<'z3> {
     SliceLen(Int<'z3>),
     /// A compile-time `offset_of!` field offset.
     FieldOffset,
+    /// Numeric address derived from an exposed pointer. This records the
+    /// original pointer relation for address-only checks; it does not grant
+    /// provenance to a pointer reconstructed from integer arithmetic.
+    ExposedAddress {
+        address: Int<'z3>,
+        provenance: Provenance<'z3>,
+    },
     /// Borrow of a field path rooted at a caller local.
     FieldBorrow {
         base: Local,

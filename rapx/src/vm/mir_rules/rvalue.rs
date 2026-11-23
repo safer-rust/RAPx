@@ -289,6 +289,12 @@ pub(crate) fn eval_binary_op<'z3, 'tcx>(
                 overflowing_binary(state.z3_ctx, layout, arithmetic, &lhs.z3_term, &rhs.z3_term);
             let mut value = VmValue::new(result.value, fields[0]);
             value.facts.init = true;
+            if matches!(op, BinOp::AddWithOverflow | BinOp::SubWithOverflow)
+                && !matches!(&rhs.source, ValueSource::ExposedAddress { .. })
+                && matches!(&lhs.source, ValueSource::ExposedAddress { .. })
+            {
+                value.source = lhs.source.clone();
+            }
             state.set_field_value(dest_place.local, vec![0], value);
             let mut overflow = VmValue::new(
                 result.overflow.ite(
@@ -581,7 +587,7 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
     // own term.
     let term = mir_utils::extract_local(operand)
         .and_then(|l| state.field_value(l, &[0]).map(|v| v.z3_term.clone()))
-        .unwrap_or(src_val.z3_term);
+        .unwrap_or_else(|| src_val.z3_term.clone());
     // A pointer→integer cast (`ptr as usize`) yields the (always non-negative)
     // address. Record this as a *path condition* so downstream pointer
     // arithmetic (e.g. `align_up` in a free-list allocator) can discharge
@@ -606,7 +612,7 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
     VmValue {
         z3_term: term,
         ty: cast_ty,
-        provenance: src_val.provenance,
+        provenance: src_val.provenance.clone(),
         facts: ValueFacts {
             non_null: src_val.facts.non_null || nonnull_to_raw,
             dangling: src_val.facts.dangling || numeric_transmute,
@@ -621,6 +627,20 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
             },
         },
         source: match &src_val.source {
+            _ if src_is_ptr && dest_is_int => src_val
+                .provenance
+                .as_ref()
+                .map(|provenance| ValueSource::ExposedAddress {
+                    address: src_val.z3_term.clone(),
+                    provenance: provenance.clone(),
+                })
+                .unwrap_or(ValueSource::None),
+            ValueSource::ExposedAddress { .. }
+                if matches!(src_ty.kind(), TyKind::Uint(_) | TyKind::Int(_))
+                    && matches!(cast_ty.kind(), TyKind::RawPtr(..)) =>
+            {
+                src_val.source.clone()
+            }
             ValueSource::SliceLen(len)
                 if src_is_ptr
                     && mir_utils::pointee_ty(cast_ty)

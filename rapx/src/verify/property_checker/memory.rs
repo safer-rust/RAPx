@@ -11,7 +11,7 @@ use crate::util::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
 use crate::contract::{ContractExpr, PlaceBase, Property, PropertyArg, PropertyKind, is_static_lifetime_ident, type_invariants::has_owner_ptr_invariant};
 use crate::verify::report::{CheckResult, UnknownReason};
-use crate::vm::state::{AllocId, OffsetKind, VmExecutor, VmValue};
+use crate::vm::state::{AllocId, OffsetKind, ValueSource, VmExecutor, VmValue};
 use rustc_hash::FxHashSet;
 use rustc_middle::{mir::{Local, Operand, Rvalue, StatementKind}, ty::TyKind};
 use z3::{
@@ -231,6 +231,15 @@ impl PropertyChecker {
                 local.assert(&alloc.base.rem(&alloc.align)._eq(&zero));
             }
         }
+        if let ValueSource::ExposedAddress { address, provenance } = &value.source {
+            let alloc = vm_state.alloc(provenance.alloc_id);
+            local.assert(&address._eq(&Int::add(vm_state.z3_ctx, &[&alloc.base, &provenance.offset])));
+            local.assert(&alloc.base.ge(&zero));
+            local.assert(&alloc.base._eq(&zero).not());
+            if alloc.align.simplify().as_u64() != Some(1) {
+                local.assert(&alloc.base.rem(&alloc.align)._eq(&zero));
+            }
+        }
         if let Some(known_align) = value.facts.align_n.as_ref() {
             local.assert(&value.z3_term.rem(known_align)._eq(&zero));
         }
@@ -241,6 +250,7 @@ impl PropertyChecker {
             z3::SatResult::Sat
                 if value.provenance.is_none()
                     && value.facts.align_n.is_none()
+                    && !matches!(&value.source, ValueSource::ExposedAddress { .. })
                     && value.z3_term.simplify().as_u64().is_none() =>
             {
                 CheckResult::Unknown(UnknownReason::Unimplemented)
