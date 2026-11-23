@@ -338,6 +338,9 @@ impl PropertyChecker {
                 if vm_state.atom_depends_on_inline_terms(checkpoint, property, vm_state.opaque_intrinsic_terms()) {
                     return CheckResult::Unknown(UnknownReason::UnmodeledIntrinsic("opaque intrinsic result".to_string()));
                 }
+                if vm_state.atom_depends_on_inline_terms(checkpoint, property, vm_state.unresolved_memory_terms()) {
+                    return CheckResult::Unknown(UnknownReason::Unimplemented);
+                }
                 if vm_state.diagnostics().has_incomplete_inline_branch()
                     && (checkpoint.callee.is_some() || !checkpoint.args.is_empty())
                 {

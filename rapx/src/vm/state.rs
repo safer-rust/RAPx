@@ -440,6 +440,9 @@ pub(crate) struct InlineCtx<'z3, 'tcx> {
     pub pending_states: Vec<Box<VmExecutor<'z3, 'tcx>>>,
     /// Terms returned by intrinsic effects the VM could not model.
     pub opaque_intrinsic_terms: FxHashSet<Int<'z3>>,
+    /// Results of a modeled intrinsic whose input aggregate was not resolved
+    /// from memory (for example, a symbolic array element of a SIMD vector).
+    pub unresolved_memory_terms: FxHashSet<Int<'z3>>,
     /// Caller referent local for each inlined callee argument.
     pub arg_referents: Vec<Option<Local>>,
     /// `(caller local, field path, value)` writes replayed after frame restoration.

@@ -102,6 +102,7 @@ pub(crate) enum CallEffect {
     AtomicRmw { pointer_arg: usize },
     SimdCompare { lhs_arg: usize, rhs_arg: usize, op: SimdCmpOp },
     SimdArithmetic { lhs_arg: usize, rhs_arg: usize, op: SimdArithOp },
+    SimdReduce { vector_arg: usize, initial_arg: Option<usize>, op: SimdReduceOp },
     SimdOpaque,
     SimdSplat { arg: usize },
     SimdExtract { vector_arg: usize, index_arg: usize },
@@ -183,6 +184,19 @@ pub(crate) enum SimdArithOp {
     Mul,
     SaturatingAdd,
     SaturatingSub,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum SimdReduceOp {
+    Add,
+    Mul,
+    And,
+    Or,
+    Xor,
+    Max,
+    Min,
+    All,
+    Any,
 }
 
 #[derive(Clone, Copy, Debug)]

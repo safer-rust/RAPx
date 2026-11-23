@@ -1,4 +1,5 @@
 use super::*;
+use crate::vm::integer::BitwiseOp;
 
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(super) fn apply_simd_effect(
@@ -148,6 +149,83 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     self.set_field_value(dest, vec![0, index], value);
                 }
             }
+            CallEffect::SimdReduce { vector_arg, initial_arg, op } => {
+                let dest_ty = self.body().local_decls[dest].ty;
+                let Some(vector) = args.get(*vector_arg) else {
+                    self.set_opaque_intrinsic_result(dest);
+                    return;
+                };
+                let Some((elem_ty, len)) = self.simd_lane_type(vector.ty) else {
+                    self.set_opaque_intrinsic_result(dest);
+                    return;
+                };
+                let Some(layout) = self.integer_layout(elem_ty) else {
+                    // Floating-point unordered reductions admit reassociation;
+                    // keep them opaque until a matching FP model is available.
+                    self.set_opaque_intrinsic_result(dest);
+                    return;
+                };
+                if len == 0
+                    || (matches!(op, SimdReduceOp::All | SimdReduceOp::Any)
+                        != matches!(dest_ty.kind(), TyKind::Bool))
+                    || (!matches!(op, SimdReduceOp::All | SimdReduceOp::Any) && dest_ty != elem_ty)
+                {
+                    self.set_opaque_intrinsic_result(dest);
+                    return;
+                }
+                let Some(local) = caller_arg_locals.get(*vector_arg).copied().flatten() else {
+                    self.set_opaque_intrinsic_result(dest);
+                    return;
+                };
+                let lanes: Option<Vec<_>> = (0..len)
+                    .map(|index| self.field_value(local, &[0, index]).map(|value| value.z3_term.clone()))
+                    .collect();
+                let Some(lanes) = lanes else {
+                    self.set_opaque_intrinsic_result(dest);
+                    return;
+                };
+                let zero = Int::from_u64(self.z3_ctx, 0);
+                let result = if matches!(op, SimdReduceOp::All | SimdReduceOp::Any) {
+                    let conditions: Vec<_> = lanes.iter().map(|lane| lane._eq(&zero).not()).collect();
+                    let conditions: Vec<_> = conditions.iter().collect();
+                    let condition = if matches!(op, SimdReduceOp::All) {
+                        Bool::and(self.z3_ctx, &conditions)
+                    } else {
+                        Bool::or(self.z3_ctx, &conditions)
+                    };
+                    condition.ite(&Int::from_u64(self.z3_ctx, 1), &zero)
+                } else {
+                    let mut terms = lanes.into_iter();
+                    let first = if let Some(index) = initial_arg {
+                        let Some(initial) = args.get(*index).filter(|value| value.ty == elem_ty) else {
+                            self.set_opaque_intrinsic_result(dest);
+                            return;
+                        };
+                        initial.z3_term.clone()
+                    } else {
+                        terms.next().expect("nonempty SIMD reduction")
+                    };
+                    terms.fold(first, |acc, lane| match op {
+                        SimdReduceOp::Add => layout.normalize(
+                            self.z3_ctx,
+                            &Int::add(self.z3_ctx, &[&acc, &lane]),
+                        ),
+                        SimdReduceOp::Mul => layout.normalize(
+                            self.z3_ctx,
+                            &Int::mul(self.z3_ctx, &[&acc, &lane]),
+                        ),
+                        SimdReduceOp::And => layout.bitwise(self.z3_ctx, BitwiseOp::And, &acc, &lane),
+                        SimdReduceOp::Or => layout.bitwise(self.z3_ctx, BitwiseOp::Or, &acc, &lane),
+                        SimdReduceOp::Xor => layout.bitwise(self.z3_ctx, BitwiseOp::Xor, &acc, &lane),
+                        SimdReduceOp::Max => acc.ge(&lane).ite(&acc, &lane),
+                        SimdReduceOp::Min => acc.le(&lane).ite(&acc, &lane),
+                        SimdReduceOp::All | SimdReduceOp::Any => unreachable!(),
+                    })
+                };
+                let mut value = VmValue::new(result.simplify(), dest_ty);
+                value.facts.init = true;
+                self.set_local(dest, value);
+            }
             CallEffect::SimdOpaque => self.set_opaque_simd_result(dest),
             CallEffect::SimdSplat { arg } => {
                 let dest_ty = self.body().local_decls[dest].ty;
@@ -169,13 +247,23 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 vector_arg,
                 index_arg,
             } => {
+                // A nonzero or symbolic offset denotes a vector selected from
+                // an aggregate allocation. Its lanes may exist in memory even
+                // when no direct field value was materialized for this local.
+                let unresolved_vector_read = args.get(*vector_arg).is_some_and(|value| {
+                    value.provenance.as_ref().is_some_and(|p| p.offset.simplify().as_u64() != Some(0))
+                });
                 let Some((local, index)) =
                     caller_arg_locals.get(*vector_arg).copied().flatten().zip(
                         args.get(*index_arg)
                             .and_then(|value| value.z3_term.simplify().as_u64()),
                     )
                 else {
-                    self.set_opaque_intrinsic_result(dest);
+                    if unresolved_vector_read {
+                        self.set_unresolved_memory_result(dest);
+                    } else {
+                        self.set_opaque_intrinsic_result(dest);
+                    }
                     return;
                 };
                 let Some((_, len)) = args
@@ -193,7 +281,11 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     value.ty = self.body().local_decls[dest].ty;
                     self.set_local(dest, value);
                 } else {
-                    self.set_opaque_intrinsic_result(dest);
+                    if unresolved_vector_read {
+                        self.set_unresolved_memory_result(dest);
+                    } else {
+                        self.set_opaque_intrinsic_result(dest);
+                    }
                 }
             }
             CallEffect::SimdInsert {

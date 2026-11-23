@@ -1519,6 +1519,18 @@
       "args": ["0 == 0"]
     }
   ],
+  "core::intrinsics::simd::simd_reduce_all": [
+    {
+      "tag": "ValidNum",
+      "args": ["Arg_0 == Arg_0"]
+    }
+  ],
+  "core::intrinsics::simd::simd_reduce_any": [
+    {
+      "tag": "ValidNum",
+      "args": ["Arg_0 == Arg_0"]
+    }
+  ],
   "core::intrinsics::simd::simd_arith_offset": [
     {
       "tag": "ValidNum",

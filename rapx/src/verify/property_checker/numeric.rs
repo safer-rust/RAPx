@@ -85,6 +85,13 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
+        // The library contract names Arg_0 so backward slicing keeps the
+        // vector construction; the actual requirement is lane mask validity.
+        if intrinsic_api::intrinsic_name(vm_state.tcx, checkpoint.callee)
+            .is_some_and(|name| matches!(name.as_str(), "simd_reduce_all" | "simd_reduce_any"))
+        {
+            return self.check_simd_reduction_mask(vm_state, checkpoint);
+        }
         if intrinsic_api::intrinsic_name(vm_state.tcx, checkpoint.callee)
             .is_some_and(|name| name.as_str() == "float_to_int_unchecked")
             && let (Some(input), Some(dest)) = (checkpoint.args.first(), checkpoint.destination)
@@ -128,6 +135,47 @@ impl PropertyChecker {
             return result;
         }
         CheckResult::ProvedByRule
+    }
+
+    /// The mask reductions are defined only for lanes equal to zero or all ones.
+    fn check_simd_reduction_mask<'z3, 'tcx>(
+        &self,
+        vm_state: &VmExecutor<'z3, 'tcx>,
+        checkpoint: &Checkpoint<'tcx>,
+    ) -> CheckResult {
+        let Some(Operand::Copy(place) | Operand::Move(place)) = checkpoint.args.first() else {
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
+        };
+        if !place.projection.is_empty() {
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
+        }
+        let Some((elem_ty, len)) = vm_state.simd_lane_type(vm_state.body().local_decls[place.local].ty) else {
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
+        };
+        let Some(layout) = vm_state.integer_layout(elem_ty) else {
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
+        };
+        let zero = Int::from_u64(vm_state.z3_ctx, 0);
+        let all_ones = if layout.signed { Int::from_i64(vm_state.z3_ctx, -1) } else { layout.max(vm_state.z3_ctx) };
+        let mut invalid = Vec::with_capacity(len);
+        for index in 0..len {
+            let Some(lane) = vm_state.field_value(place.local, &[0, index]) else {
+                return CheckResult::Unknown(UnknownReason::Unimplemented);
+            };
+            invalid.push(Bool::and(vm_state.z3_ctx, &[
+                &lane.z3_term._eq(&zero).not(),
+                &lane.z3_term._eq(&all_ones).not(),
+            ]));
+        }
+        let solver = Solver::new(vm_state.z3_ctx);
+        vm_state.assert_all(&solver);
+        let invalid_lanes: Vec<_> = invalid.iter().collect();
+        solver.assert(&Bool::or(vm_state.z3_ctx, &invalid_lanes));
+        match solver.check() {
+            SatResult::Unsat => CheckResult::ProvedBySmt,
+            SatResult::Sat => CheckResult::Failed,
+            SatResult::Unknown => CheckResult::Unknown(UnknownReason::from_solver(&solver)),
+        }
     }
 
     /// If `expr` is a `SliceIndex` range parameter (e.g. `..n`), return its

@@ -1053,6 +1053,9 @@ fn intrinsic_coverage_01() {
         "simd::simd_intrinsics",
         "simd::simd_pointer_intrinsics",
         "simd::simd_reduction_intrinsics",
+        "simd::simd_reduce_invalid_mask_unsound",
+        "simd::simd_reduce_add_flow",
+        "simd::simd_reduce_add_zero_unsound",
     ] {
         assert_contain(&output, &format!("function: {name}"));
     }
@@ -1072,6 +1075,14 @@ fn intrinsic_coverage_01() {
     assert_contain(simd, "simd_bitmask");
     let more_simd = extract_block_after(&output, "function: simd::more_simd_intrinsics");
     assert_contain(more_simd, "simd_reduce_add_unordered");
+    let invalid_mask = extract_block_after(&output, "function: simd::simd_reduce_invalid_mask_unsound");
+    assert_contain(invalid_mask, "ValidNum | Failed");
+    assert_contain(invalid_mask, "result: UNSOUND");
+    let reduction_flow = extract_block_after(&output, "function: simd::simd_reduce_add_flow");
+    assert_contain(reduction_flow, "result: SOUND");
+    let reduction_zero = extract_block_after(&output, "function: simd::simd_reduce_add_zero_unsound");
+    assert_contain(reduction_zero, "ValidNum | Failed");
+    assert_contain(reduction_zero, "result: UNSOUND");
     let float_simd = extract_block_after(&output, "function: simd::simd_float_intrinsics");
     assert_contain(float_simd, "simd_flog");
     let pointer_simd = extract_block_after(&output, "function: simd::simd_pointer_intrinsics");
