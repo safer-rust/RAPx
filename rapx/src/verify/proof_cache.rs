@@ -11,6 +11,7 @@ use z3::Config;
 use crate::analysis::path::CallArg;
 use crate::compat::FxHashMap;
 use crate::contract::Property;
+use crate::limit::{VM_CACHE_MAX_ENTRIES, VM_PREFIX_STRIDE};
 use crate::vm::VmExecutor;
 
 use super::{
@@ -49,7 +50,6 @@ pub(crate) struct VmCache<'z3, 'tcx> {
     states: FxHashMap<Vec<GoalItemKey<'tcx>>, CachedGoal<'z3, 'tcx>>,
     prefix_edges: FxHashMap<PrefixEdge<'tcx>, usize>,
     prefix_states: Vec<Arc<Vec<VmExecutor<'z3, 'tcx>>>>,
-    max_entries: usize,
 }
 
 pub(crate) struct CachedGoal<'z3, 'tcx> {
@@ -57,22 +57,14 @@ pub(crate) struct CachedGoal<'z3, 'tcx> {
     pub(crate) reachability: Vec<Cell<Option<z3::SatResult>>>,
 }
 
-const VM_CACHE_MAX_ENTRIES: usize = 128;
-const VM_PREFIX_STRIDE: usize = 16;
-
 impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
     pub(crate) fn new(context: &'z3 z3::Context, config: Rc<VerifyConfig>) -> Self {
-        Self::new_with_capacity(context, VM_CACHE_MAX_ENTRIES, config)
-    }
-
-    pub(crate) fn new_with_capacity(context: &'z3 z3::Context, max_entries: usize, config: Rc<VerifyConfig>) -> Self {
         Self {
             context,
             config,
             states: FxHashMap::default(),
             prefix_edges: FxHashMap::default(),
             prefix_states: Vec::new(),
-            max_entries,
         }
     }
 
@@ -89,10 +81,10 @@ impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
         if self.states.contains_key(&key) {
             return self.states.get(&key).unwrap();
         }
-        if self.states.len() >= self.max_entries {
+        if self.states.len() >= VM_CACHE_MAX_ENTRIES {
             self.states.clear();
         }
-        if self.prefix_states.len() >= self.max_entries.saturating_mul(4).max(1) {
+        if self.prefix_states.len() >= VM_CACHE_MAX_ENTRIES.saturating_mul(4).max(1) {
             self.prefix_edges.clear();
             self.prefix_states.clear();
         }

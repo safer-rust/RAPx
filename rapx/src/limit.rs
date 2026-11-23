@@ -118,3 +118,13 @@ pub(crate) const MAX_STEP_SET_SIZE: usize = 1000;
 
 /// Recursion depth cap for the fuzzable-type predicate.
 pub(crate) const FUZZABLE_MAX_DEPTH: usize = 64;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Symbolic VM cache
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Maximum number of complete proof goals retained by one VM cache.
+pub(crate) const VM_CACHE_MAX_ENTRIES: usize = 512;
+
+/// Number of proof items stored per shared prefix edge.
+pub(crate) const VM_PREFIX_STRIDE: usize = 16;
