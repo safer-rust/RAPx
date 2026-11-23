@@ -375,6 +375,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     fn compute_pointer_add_align(
         &self,
         base: &VmValue<'z3, 'tcx>,
+        offset: &VmValue<'z3, 'tcx>,
         stride_bytes: u64,
     ) -> Option<Int<'z3>> {
         let base_align = base.facts.align_n.as_ref()?;
@@ -385,6 +386,12 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         // `sizeof_T % align_T == 0` layout constraint).
         let n = base_align.simplify().as_u64()?;
         if stride_bytes > 0 && stride_bytes.is_multiple_of(n) {
+            return Some(base_align.clone());
+        }
+        if let Some(offset_align) = offset.facts.align_n.as_ref()
+            && let Some(m) = offset_align.simplify().as_u64()
+            && m.checked_mul(stride_bytes).is_some_and(|multiple| multiple.is_multiple_of(n))
+        {
             return Some(base_align.clone());
         }
         None
@@ -507,7 +514,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             offset_kind,
         });
         let align_n = match stride {
-            Some(s) => self.compute_pointer_add_align(base, s),
+            Some(s) => self.compute_pointer_add_align(base, offset, s),
             None => base.facts.align_n.clone(),
         };
         let val = VmValue {

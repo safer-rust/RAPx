@@ -95,6 +95,15 @@ impl IntLayout {
         }
         .to_int(self.signed)
     }
+
+    /// A bitwise AND with a constant mask clears its trailing zero bits in
+    /// every result. Return the corresponding power-of-two divisor when it
+    /// fits in `u64`; the exact BV term remains the value's numeric semantics.
+    pub(crate) fn bitand_multiple<'z3>(self, ctx: &'z3 Context, mask: &Int<'z3>) -> Option<Int<'z3>> {
+        let bits = mask.simplify().as_u64()?;
+        let zeros = bits.trailing_zeros().min(u32::from(self.bits));
+        (zeros > 0 && zeros < 64).then(|| Int::from_u64(ctx, 1_u64 << zeros))
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -414,6 +423,31 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    #[test]
+    fn bitand_alignment_fact_follows_from_machine_bits() {
+        let ctx = Context::new(&Config::new());
+        let small = IntLayout::new(8, false).unwrap();
+        let small_mask = small.from_bits(&ctx, 0xf8);
+        let multiple = small.bitand_multiple(&ctx, &small_mask).unwrap();
+        assert_eq!(multiple.as_u64(), Some(8));
+        let input = Int::new_const(&ctx, "input_8");
+        let result = small.bitwise(&ctx, BitwiseOp::And, &input, &small_mask);
+        let solver = Solver::new(&ctx);
+        solver.assert(&small.in_domain(&ctx, &input));
+        solver.assert(&result.rem(&multiple)._eq(&Int::from_u64(&ctx, 0)).not());
+        assert_eq!(solver.check(), SatResult::Unsat);
+
+        let wide = IntLayout::new(64, false).unwrap();
+        let wide_mask = wide.from_bits(&ctx, u128::from(u64::MAX - 7));
+        let wide_multiple = wide.bitand_multiple(&ctx, &wide_mask).unwrap();
+        assert_eq!(wide_multiple.as_u64(), Some(8));
+        for bits in [0, 1, 7, 8, u64::MAX - 1, u64::MAX] {
+            let value = wide.from_bits(&ctx, u128::from(bits));
+            let result = wide.bitwise(&ctx, BitwiseOp::And, &value, &wide_mask).simplify();
+            assert_eq!(result.as_u64(), Some(bits & (u64::MAX - 7)));
         }
     }
 

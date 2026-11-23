@@ -358,6 +358,9 @@ pub(crate) fn eval_binary_op<'z3, 'tcx>(
         };
         if let Some(term) = term {
             let mut value = VmValue::new(term.simplify(), dest_ty);
+            if op == BinOp::BitAnd {
+                value.facts.align_n = layout.bitand_multiple(state.z3_ctx, &rhs.z3_term);
+            }
             value.source = ValueSource::BinaryOp {
                 lhs: mir_utils::operand_place(lhs_op),
                 rhs: mir_utils::operand_place(rhs_op),
