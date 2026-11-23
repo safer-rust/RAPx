@@ -167,7 +167,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                         _ => (cached.states.as_slice(), cached.reachability.as_slice()),
                     };
                     let result = states.iter().zip(reachability)
-                        .map(|(state, reachability)| PropertyChecker.check(state, checkpoint, bound_property, tree.is_structural(), reachability))
+                        .map(|(state, reachability)| PropertyChecker.check(state, checkpoint, bound_property, reachability))
                         .fold(CheckResult::ProvedByRule, CheckResult::and);
                     path_results[*index] = Some((result, description.clone()));
                 }
@@ -550,7 +550,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         let cached = cache.states_for(self.tcx, self.target.def_id, self.target.body, goal);
         properties.iter().map(|property| {
             cached.states.iter().zip(&cached.reachability)
-                .map(|(state, reachability)| PropertyChecker.check(state, &fake_checkpoint, property, tree.is_structural(), reachability))
+                .map(|(state, reachability)| PropertyChecker.check(state, &fake_checkpoint, property, reachability))
                 .fold(CheckResult::ProvedByRule, CheckResult::and)
         }).collect()
     }

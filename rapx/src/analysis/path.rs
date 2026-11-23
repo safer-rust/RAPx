@@ -71,7 +71,6 @@ pub struct PathTree {
     /// Set when enumeration stopped at a path or depth limit, so the tree
     /// holds only some of the paths.
     truncated: bool,
-    structural: bool,
     trait_impl_limited: bool,
 }
 
@@ -112,7 +111,6 @@ impl PathTree {
             call_parents: FxHashMap::default(),
             expanded_call_blocks: FxHashSet::default(),
             truncated: false,
-            structural: false,
             trait_impl_limited: false,
         }
     }
@@ -125,20 +123,12 @@ impl PathTree {
         self.truncated
     }
 
-    pub fn is_structural(&self) -> bool {
-        self.structural
-    }
-
     pub fn is_trait_impl_limited(&self) -> bool {
         self.trait_impl_limited
     }
 
     pub fn mark_trait_impl_limited(&mut self) {
         self.trait_impl_limited = true;
-    }
-
-    pub fn mark_structural(&mut self) {
-        self.structural = true;
     }
 
     pub fn mark_truncated(&mut self) {
@@ -156,7 +146,6 @@ impl PathTree {
         filtered.call_parents = self.call_parents.clone();
         filtered.expanded_call_blocks = self.expanded_call_blocks.clone();
         filtered.truncated = self.truncated;
-        filtered.structural = self.structural;
         filtered.trait_impl_limited = self.trait_impl_limited;
         for path in self.to_vecs() {
             if keep(&path) {
@@ -316,7 +305,6 @@ impl PathTree {
         sub.expanded_call_blocks = self.expanded_call_blocks.clone();
         sub.truncated = self.truncated;
         sub.trait_impl_limited = self.trait_impl_limited;
-        sub.structural = self.structural;
         let _ = self.walk_prefixes(target_block, &mut |prefix| {
             sub.insert(prefix);
             true

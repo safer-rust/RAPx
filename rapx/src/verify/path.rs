@@ -137,7 +137,6 @@ impl<'tcx> PathExtractor<'tcx> {
         let bodies = call_index.unambiguous_bodies();
         let entry_bodies = call_index.entry_bodies();
         let mut tree = PathComposer::new(&call_index, self.allow_repeat, self.config.path_limit()).compose(&caller_paths);
-        tree.mark_structural();
         call_index.attach_metadata(&mut tree);
         (tree, bodies, entry_bodies)
     }

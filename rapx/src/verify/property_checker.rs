@@ -11,14 +11,6 @@ use crate::verify::{
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 
-/// Copy/write operations that accept uninitialized destination bytes.
-fn is_mem_copy_or_write(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    callee.is_some_and(|did| {
-        pointer_copy::copy_flow(tcx, did).is_some()
-            || diagnostic_api::is_ptr_write_to_uninit(tcx, did)
-    })
-}
-
 mod alias;
 mod auto_trait;
 mod bounds;
@@ -195,7 +187,6 @@ impl PropertyChecker {
         vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
-        structural: bool,
         reachability_cache: &std::cell::Cell<Option<z3::SatResult>>,
     ) -> CheckResult {
         if vm_state.diagnostics().is_unsupported() {
@@ -231,7 +222,7 @@ impl PropertyChecker {
             });
         }
         let result = self.check_inner(vm_state, checkpoint, property);
-        if !structural || result.is_proved() {
+        if result.is_proved() {
             return result;
         }
         let reachable = if let Some(result) = reachability_cache.get() {
@@ -412,4 +403,12 @@ impl PropertyChecker {
         }
         overall
     }
+}
+
+/// Copy/write operations that accept uninitialized destination bytes.
+fn is_mem_copy_or_write(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
+    callee.is_some_and(|did| {
+        pointer_copy::copy_flow(tcx, did).is_some()
+            || diagnostic_api::is_ptr_write_to_uninit(tcx, did)
+    })
 }
