@@ -168,7 +168,7 @@ impl<'tcx> VerifyDriver<'tcx> {
         limits: &mut VerificationLimits,
     ) {
         let z3_ctx = new_z3_context();
-        let mut cache = VmCache::new(&z3_ctx, Rc::clone(&self.config));
+        let mut cache = VmCache::new(&z3_ctx, self.config.constructor_mir_mode());
         for repeat in 0..=max_repeat {
             let (results, round_limits) = FunctionVerifier::verify_checkpoints(self.tcx, target, repeat, Rc::clone(&self.config), &mut cache);
             limits.merge(round_limits);

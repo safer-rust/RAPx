@@ -165,7 +165,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
     ) -> Vec<PropertyCheckResult<'tcx>> {
         let mut results = Vec::new();
         let z3_ctx = new_z3_context();
-        let mut cache = VmCache::new(&z3_ctx, Rc::clone(&self.config));
+        let mut cache = VmCache::new(&z3_ctx, self.config.constructor_mir_mode());
         for (checkpoint, tree) in self.build_exit_trees(check_unwind) {
             let all_paths = tree.to_vecs();
             let path_indices: FxHashMap<_, _> = all_paths.iter().cloned().enumerate().map(|(index, path)| (path, index)).collect();

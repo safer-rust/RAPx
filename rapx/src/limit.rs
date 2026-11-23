@@ -128,3 +128,10 @@ pub(crate) const VM_CACHE_MAX_ENTRIES: usize = 512;
 
 /// Number of proof items stored per shared prefix edge.
 pub(crate) const VM_PREFIX_STRIDE: usize = 16;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SMT solver
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Timeout for a Z3 context, in milliseconds.
+pub(crate) const Z3_TIMEOUT_MS: u64 = 10_000;

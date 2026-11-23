@@ -5,17 +5,16 @@ use rustc_middle::{
     mir::{BasicBlock, Body},
     ty::TyCtxt,
 };
-use std::{cell::Cell, rc::Rc, sync::Arc};
+use std::{cell::Cell, sync::Arc};
 use z3::Config;
 
 use crate::analysis::path::CallArg;
 use crate::compat::FxHashMap;
 use crate::contract::Property;
-use crate::limit::{VM_CACHE_MAX_ENTRIES, VM_PREFIX_STRIDE};
-use crate::vm::VmExecutor;
+use crate::limit::{VM_CACHE_MAX_ENTRIES, VM_PREFIX_STRIDE, Z3_TIMEOUT_MS};
+use crate::vm::{VmExecutor, constructor_policy::ConstructorMirMode};
 
 use super::{
-    config::VerifyConfig,
     path::Path,
     slicer::RelevantItem,
 };
@@ -46,10 +45,10 @@ struct PrefixEdge<'tcx> {
 /// Symbolic states shared by properties that retain the same MIR and entry facts.
 pub(crate) struct VmCache<'z3, 'tcx> {
     context: &'z3 z3::Context,
-    config: Rc<VerifyConfig>,
+    constructor_mir_mode: ConstructorMirMode,
     states: FxHashMap<Vec<GoalItemKey<'tcx>>, CachedGoal<'z3, 'tcx>>,
-    prefix_edges: FxHashMap<PrefixEdge<'tcx>, usize>,
-    prefix_states: Vec<Arc<Vec<VmExecutor<'z3, 'tcx>>>>,
+    /// Prefix edge to its node ID and VM state after that prefix.
+    prefixes: FxHashMap<PrefixEdge<'tcx>, (usize, Arc<Vec<VmExecutor<'z3, 'tcx>>>)>,
 }
 
 pub(crate) struct CachedGoal<'z3, 'tcx> {
@@ -58,13 +57,12 @@ pub(crate) struct CachedGoal<'z3, 'tcx> {
 }
 
 impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
-    pub(crate) fn new(context: &'z3 z3::Context, config: Rc<VerifyConfig>) -> Self {
+    pub(crate) fn new(context: &'z3 z3::Context, constructor_mir_mode: ConstructorMirMode) -> Self {
         Self {
             context,
-            config,
+            constructor_mir_mode,
             states: FxHashMap::default(),
-            prefix_edges: FxHashMap::default(),
-            prefix_states: Vec::new(),
+            prefixes: FxHashMap::default(),
         }
     }
 
@@ -84,32 +82,33 @@ impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
         if self.states.len() >= VM_CACHE_MAX_ENTRIES {
             self.states.clear();
         }
-        if self.prefix_states.len() >= VM_CACHE_MAX_ENTRIES.saturating_mul(4).max(1) {
-            self.prefix_edges.clear();
-            self.prefix_states.clear();
+        if self.prefixes.len() >= VM_CACHE_MAX_ENTRIES.saturating_mul(4).max(1) {
+            self.prefixes.clear();
         }
         let mut prefix_len = 0;
         let mut parent = 0;
+        let mut prefix_state = None;
         while prefix_len + VM_PREFIX_STRIDE < key.len() {
             let edge = PrefixEdge {
                 parent,
                 chunk: key[prefix_len..prefix_len + VM_PREFIX_STRIDE].to_vec(),
             };
-            let Some(&next) = self.prefix_edges.get(&edge) else {
+            let Some((next, state)) = self.prefixes.get(&edge) else {
                 break;
             };
-            parent = next;
+            parent = *next;
+            prefix_state = Some(Arc::clone(state));
             prefix_len += VM_PREFIX_STRIDE;
         }
-        let mut states = if prefix_len > 0 {
-            Arc::clone(&self.prefix_states[parent - 1])
+        let mut states = if let Some(state) = prefix_state {
+            state
         } else {
             let mut states = VmExecutor::new(
                 self.context,
                 tcx,
                 caller_def_id,
                 instance_body,
-                self.config.constructor_mir_mode(),
+                self.constructor_mir_mode,
             ).execute_items(&[]);
             for state in &mut states {
                 for property in &goal.entry_facts {
@@ -140,9 +139,8 @@ impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
                     parent,
                     chunk: key[prefix_len..end].to_vec(),
                 };
-                parent = self.prefix_states.len() + 1;
-                self.prefix_edges.insert(edge, parent);
-                self.prefix_states.push(Arc::clone(&states));
+                parent = self.prefixes.len() + 1;
+                self.prefixes.insert(edge, (parent, Arc::clone(&states)));
             }
             prefix_len = end;
         }
@@ -188,6 +186,6 @@ fn goal_key<'tcx>(items: &[RelevantItem<'tcx>]) -> Vec<GoalItemKey<'tcx>> {
 /// A new context is created per verification phase.
 pub(crate) fn new_z3_context() -> z3::Context {
     let mut cfg = Config::new();
-    cfg.set_timeout_msec(10000);
+    cfg.set_timeout_msec(Z3_TIMEOUT_MS);
     z3::Context::new(&cfg)
 }
