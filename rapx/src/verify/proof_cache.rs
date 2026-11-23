@@ -5,7 +5,7 @@ use rustc_middle::{
     mir::{BasicBlock, Body},
     ty::TyCtxt,
 };
-use std::{cell::Cell, sync::Arc};
+use std::{cell::Cell, rc::Rc};
 use z3::Config;
 
 use crate::analysis::path::CallArg;
@@ -14,10 +14,7 @@ use crate::contract::Property;
 use crate::limit::{VM_CACHE_MAX_ENTRIES, VM_PREFIX_STRIDE, Z3_TIMEOUT_MS};
 use crate::vm::{VmExecutor, constructor_policy::ConstructorMirMode};
 
-use super::{
-    path::Path,
-    slicer::RelevantItem,
-};
+use super::{path::Path, slicer::RelevantItem};
 
 /// A sliced MIR path and the contract facts assumed before its first item.
 #[derive(Clone)]
@@ -46,13 +43,14 @@ struct PrefixEdge<'tcx> {
 pub(crate) struct VmCache<'z3, 'tcx> {
     context: &'z3 z3::Context,
     constructor_mir_mode: ConstructorMirMode,
+    /// Shared prefixes with node IDs and VM states, keyed by parent node and next MIR chunk.
+    prefixes: FxHashMap<PrefixEdge<'tcx>, (usize, Rc<Vec<VmExecutor<'z3, 'tcx>>>)>,
+    /// Complete proof goals and their final VM states and reachability results.
     states: FxHashMap<Vec<GoalItemKey<'tcx>>, CachedGoal<'z3, 'tcx>>,
-    /// Prefix edge to its node ID and VM state after that prefix.
-    prefixes: FxHashMap<PrefixEdge<'tcx>, (usize, Arc<Vec<VmExecutor<'z3, 'tcx>>>)>,
 }
 
 pub(crate) struct CachedGoal<'z3, 'tcx> {
-    pub(crate) states: Arc<Vec<VmExecutor<'z3, 'tcx>>>,
+    pub(crate) states: Rc<Vec<VmExecutor<'z3, 'tcx>>>,
     pub(crate) reachability: Vec<Cell<Option<z3::SatResult>>>,
 }
 
@@ -61,8 +59,8 @@ impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
         Self {
             context,
             constructor_mir_mode,
-            states: FxHashMap::default(),
             prefixes: FxHashMap::default(),
+            states: FxHashMap::default(),
         }
     }
 
@@ -89,15 +87,12 @@ impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
         let mut parent = 0;
         let mut prefix_state = None;
         while prefix_len + VM_PREFIX_STRIDE < key.len() {
-            let edge = PrefixEdge {
-                parent,
-                chunk: key[prefix_len..prefix_len + VM_PREFIX_STRIDE].to_vec(),
-            };
+            let edge = PrefixEdge { parent, chunk: key[prefix_len..prefix_len + VM_PREFIX_STRIDE].to_vec() };
             let Some((next, state)) = self.prefixes.get(&edge) else {
                 break;
             };
             parent = *next;
-            prefix_state = Some(Arc::clone(state));
+            prefix_state = Some(Rc::clone(state));
             prefix_len += VM_PREFIX_STRIDE;
         }
         let mut states = if let Some(state) = prefix_state {
@@ -117,41 +112,23 @@ impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
                 }
             }
             prefix_len = 1;
-            Arc::new(states)
+            Rc::new(states)
         };
         while prefix_len < key.len() {
-            let end = ((prefix_len / VM_PREFIX_STRIDE) + 1)
-                .saturating_mul(VM_PREFIX_STRIDE)
-                .min(key.len());
-            if states
-                .iter()
-                .any(|state| !state.diagnostics().is_unsupported())
-            {
-                let owned =
-                    Arc::try_unwrap(states).unwrap_or_else(|shared| shared.as_ref().clone());
-                states = Arc::new(VmExecutor::execute_items_after(
-                    owned,
-                    &goal.items[prefix_len - 1..end - 1],
-                ));
+            let end = ((prefix_len / VM_PREFIX_STRIDE) + 1).saturating_mul(VM_PREFIX_STRIDE).min(key.len());
+            if states.iter().any(|state| !state.diagnostics().is_unsupported()) {
+                let owned = Rc::try_unwrap(states).unwrap_or_else(|shared| shared.as_ref().clone());
+                states = Rc::new(VmExecutor::execute_items_after(owned, &goal.items[prefix_len - 1..end - 1]));
             }
             if end < key.len() {
-                let edge = PrefixEdge {
-                    parent,
-                    chunk: key[prefix_len..end].to_vec(),
-                };
+                let edge = PrefixEdge { parent, chunk: key[prefix_len..end].to_vec() };
                 parent = self.prefixes.len() + 1;
-                self.prefixes.insert(edge, (parent, Arc::clone(&states)));
+                self.prefixes.insert(edge, (parent, Rc::clone(&states)));
             }
             prefix_len = end;
         }
         let reachability = states.iter().map(|_| Cell::new(None)).collect();
-        self.states.insert(
-            key.clone(),
-            CachedGoal {
-                states,
-                reachability,
-            },
-        );
+        self.states.insert(key.clone(), CachedGoal { states, reachability });
         self.states.get(&key).unwrap()
     }
 }
@@ -160,23 +137,12 @@ fn goal_key<'tcx>(items: &[RelevantItem<'tcx>]) -> Vec<GoalItemKey<'tcx>> {
     items
         .iter()
         .map(|item| match item {
-            RelevantItem::Statement {
-                def_id,
-                block,
-                global_block,
-                stmt_index,
-            } => GoalItemKey::Statement(*def_id, *block, *global_block, *stmt_index),
-            RelevantItem::Terminator {
-                def_id,
-                block,
-                global_block,
-                switch_succ,
-            } => GoalItemKey::Terminator(*def_id, *block, *global_block, *switch_succ),
-            RelevantItem::CalleeEntry { callee, body, args } => GoalItemKey::CalleeEntry(
-                *callee,
-                body.map(|body| body as *const _ as usize),
-                args.clone(),
-            ),
+            RelevantItem::Statement { def_id, block, global_block, stmt_index } =>
+                GoalItemKey::Statement(*def_id, *block, *global_block, *stmt_index),
+            RelevantItem::Terminator { def_id, block, global_block, switch_succ } =>
+                GoalItemKey::Terminator(*def_id, *block, *global_block, *switch_succ),
+            RelevantItem::CalleeEntry { callee, body, args } =>
+                GoalItemKey::CalleeEntry(*callee, body.map(|body| body as *const _ as usize), args.clone()),
             RelevantItem::CalleeExit { dest } => GoalItemKey::CalleeExit(*dest),
         })
         .collect()
