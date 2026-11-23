@@ -44,30 +44,6 @@ pub(crate) struct PropertyRule {
     ) -> CheckResult,
 }
 
-/// `NonVolatile` is uncheckable: the VM does not model volatile access, so
-/// there is nothing to disprove.  Treated as satisfied (Proved) as a documented
-/// soundness assumption — analysed code is assumed not to mix volatile and
-/// non-volatile access.  Revisit if volatile tracking is ever added.
-fn check_non_volatile<'z3, 'tcx>(
-    _checker: &PropertyChecker,
-    _vm_state: &VmExecutor<'z3, 'tcx>,
-    _checkpoint: &Checkpoint<'tcx>,
-    _property: &Property<'tcx>,
-) -> CheckResult {
-    CheckResult::ProvedByRule
-}
-
-/// Fallback for `PropertyKind`s without a dedicated checker (`Unwrap`, `Pinned`,
-/// `Opened`, `Unreachable`, `Unknown`, …): reported `Unknown`.
-fn check_unknown<'z3, 'tcx>(
-    _checker: &PropertyChecker,
-    _vm_state: &VmExecutor<'z3, 'tcx>,
-    _checkpoint: &Checkpoint<'tcx>,
-    _property: &Property<'tcx>,
-) -> CheckResult {
-    CheckResult::Unknown(UnknownReason::UnsupportedProperty)
-}
-
 /// Every property rule, in dispatch order.
 pub(crate) const PROPERTY_RULES: &[PropertyRule] = &[
     PropertyRule {
@@ -138,7 +114,8 @@ pub(crate) const PROPERTY_RULES: &[PropertyRule] = &[
     PropertyRule {
         name: "non_volatile",
         kind: PropertyKind::NonVolatile,
-        apply: check_non_volatile,
+        // Assume analyzed code does not mix volatile and non-volatile access.
+        apply: |_, _, _, _| CheckResult::ProvedByRule,
     },
     PropertyRule {
         name: "valid_num",
@@ -211,13 +188,6 @@ pub(crate) const PROPERTY_RULES: &[PropertyRule] = &[
         apply: PropertyChecker::check_ref_send,
     },
 ];
-
-/// Fallback rule for kinds with no dedicated checker.
-pub(crate) const UNKNOWN_RULE: PropertyRule = PropertyRule {
-    name: "unknown",
-    kind: PropertyKind::Unknown,
-    apply: check_unknown,
-};
 
 impl PropertyChecker {
     pub(crate) fn check<'z3, 'tcx>(
@@ -385,7 +355,9 @@ impl PropertyChecker {
                 {
                     return CheckResult::Unknown(UnknownReason::IncompleteInline);
                 }
-                let rule = PROPERTY_RULES.iter().find(|r| r.kind == atom.kind).unwrap_or(&UNKNOWN_RULE);
+                let Some(rule) = PROPERTY_RULES.iter().find(|r| r.kind == atom.kind) else {
+                    return CheckResult::Unknown(UnknownReason::UnsupportedProperty);
+                };
                 crate::rap_debug!("property rule: {}", rule.name);
                 let result = (rule.apply)(self, vm_state, checkpoint, property);
                 if vm_state.diagnostics().has_incomplete_inline_branch() && result == CheckResult::Failed {
