@@ -14,7 +14,7 @@ use rustc_middle::{
     ty::{Region, Ty, TyKind, TypingEnv},
 };
 use z3::{
-    SatResult, Solver,
+    DeclKind, SatResult, Solver,
     ast::{Array, Ast, Bool, Dynamic, Int},
 };
 
@@ -1346,11 +1346,16 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 | rustc_middle::ty::TyKind::Bool
                 | rustc_middle::ty::TyKind::Char
         ) {
-            solver.assert(&value.z3_term.ge(&zero));
+            // An unsigned BV-to-Int term is nonnegative by construction.
+            // Reasserting the bound imports its bit-vector subterms into
+            // otherwise arithmetic-only queries.
+            if value.z3_term.decl().kind() != DeclKind::BV2INT {
+                solver.assert(&value.z3_term.ge(&zero).simplify());
+            }
         }
         if matches!(value.ty.kind(), rustc_middle::ty::TyKind::Bool) {
             let one = Int::from_u64(self.z3_ctx, 1);
-            solver.assert(&value.z3_term.le(&one));
+            solver.assert(&value.z3_term.le(&one).simplify());
         }
         if matches!(value.ty.kind(), rustc_middle::ty::TyKind::Char) {
             let max = Int::from_u64(self.z3_ctx, 0x10FFFF);
