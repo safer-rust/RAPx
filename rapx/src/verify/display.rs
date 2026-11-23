@@ -386,9 +386,11 @@ pub(crate) fn emit_verify_summary<'tcx>(
 /// Print checkpoint results, the overall verdict, and any unknown diagnostics.
 pub(crate) fn emit_results_and_verdict<'tcx>(all_results: &[PropertyCheckResult<'tcx>], limits: VerificationLimits) {
     let (failed, unknown) = emit_results_counts_and_checkpoints(all_results);
-    if failed == 0 && unknown == 0 {
+    if failed == 0 && unknown == 0 && limits.path_limited {
+        rap_warn!("  result: UNKNOWN (path limit)");
+    } else if failed == 0 && unknown == 0 {
         let mut labels = Vec::new();
-        if limits.path_limited {
+        if limits.scc_limited {
             labels.push("path limit");
         }
         if limits.mono_limited {

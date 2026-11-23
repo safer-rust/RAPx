@@ -2179,7 +2179,7 @@ impl<'g, 'tcx> PathEnumerator<'g, 'tcx> {
         );
 
         if self.scc_truncated {
-            tree.mark_truncated();
+            tree.mark_scc_truncated();
         }
 
         tree
