@@ -17,7 +17,7 @@ use self::comparison::ComparisonPlan;
 use self::index::BuiltinIndexPlan;
 use crate::vm::constructor_policy::ConstructorMirMode;
 use crate::compat::Spanned;
-use crate::def_ids::diagnostic_api;
+use crate::def_ids::{diagnostic_api, lang_api};
 use crate::util::fn_info::{self, FnKind};
 use crate::util::mir_utils;
 use crate::analysis::dataflow::call_summary::{self, CallEffect};
@@ -345,15 +345,14 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                             },
                         )
                     })
+                    // `?` may leave the success type generic while resolving the error conversion.
                     .filter(|instance| {
                         matches!(instance.def, InstanceKind::Item(_))
                             && instance.def_id() == callee
-                            && (instance
-                                .args
-                                .types()
-                                .all(|ty| !mir_utils::ty_has_type_param(ty))
+                            && (instance.args.types().all(|ty| !mir_utils::ty_has_type_param(ty))
                                 || self.path_state.inline.symbolic_generic_const_inline
-                                || mir_utils::has_generic_const_call_argument(self.tcx, callee))
+                                || mir_utils::has_generic_const_call_argument(self.tcx, callee)
+                                || lang_api::is_from_residual(self.tcx, callee))
                     });
                 if self.exec_inline_call(
                     callee,

@@ -25,6 +25,7 @@ use crate::verify::{
 
 use super::FunctionVerifier;
 
+/// First observed use of a local after a manual drop.
 enum LocalAccess {
     None,
     Read,
@@ -32,6 +33,7 @@ enum LocalAccess {
 }
 
 impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
+    /// Whether any atom in a property tree checks aliasing.
     pub(super) fn property_contains_alias(property: &Property<'_>) -> bool {
         match property {
             Property::Atom(atom) => atom.kind == PropertyKind::Alias,
@@ -63,6 +65,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
 
     /// Flatten conjunctions so each child can use the shared path replay.
     fn collect_conjuncts<'a>(properties: &'a [Property<'tcx>]) -> Vec<&'a Property<'tcx>> {
+        /// Append non-conjunction leaves in source order.
         fn append<'a, 'tcx>(property: &'a Property<'tcx>, conjuncts: &mut Vec<&'a Property<'tcx>>) {
             if let Property::And(and) = property {
                 for child in &and.conjuncts {
@@ -80,6 +83,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         conjuncts
     }
 
+    /// Rebuild one property's result from its flattened conjuncts on a path.
     fn combine_conjuncts_on_path(
         property: &Property<'tcx>,
         conjunct_results: &mut [Option<(CheckResult, String)>],
@@ -173,7 +177,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         results
     }
 
-    /// Check every path suffix after one occurrence of a `ManuallyDrop::drop` checkpoint.
+    /// Check every path suffix after a `ManuallyDrop::drop` checkpoint.
     ///
     /// `ManuallyDrop::drop(&mut slot)` drops the contained value while the
     /// wrapper remains live. A later read can use a dropped value. This forward
@@ -320,6 +324,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         LocalAccess::None
     }
 
+    /// Whether a suffix reads the dropped slot before reinitializing it.
     fn drop_suffix_reads(&self, tree: &PathTree, caller: DefId, slot: Local, suffix: &[usize]) -> bool {
         for &block in suffix {
             let Some((def_id, local_block)) = tree.block_fn_of(block) else {
@@ -455,6 +460,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         }
     }
 
+    /// Rebind the place base while retaining its projections.
     fn rebind_place(place: &contract::ContractPlace, checkpoint: &Checkpoint<'tcx>) -> contract::ContractPlace {
         contract::ContractPlace {
             base: Self::rebind_base(&place.base, checkpoint),
@@ -463,7 +469,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
     }
 
     /// Recursively rewrite every place embedded in a contract expression,
-    /// rebinding `Local` bases to argument positions via [`Self::rebind_place`].
+    /// rebinding `Local` bases via [`Self::rebind_place`].
     fn rebind_contract_expr(expr: &contract::ContractExpr<'tcx>, checkpoint: &Checkpoint<'tcx>) -> contract::ContractExpr<'tcx> {
         match expr {
             contract::ContractExpr::Place(place) => {
@@ -532,13 +538,13 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         let fake_checkpoint = Checkpoint {
             caller: def_id,
             callee: None,
-            block: checkpoint.block,
             args: Vec::new(),
-            kind: crate::verify::checkpoint::CheckpointKind::UnsafeCall,
-            requires: Vec::new(),
             destination: None,
-            is_mut_ref: false,
+            block: checkpoint.block,
             stmt_index: 0,
+            kind: CheckpointKind::UnsafeCall,
+            requires: Vec::new(),
+            is_mut_ref: false,
         };
         let goal = self.prepare_goal(tree, goal, entry_facts);
         let cached = cache.states_for(self.tcx, self.target.def_id, self.target.body, goal);
@@ -549,6 +555,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         }).collect()
     }
 
+    /// Add inline frame boundaries and entry facts to a sliced path.
     fn prepare_goal(&self, tree: &PathTree, goal: SlicedPath<'tcx>, entry_facts: &[Property<'tcx>]) -> ProofGoal<'tcx> {
         ProofGoal {
             path: goal.path,

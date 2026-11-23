@@ -330,11 +330,7 @@ pub(crate) fn emit_results_counts_and_checkpoints<'tcx>(all_results: &[PropertyC
         groups.entry((r.checkpoint_index, r.checkpoint, r.callee_name.clone())).or_default().push(r);
     }
 
-    let exit_sections = [
-        ("struct-invariant(", "struct invariants"),
-        ("type-invariant(", "type invariants"),
-        ("postcond-invariant(", "postconditions"),
-    ];
+    let exit_sections = [("invariants(", "invariants"), ("postconditions(", "postconditions")];
     let checkpoint_groups: Vec<_> = groups.iter()
         .filter(|((_, _, name), _)| !exit_sections.iter().any(|(prefix, _)| name.starts_with(prefix)))
         .collect();

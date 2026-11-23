@@ -41,6 +41,14 @@ pub(crate) fn is_clone(tcx: TyCtxt<'_>, did: DefId) -> bool {
         .is_some_and(|trait_id| matches(tcx, trait_id, LangItem::Clone))
 }
 
+/// Whether `did` is the `FromResidual::from_residual` trait or impl method.
+pub(crate) fn is_from_residual(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    matches(tcx, did, LangItem::TryTraitFromResidual)
+        || tcx.opt_associated_item(did)
+            .and_then(|item| item.trait_item_def_id())
+            .is_some_and(|trait_method| matches(tcx, trait_method, LangItem::TryTraitFromResidual))
+}
+
 /// The plain `panic!` entry point, which only consumes a static message.
 pub(crate) fn is_panic_exit(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     matches(tcx, callee, LangItem::Panic)

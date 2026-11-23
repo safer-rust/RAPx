@@ -136,25 +136,14 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         }
     }
 
-    /// Recheck declared and built-in invariants at exits.
+    /// Recheck all collected invariants at exits.
     pub(crate) fn verify_invariants(&self) -> Vec<PropertyCheckResult<'tcx>> {
-        let declared = self.target.declared_invariants();
-        let builtin = self.target.builtin_invariants();
-        let mut results = Vec::new();
-        if !declared.is_empty() {
-            let is_constructor = get_type(self.tcx, self.target.def_id) == FnKind::Constructor;
-            // Methods also recheck declared invariants on unwinding exits.
-            let entry_facts: Vec<Property<'tcx>> = self.target.caller_requires.iter()
-                .filter(|c| !matches!(c.kind(), Some(PropertyKind::Unknown)))
-                .cloned()
-                .collect();
-            results.extend(self.check_exit_properties(declared, &entry_facts, !is_constructor, "struct"));
-        }
-        // Built-in invariants are rechecked only around unsafe operations; moved subjects are skipped.
-        if !builtin.is_empty() && self.target.has_checkable_checkpoint() {
-            results.extend(self.check_exit_properties(builtin, builtin, false, "type"));
-        }
-        results
+        let is_constructor = get_type(self.tcx, self.target.def_id) == FnKind::Constructor;
+        let entry_facts: Vec<Property<'tcx>> = self.target.caller_requires.iter()
+            .filter(|c| !matches!(c.kind(), Some(PropertyKind::Unknown)))
+            .cloned()
+            .collect();
+        self.check_exit_properties(&self.target.invariants, &entry_facts, !is_constructor, "invariants")
     }
 
     /// Check postconditions at normal return blocks using entry requirements.
@@ -163,7 +152,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
             .filter(|property| !matches!(property.kind(), Some(PropertyKind::Unknown)))
             .cloned()
             .collect();
-        self.check_exit_properties(postconditions, &entry_facts, false, "postcond")
+        self.check_exit_properties(postconditions, &entry_facts, false, "postconditions")
     }
 
     /// Check exit properties together when they share the same eligible paths.
@@ -176,7 +165,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
     ) -> Vec<PropertyCheckResult<'tcx>> {
         let mut results = Vec::new();
         let z3_ctx = new_z3_context();
-        let mut cache = if label == "type" {
+        let mut cache = if label == "invariants" {
             VmCache::new_with_capacity(&z3_ctx, 512, Rc::clone(&self.config))
         } else {
             VmCache::new(&z3_ctx, Rc::clone(&self.config))
@@ -193,14 +182,14 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                 .filter_map(|(index, invariant)| (is_return || !targets_return_value(invariant)).then_some(index))
                 .collect();
             let stable: Vec<_> = invariants.iter().map(|invariant| {
-                label == "type"
+                label == "invariants"
                     && entry_facts.contains(invariant)
                     && is_preserved_slice_ref_invariant(self.tcx, self.target.def_id, invariant)
             }).collect();
             let mut groups: IndexMap<Vec<usize>, FxHashSet<Vec<usize>>> = IndexMap::new();
             for path in &all_paths {
                 let indices: Vec<_> = eligible.iter().copied().filter(|&index| {
-                    label != "type" || type_invariant_subject(&invariants[index]).is_none_or(|local| {
+                    label != "invariants" || type_invariant_subject(&invariants[index]).is_none_or(|local| {
                         type_invariant_subject_live(self.tcx, self.target.def_id, &tree, path, local)
                     })
                 }).collect();
@@ -247,7 +236,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                         property: invariants[property_index].clone(),
                         result,
                         path_desc: path_desc.clone(),
-                        callee_name: format!("{label}-invariant(bb{})", checkpoint.block.as_usize()),
+                        callee_name: format!("{label}(bb{})", checkpoint.block.as_usize()),
                     });
                 }
             }

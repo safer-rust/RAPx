@@ -88,10 +88,8 @@ pub(crate) struct FunctionTarget<'tcx> {
     /// Entry assumptions from this function's preconditions and invariants.
     pub caller_requires: FnContracts<'tcx>,
 
-    /// Declared struct invariants followed by built-in parameter and return invariants.
+    /// Declared struct invariants and built-in invariants for checked functions.
     pub invariants: Vec<Property<'tcx>>,
-    /// Boundary of the declared invariants needed by marker-trait obligations.
-    pub declared_invariant_count: usize,
 
     /// Checkpoints and obligations for raw pointer dereferences.
     /// Obligations include `Allocated`, `InBound`, and `Align`, plus `Typed`
@@ -104,14 +102,6 @@ pub(crate) struct FunctionTarget<'tcx> {
 }
 
 impl<'tcx> FunctionTarget<'tcx> {
-    pub(crate) fn declared_invariants(&self) -> &[Property<'tcx>] {
-        &self.invariants[..self.declared_invariant_count]
-    }
-
-    pub(crate) fn builtin_invariants(&self) -> &[Property<'tcx>] {
-        &self.invariants[self.declared_invariant_count..]
-    }
-
     pub(crate) fn has_checkable_checkpoint(&self) -> bool {
         self.all_checkpoints().any(|checkpoint| {
             !self.properties_for_callsite(checkpoint).is_empty()
@@ -738,13 +728,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
             struct_invariants.clear();
         }
 
-        // Built-in invariants for parameters and returns are entry facts.
-        let mut invariants = struct_invariants;
-        let declared_invariant_count = invariants.len();
-        invariants.extend(build_type_invariants_from_params(self.tcx, def_id));
-        caller_requires.extend(invariants[declared_invariant_count..].iter().cloned());
-
-        FunctionTarget {
+        let mut target = FunctionTarget {
             def_id,
             body,
             callee_bodies,
@@ -752,11 +736,18 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
             checkpoints,
             callee_requires,
             caller_requires,
-            invariants,
-            declared_invariant_count,
+            invariants: struct_invariants,
             raw_ptr_deref_checks,
             static_mut_checks,
+        };
+        // Built-in invariants are entry facts, but exit obligations only when
+        // this function contains a checkable unsafe operation.
+        let type_invariants = build_type_invariants_from_params(self.tcx, def_id);
+        target.caller_requires.extend(type_invariants.iter().cloned());
+        if target.has_checkable_checkpoint() {
+            target.invariants.extend(type_invariants);
         }
+        target
     }
 
     /// Build one target per monomorphized instance when `def_id` has an
@@ -988,7 +979,7 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
                     && first.raw_ptr_deref_checks.is_empty()
                     && first.static_mut_checks.is_empty()
                 {
-                    if !first.declared_invariants().is_empty() {
+                    if !first.invariants.is_empty() {
                         if self.config.skip_invariant {
                             return;
                         }

@@ -51,7 +51,7 @@ impl<'tcx> ContractDebugPrinter<'tcx> {
             let methods = &struct_groups[&struct_def_id];
             let struct_name = self.tcx.def_path_str(struct_def_id);
 
-            let inv_target = methods.iter().find(|t| !t.declared_invariants().is_empty());
+            let inv_target = methods.iter().find(|t| !t.invariants.is_empty());
             let have_invariants = inv_target.is_some();
 
             if have_invariants || methods.iter().any(|t| self.has_printable_contracts(t)) {
@@ -61,8 +61,8 @@ impl<'tcx> ContractDebugPrinter<'tcx> {
             }
 
             if let Some(tgt) = inv_target {
-                rap_info!("  [Struct Invariants]:");
-                let invariants = dedup_compound_props(tgt.declared_invariants().iter());
+                rap_info!("  [Invariants]:");
+                let invariants = dedup_compound_props(tgt.invariants.iter());
                 let inv_count = invariants.len();
                 for (ii, property) in invariants.iter().enumerate() {
                     let ibranch = if ii + 1 == inv_count { "`-" } else { "|-" };
