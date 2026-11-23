@@ -11,8 +11,10 @@ use rustc_middle::{
     ty::{EarlyBinder, InstanceKind, TyCtxt, TypingEnv},
 };
 
+use crate::analysis::dataflow::pointer_copy;
 use crate::analysis::path::graph::{PathEnumerator, PathGraph};
 use crate::compat::Spanned;
+use crate::def_ids::diagnostic_api;
 use crate::util::mir_utils as helpers;
 
 /// API-specific facts needed by the MIR write tracer.
@@ -350,4 +352,13 @@ fn write_args_on_path<'tcx>(
         }
     }
     writes
+}
+
+/// Destination pointer argument of copy and pointer-write APIs.
+/// The destination's previous bytes need not be initialized.
+pub(crate) fn write_target_arg(tcx: TyCtxt<'_>, callee: Option<DefId>) -> Option<usize> {
+    let did = callee?;
+    pointer_copy::copy_flow(tcx, did)
+        .map(|flow| flow.destination_arg)
+        .or_else(|| diagnostic_api::is_ptr_write_to_uninit(tcx, did).then_some(0))
 }

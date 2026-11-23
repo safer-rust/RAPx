@@ -1,15 +1,11 @@
 //! Property checks for the symbolic VM.
 
-use crate::analysis::dataflow::pointer_copy;
-use crate::def_ids::diagnostic_api;
 use crate::contract::{ContractExpr, PlaceBase, Property, PropertyArg, PropertyKind};
 use crate::verify::checkpoint::Checkpoint;
 use crate::vm::state::VmExecutor;
 use crate::verify::{
     report::{CheckResult, UnknownReason},
 };
-use rustc_hir::def_id::DefId;
-use rustc_middle::ty::TyCtxt;
 
 mod alias;
 mod auto_trait;
@@ -222,6 +218,7 @@ impl PropertyChecker {
             });
         }
         let result = self.check_inner(vm_state, checkpoint, property);
+        // Rule and SMT proofs stand as-is; only Failed or Unknown need a path-feasibility check.
         if result.is_proved() {
             return result;
         }
@@ -393,9 +390,8 @@ impl PropertyChecker {
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
-        // AND semantics: proved if every conjunct is proved; failed if any is
-        // definitely violated; otherwise unknown.  An empty conjunction is
-        // vacuously proved.
+        // Any Failed conjunct dominates Unknown; all conjuncts must be proved.
+        // An empty conjunction is vacuously proved.
         let mut overall = CheckResult::ProvedByRule;
         for conjunct in property.conjuncts() {
             let result = self.check_inner(vm_state, checkpoint, conjunct);
@@ -403,12 +399,4 @@ impl PropertyChecker {
         }
         overall
     }
-}
-
-/// Copy/write operations that accept uninitialized destination bytes.
-fn is_mem_copy_or_write(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
-    callee.is_some_and(|did| {
-        pointer_copy::copy_flow(tcx, did).is_some()
-            || diagnostic_api::is_ptr_write_to_uninit(tcx, did)
-    })
 }

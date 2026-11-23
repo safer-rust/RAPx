@@ -5,10 +5,11 @@
 //! `in_bounds`, `non_null`) with fast paths, falling back to SMT over
 //! `value.z3_term` and allocation base/size.
 
+use crate::analysis::dataflow::call_write;
 use crate::def_ids::type_ids;
 use crate::util::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
-use crate::contract::{ContractExpr, Property, PropertyArg, PropertyKind, is_static_lifetime_ident, type_invariants::has_owner_ptr_invariant};
+use crate::contract::{ContractExpr, PlaceBase, Property, PropertyArg, PropertyKind, is_static_lifetime_ident, type_invariants::has_owner_ptr_invariant};
 use crate::verify::report::{CheckResult, UnknownReason};
 use crate::vm::state::{AllocId, OffsetKind, VmExecutor, VmValue};
 use rustc_hash::FxHashSet;
@@ -792,7 +793,8 @@ impl PropertyChecker {
                 && vm_state.is_value_aligned(&value)
                 && matches!(value.ty.kind(), TyKind::RawPtr(..))
                 && !vm_state.alloc(id).facts.dead
-                && super::is_mem_copy_or_write(vm_state.tcx, checkpoint.callee) {
+                && call_write::write_target_arg(vm_state.tcx, checkpoint.callee)
+                    .is_some_and(|arg| property.target_place().is_some_and(|place| place.base == PlaceBase::Arg(arg))) {
                     return CheckResult::ProvedByRule;
                 }
             let size = vm_state.allocation_size(id).clone();

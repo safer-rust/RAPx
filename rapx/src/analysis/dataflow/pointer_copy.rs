@@ -17,9 +17,7 @@ pub(crate) struct CopyFlow {
 
 /// The fixed argument flow of compiler and standard-library copy functions.
 pub(crate) fn direct_copy_flow(tcx: TyCtxt<'_>, callee: DefId) -> Option<CopyFlow> {
-    let intrinsic = intrinsic_api::intrinsic_name(tcx, Some(callee))
-        .is_some_and(|name| matches!(name.as_str(), "copy" | "copy_nonoverlapping"));
-    (intrinsic || diagnostic_api::is_ptr_copy(tcx, callee)).then_some(CopyFlow {
+    (intrinsic_api::is_ptr_copy(tcx, callee) || diagnostic_api::is_ptr_copy(tcx, callee)).then_some(CopyFlow {
         source_arg: 0,
         destination_arg: 1,
     })

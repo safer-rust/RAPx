@@ -4,11 +4,12 @@
 //! offset) against the expected type; `Size` checks `sized`/`unsized`/exact
 //! size assertions.
 
+use crate::analysis::dataflow::call_write;
 use crate::def_ids::type_ids;
 use crate::def_ids::lang_api::{self, LangItem};
 use crate::util::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
-use crate::contract::{ContractExpr, Property, PropertyArg};
+use crate::contract::{ContractExpr, PlaceBase, Property, PropertyArg};
 use crate::verify::report::{CheckResult, UnknownReason};
 use crate::vm::state::VmExecutor;
 use rustc_middle::ty::{Ty, TyKind};
@@ -52,6 +53,8 @@ impl PropertyChecker {
             }
         }
         let expected = property.try_type_arg_at(1).or(Some(value_elem_ty));
+        let is_write_target = call_write::write_target_arg(vm_state.tcx, checkpoint.callee)
+            .is_some_and(|arg| property.target_place().is_some_and(|place| place.base == PlaceBase::Arg(arg)));
         if let Some(expected_ty) = expected {
             let expected_ty = vm_state.instantiate_callsite_ty(checkpoint, expected_ty);
 
@@ -83,7 +86,7 @@ impl PropertyChecker {
                         && args.first().and_then(|arg| arg.as_type()) == Some(expected_ty)
                         && vm_state.content(alloc_id).facts.inner_uninit
                         && vm_state.content(alloc_id).facts.written_pointee_ty != Some(expected_ty)
-                        && !super::is_mem_copy_or_write(vm_state.tcx, checkpoint.callee)
+                        && !is_write_target
                     {
                         return CheckResult::Failed;
                     }
@@ -120,7 +123,7 @@ impl PropertyChecker {
                         && matches!(value.ty.kind(), TyKind::RawPtr(..))
                         && let Some(inner) = substs.first().and_then(|s| s.as_type())
                         && inner == expected_ty
-                        && super::is_mem_copy_or_write(vm_state.tcx, checkpoint.callee)
+                        && is_write_target
                     {
                         return CheckResult::ProvedByRule;
                     }

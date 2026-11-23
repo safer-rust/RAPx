@@ -21,6 +21,12 @@ pub fn is_intrinsic(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     tcx.intrinsic(callee).is_some()
 }
 
+/// Whether this is the pointer `copy` or `copy_nonoverlapping` intrinsic.
+pub(crate) fn is_ptr_copy(tcx: TyCtxt<'_>, callee: DefId) -> bool {
+    intrinsic_name(tcx, Some(callee))
+        .is_some_and(|name| matches!(name.as_str(), "copy" | "copy_nonoverlapping"))
+}
+
 /// Canonical contract path for an intrinsic lowered to a MIR statement.
 pub(crate) fn lowered_mir_path(intrinsic: &NonDivergingIntrinsic<'_>) -> &'static str {
     match intrinsic {
