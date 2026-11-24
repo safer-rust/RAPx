@@ -124,7 +124,10 @@ impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
                 states = Rc::new(VmExecutor::execute_items_after(owned, &goal.items[prefix_len - 1..end - 1]));
             }
             if end < key.len() {
-                let edge = PrefixEdge { parent, chunk: key[prefix_len..end].to_vec() };
+                // Store the chunk from its stride boundary, as the lookup above reads it.
+                // A fresh run resumes at 1 after the entry facts, but its chunk starts at 0.
+                let start = (prefix_len / VM_PREFIX_STRIDE) * VM_PREFIX_STRIDE;
+                let edge = PrefixEdge { parent, chunk: key[start..end].to_vec() };
                 parent = self.prefixes.len() + 1;
                 self.prefixes.insert(edge, (parent, Rc::clone(&states)));
             }
