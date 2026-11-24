@@ -6,7 +6,7 @@ use rustc_middle::ty::TyCtxt;
 use rustc_span::Span;
 
 /// Source location of the MIR item currently being replayed.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct ActiveMirLocation {
     pub def_id: DefId,
     pub block: usize,
@@ -14,7 +14,7 @@ pub(crate) struct ActiveMirLocation {
     pub span: Span,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(crate) enum ActiveMirItem {
     Statement(usize),
     Terminator,

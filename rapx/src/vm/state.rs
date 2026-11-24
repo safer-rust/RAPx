@@ -13,7 +13,6 @@ use rustc_middle::{
     mir::{Body, ConstValue, Local, Operand, Place, ProjectionElem},
     ty::{Region, Ty, TyKind, TypingEnv},
 };
-use rustc_span::Span;
 use z3::{
     SatResult, Solver,
     ast::{Array, Ast, Bool, Dynamic, Int},
@@ -21,11 +20,12 @@ use z3::{
 
 use crate::compat::{FxHashMap, FxHashSet};
 pub(crate) use super::VmExecutor;
+use super::diagnostics::ActiveMirLocation;
 use crate::util::def_use::PlaceKey;
 
 pub(crate) const REPEATED_ARRAY_ELEMENT: usize = usize::MAX;
 
-/// Unique identifier for a heap or stack allocation.
+/// Unique identifier for a VM allocation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct AllocId(pub usize);
 
@@ -44,12 +44,10 @@ pub(crate) struct MemoryEvent {
     pub kind: MemoryEventKind,
     /// Whether the allocation was already dead when this operation occurred.
     pub was_dead: bool,
-    /// MIR block containing the access, when known.
-    pub block: Option<usize>,
+    /// MIR item that caused the access, when known.
+    pub site: Option<ActiveMirLocation>,
     /// MIR local used for the access.
     pub local: usize,
-    /// Source location attributed to the access.
-    pub span: Span,
 }
 
 /// The structure of a pointer's byte offset, when it has one.
@@ -64,8 +62,7 @@ pub(crate) struct MemoryEvent {
 pub(crate) enum OffsetKind<'z3> {
     /// Compile-time field offset (`offset_of!`), including a first field at 0.
     Field,
-    /// Element index and byte stride from pointer arithmetic. The byte offset
-    /// is `index · stride`.
+    /// Element index and byte stride; byte offset is `index · stride`.
     Element { index: Int<'z3>, stride: Int<'z3> },
     /// A byte-strided or otherwise unclassifiable offset (`byte_add`).
     Byte,
@@ -87,8 +84,8 @@ pub(crate) struct Provenance<'z3> {
 /// relationships to other values). These travel *with* the value — a
 /// [`VmValue`] leaves its allocation when passed as an operand or stashed in
 /// `InlineCtx::deferred_field_writes` — so they live on the value, not the
-/// allocation.  The allocation-level counterpart to `init` is
-/// [`ContentFacts::initialized`], kept in sync by [`VmExecutor::mark_initialized`].
+/// allocation. The allocation-level counterpart to `init` is
+/// [`ContentFacts::initialized`]; the two facts are updated for their respective views.
 ///
 /// `PartialEq`/`Eq` are deliberately *not* derived: `align_n` is a Z3 AST
 /// whose equality is structural (`Z3_is_eq_ast`), not semantic, so comparing
@@ -195,8 +192,8 @@ impl<'z3, 'tcx> VmValue<'z3, 'tcx> {
     }
 }
 
-/// The shape of an allocation: a single object, a slice/array buffer, or an
-/// external raw-pointer parameter.  `element_ty` (typed vs untyped) and the
+/// The shape of an allocation: a single object, a slice/array buffer, or
+/// externally supplied storage. `element_ty` (typed vs untyped) and the
 /// `parent` sub-view edge stay separate fields.
 #[derive(Clone, Debug)]
 pub(crate) enum AllocKind<'z3> {
@@ -207,9 +204,8 @@ pub(crate) enum AllocKind<'z3> {
     Slice {
         len: Int<'z3>,
     },
-    /// An external raw-pointer parameter. `size` is an unconstrained symbolic
-    /// term (the caller may pass any allocation); nullability is *not* stored
-    /// here — it is tracked via the pointer term (`term == 0`) path conditions.
+    /// External storage with a symbolic extent; pointer nullability is tracked
+    /// by path conditions rather than by this allocation kind.
     External,
     /// External allocation with a known, possibly symbolic element count.
     ExternalSlice {
@@ -279,7 +275,7 @@ pub(crate) struct ForEachFacts<'z3, 'tcx> {
 /// (readability, C-string/UTF-8 trust) live on [`ContentFacts`] instead.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct AllocFacts<'z3, 'tcx> {
-    /// Whether the allocation has been freed (StorageDead / Drop).
+    /// Whether the allocation is dead after storage ends or a drop.
     pub dead: bool,
     /// Whether an unresolved `Fn*` call may have freed this allocation.
     pub function_var_may_drop: bool,
@@ -325,8 +321,7 @@ pub(crate) struct ContentFacts<'tcx> {
     pub split_transmute_to: Option<Ty<'tcx>>,
 }
 
-/// A memory allocation: a stack local, a heap object (`Box`/`Vec`), or an
-/// external raw-pointer placeholder.
+/// A memory allocation: a stack local, a heap object, or external storage.
 ///
 /// The allocation is stored in a [`MemoryUnit`] at index `AllocId.0` (an
 /// `AllocId` is a monotonic counter that doubles as the vector index).
@@ -369,7 +364,7 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
         }
     }
 
-    /// Whether this allocation models an external raw-pointer parameter.
+    /// Whether this allocation models externally supplied storage.
     pub(crate) fn is_external(&self) -> bool {
         matches!(
             self.kind,
@@ -384,11 +379,8 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
 
     /// The slice/array element count, if this allocation is slice data.
     ///
-    /// Invariant: `size == len * sizeof(element_ty)` is maintained by the
-    /// callers that call [`Self::set_slice_len`] (they compute `size` from the
-    /// same `len` and push the equality as a path condition); it is *not*
-    /// enforced here. `slice_len_from_value` falls back to `size / elem_size`
-    /// when the length was never materialized.
+    /// The length may be smaller than the allocation's capacity (for example,
+    /// for `Vec`); `slice_len_from_value` can infer it from size when absent.
     pub(crate) fn slice_len(&self) -> Option<&Int<'z3>> {
         match &self.kind {
             AllocKind::Slice { len } | AllocKind::ExternalSlice { len } => Some(len),
@@ -396,8 +388,7 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
         }
     }
 
-    /// Mark this allocation as slice data with the given element count.
-    /// Callers must keep `size == len * sizeof(element_ty)` consistent.
+    /// Record a slice's logical length without changing its allocated size.
     pub(crate) fn set_slice_len(&mut self, len: Int<'z3>) {
         self.kind = if self.is_external() {
             AllocKind::ExternalSlice { len }
@@ -456,12 +447,9 @@ pub(crate) struct InlineCtx<'z3, 'tcx> {
 
 /// The extra semantics attached to a value, beyond its term/type/provenance.
 ///
-/// A single value carries at most one of these: it is either a plain value, an
-/// `offset_of!` field offset, an enum construction marker or discriminant, a comparison
-/// result, or a non-comparison binary-op result.  The operands/operator are
-/// used for guard inference (tracing a switch/assert guard back to the pointer
-/// it null-checks/alignment-checks) and division-axiom injection (following
-/// dataflow edges to reach `Div`/`Rem` results).
+/// A value carries one semantic origin, such as a field borrow, slice length,
+/// enum discriminant, or arithmetic result. Operand sources support guard
+/// inference and division reasoning.
 #[derive(Clone, Debug)]
 pub(crate) enum ValueSource<'z3> {
     /// No extra semantics.
@@ -729,11 +717,8 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 alloc_id,
                 kind,
                 was_dead: self.alloc(alloc_id).facts.dead,
-                block: self.path_state.diagnostics.active_mir.as_ref().map(|location| location.block),
+                site: self.path_state.diagnostics.active_mir,
                 local: local.as_usize(),
-                span: self.path_state.diagnostics.active_mir.as_ref()
-                    .map(|location| location.span)
-                    .unwrap_or(rustc_span::DUMMY_SP),
             });
         }
     }
@@ -852,10 +837,8 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
 
     /// Capture the frame-scoped state before switching to an inlined callee.
     ///
-    /// This is the single source of truth for *what* is frame-scoped: the whole
-    /// [`FrameState`] (function identity, local bindings, and operand sources).
-    /// Both inline mechanisms (`handle_callee_entry` in path replay and
-    /// `exec_inline_call`) call this, so they can no longer drift apart.
+    /// Both path replay and recursive inlining swap the function identity,
+    /// instantiated body, and local allocation bindings together.
     pub(crate) fn enter_frame(
         &mut self,
         callee: DefId,
@@ -948,13 +931,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         }
     }
 
-    /// Mark a value as initialized (written), and sync its backing allocation's
-    /// [`ContentFacts::initialized`] fact.
-    ///
-    /// This is the single entry point that keeps the value-level
-    /// [`ValueFacts::init`] and the allocation-level [`ContentFacts::initialized`]
-    /// in sync; callers must set the pair through here rather than by hand so
-    /// the two facts cannot drift apart.
+    /// Mark a value and its backing allocation as initialized when both apply.
     pub(crate) fn mark_initialized(&mut self, value: &mut VmValue<'z3, 'tcx>) {
         value.facts.init = true;
         if let Some(prov) = &value.provenance {

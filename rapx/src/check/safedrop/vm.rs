@@ -38,9 +38,9 @@ fn classify_event(event: &MemoryEvent) -> Option<SafeDropEvent> {
     Some(SafeDropEvent {
         alloc_id: event.alloc_id,
         kind,
-        block: event.block,
+        block: event.site.map(|site| site.block),
         local: event.local,
-        span: event.span,
+        span: event.site.map_or(rustc_span::DUMMY_SP, |site| site.span),
     })
 }
 
