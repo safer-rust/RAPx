@@ -201,17 +201,13 @@ pub(crate) enum AllocKind<'z3> {
     /// A single object: a `Box<T>` heap object, a struct, a scalar, or an
     /// untyped raw buffer.
     Object,
-    /// A slice/array buffer with a known element count.
-    Slice {
-        len: Int<'z3>,
-    },
     /// External storage with a symbolic extent; pointer nullability is tracked
     /// by path conditions rather than by this allocation kind.
     External,
+    /// A slice/array buffer with a known element count.
+    Slice { len: Int<'z3> },
     /// External allocation with a known, possibly symbolic element count.
-    ExternalSlice {
-        len: Int<'z3>,
-    },
+    ExternalSlice { len: Int<'z3> },
 }
 
 /// The element type of an allocation's contents, either a concrete [`Ty`] or
