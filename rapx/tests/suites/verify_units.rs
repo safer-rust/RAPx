@@ -604,6 +604,8 @@ unsound_weak_tests! {
     init_std_unsound_13: "verify_units/init_std_unsound_13" => "unsound_symbolic_write_leaves_other_element_uninitialized" => "Init",
     init_std_unsound_15: "verify_units/init_std_unsound_15" => "unsound_raw_even_two" => "Init",
     init_std_unsound_16: "verify_units/init_std_unsound_16" => "unsound_projected_even_zero" => "Init",
+    init_std_unsound_19_true: "verify_units/init_std_unsound_19" => "unsound_initialized_true_prefix" => "Init",
+    init_std_unsound_19_false: "verify_units/init_std_unsound_19" => "unsound_initialized_false_prefix" => "Init",
 }
 
 #[test]

@@ -319,6 +319,21 @@ fn path_8() {
 }
 
 #[test]
+fn path_9() {
+    let output = run_with_args("analyze/path_9", CMD_ANALYZE_PATHS_REPEAT_1);
+    assert_contain(&output, "Function: \"different_memory_prefixes\":");
+    assert_contain(
+        &output,
+        "Path [0, 1, 2, 3, 4, 7, 8, 9, 10, 11, 9, 12, 13, 3, 14]",
+    );
+    assert_contain(
+        &output,
+        "Path [0, 1, 2, 3, 4, 5, 6, 8, 9, 10, 11, 9, 12, 13, 3, 14]",
+    );
+    assert_eq!(path_count_for(&output, "different_memory_prefixes"), 2);
+}
+
+#[test]
 fn path_false_1() {
     let output = run_with_args("analyze/path_false_1", CMD_ANALYZE_PATHS);
     assert_contain(&output, "Function: \"classify\":");
