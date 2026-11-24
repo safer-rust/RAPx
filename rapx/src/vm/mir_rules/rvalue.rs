@@ -451,7 +451,6 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
 ) -> VmValue<'z3, 'tcx> {
     let mut src_val = state.value_of_operand(operand);
     state.try_materialize_const_bytes(&mut src_val, operand);
-    #[cfg(rapx_box_deref_transmute)]
     let src_val = if matches!(kind, CastKind::BoxDerefTransmute) {
         mir_utils::extract_local(operand)
             .and_then(|local| state.field_value(local, &[0]).cloned())
@@ -1188,15 +1187,12 @@ pub(crate) fn eval_reborrow<'z3, 'tcx>(
         }
         _ => false,
     };
-    #[cfg(rapx_has_phantom_deref)]
     let has_phantom_deref = source_place.projection.iter().any(|projection| {
         matches!(
             projection.kind(),
             rustc_middle::mir::ProjectionElem::PhantomDeref
         )
     });
-    #[cfg(not(rapx_has_phantom_deref))]
-    let has_phantom_deref = false;
     if (!same_adt && !compatible_shared) || has_phantom_deref {
         state.path_state.diagnostics.mark_unsupported();
         return eval_fresh_value(state, dest_place, "reborrow");

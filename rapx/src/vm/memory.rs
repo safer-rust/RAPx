@@ -2,8 +2,6 @@
 
 use crate::def_ids::type_ids;
 use crate::util::mir_utils;
-#[cfg(rapx_const_ext)]
-use rustc_middle::ty::consts::ConstExt;
 use rustc_middle::{
     mir::{Local, Place, ProjectionElem},
     ty::{Ty, TyKind},

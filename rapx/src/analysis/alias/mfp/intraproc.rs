@@ -542,49 +542,7 @@ impl<'tcx> FnAliasAnalyzer<'tcx> {
     }
 }
 
-// Implement Analysis for FnAliasAnalyzer
-// rustc >= 1.93 changed trait methods from &mut self to &self.
-// We provide two impl blocks conditionally compiled for the correct rustc version.
-#[cfg(not(rapx_ge_100))]
-impl<'tcx> Analysis<'tcx> for FnAliasAnalyzer<'tcx> {
-    type Domain = AliasDomain;
-
-    const NAME: &'static str = "FnAliasAnalyzer";
-
-    fn bottom_value(&self, _body: &Body<'tcx>) -> Self::Domain {
-        AliasDomain::new(self.place_info.num_places())
-    }
-
-    fn initialize_start_block(&self, _body: &Body<'tcx>, _state: &mut Self::Domain) {}
-
-    fn apply_primary_statement_effect(
-        &self,
-        state: &mut Self::Domain,
-        statement: &Statement<'tcx>,
-        _: Location,
-    ) {
-        apply_statement_effect(self, state, statement)
-    }
-
-    fn apply_primary_terminator_effect<'mir>(
-        &self,
-        state: &mut Self::Domain,
-        terminator: &'mir Terminator<'tcx>,
-        _: Location,
-    ) -> TerminatorEdges<'mir, 'tcx> {
-        apply_terminator_effect(self, state, terminator)
-    }
-
-    fn apply_call_return_effect(
-        &self,
-        _: &mut Self::Domain,
-        _: rustc_middle::mir::BasicBlock,
-        _: CallReturnPlaces<'_, 'tcx>,
-    ) {
-    }
-}
-
-#[cfg(rapx_ge_100)]
+// Implement Analysis for FnAliasAnalyzer.
 impl<'tcx> Analysis<'tcx> for FnAliasAnalyzer<'tcx> {
     type Domain = AliasDomain;
 

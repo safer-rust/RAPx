@@ -11,9 +11,6 @@ use rustc_hir::{
     def_id::{DefId, LocalDefId},
 };
 use rustc_middle::ty::ShimKind;
-#[cfg(rapx_const_ext)]
-use rustc_middle::ty::consts::ConstExt;
-#[cfg(rapx_alias_const_inherent_self)]
 use rustc_middle::ty::AliasConstKind;
 use rustc_middle::{
     mir::interpret::{AllocId, GlobalAlloc},
@@ -224,12 +221,7 @@ pub(crate) fn instance_def_id<'tcx>(
             } => Some(coroutine_closure_def_id),
             ShimKind::ThreadLocal(def_id) => Some(def_id),
             ShimKind::DropGlue(def_id, _) => Some(def_id),
-            #[cfg(rapx_has_fnaddr_asptr)]
             ShimKind::FnAddrAsPtr(def_id, _) => Some(def_id),
-            #[cfg(all(not(rapx_has_fnaddr_asptr), rapx_has_fnptr_asptr))]
-            ShimKind::FnPtrAsPtr(def_id, _) => Some(def_id),
-            #[cfg(all(not(rapx_has_fnaddr_asptr), not(rapx_has_fnptr_asptr)))]
-            ShimKind::FnPtrAddr(def_id, _) => Some(def_id),
             ShimKind::AsyncDropGlueCtor(def_id, _) => Some(def_id),
             ShimKind::Clone(def_id, _) => {
                 if !tcx.is_closure_like(def_id) {
@@ -293,14 +285,9 @@ pub(crate) fn type_param_impl_tys<'tcx>(
     if !matches!(param_ty.kind(), TyKind::Param(_)) {
         return Vec::new();
     }
-    #[cfg(not(rapx_caller_bounds_accessor))]
-    let param_env = tcx.param_env(def_id);
     let mut bounds = Vec::new();
-    #[cfg(rapx_caller_bounds_accessor)]
     let clauses = std::iter::successors(Some(def_id), |&did| tcx.clauses_of(did).parent)
         .flat_map(|did| tcx.clauses_of(did).clauses.iter().map(|(clause, _)| clause));
-    #[cfg(not(rapx_caller_bounds_accessor))]
-    let clauses = param_env.caller_bounds();
     for clause in clauses {
         let Some(trait_clause) = clause.as_trait_clause() else {
             continue;
@@ -779,11 +766,6 @@ pub(crate) fn resolve_const_item_value<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> O
         if item_name.as_str() != name {
             continue;
         }
-        #[cfg(rapx_defkind_const_struct)]
-        if !matches!(tcx.def_kind(def_id), rustc_hir::def::DefKind::Const { .. }) {
-            continue;
-        }
-        #[cfg(not(rapx_defkind_const_struct))]
         if !matches!(tcx.def_kind(def_id), rustc_hir::def::DefKind::Const) {
             continue;
         }
@@ -812,9 +794,6 @@ fn const_value_bytes<'tcx>(tcx: TyCtxt<'tcx>, value: ConstValue, depth: usize) -
     match value {
         ConstValue::Slice { alloc_id, .. } => alloc_id_bytes(tcx, alloc_id, depth),
         ConstValue::Scalar(scalar) => {
-            #[cfg(rapx_scalar_to_pointer_interp_result)]
-            let ptr = scalar.to_pointer(&tcx).discard_err()?;
-            #[cfg(not(rapx_scalar_to_pointer_interp_result))]
             let ptr = scalar.to_pointer(&tcx);
             let alloc_id = ptr.provenance?.alloc_id();
             alloc_id_bytes(tcx, alloc_id, depth)
@@ -896,15 +875,6 @@ pub(crate) fn ctfe_mir_available(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
 }
 
 fn is_const_def_kind(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-    #[cfg(rapx_defkind_const_struct)]
-    let base = matches!(
-        tcx.def_kind(def_id),
-        DefKind::Const { .. }
-            | DefKind::Static { .. }
-            | DefKind::AssocConst { .. }
-            | DefKind::AnonConst
-    );
-    #[cfg(not(rapx_defkind_const_struct))]
     let base = matches!(
         tcx.def_kind(def_id),
         DefKind::Const | DefKind::Static { .. } | DefKind::AssocConst | DefKind::AnonConst
@@ -975,16 +945,9 @@ pub fn layout_of_ty<'tcx>(
     .and_then(|r| r.ok())
 }
 
-/// ABI alignment in bytes across rustc layout API versions.
+/// ABI alignment in bytes.
 pub fn layout_align_bytes(layout: &rustc_abi::TyAndLayout<'_, Ty<'_>>) -> u64 {
-    #[cfg(rapx_layout_align_abi)]
-    {
-        layout.align.abi.bytes()
-    }
-    #[cfg(not(rapx_layout_align_abi))]
-    {
-        layout.align.bytes()
-    }
+    layout.align.bytes()
 }
 
 /// Byte offset of a struct field within its container type (0 on failure).
@@ -1133,9 +1096,6 @@ pub(crate) fn eval_array_len<'tcx>(
         let ConstKind::Alias(_, alias_const) = c.kind() else {
             return None;
         };
-        #[cfg(not(rapx_alias_const_inherent_self))]
-        let def_id = alias_const.kind.opt_def_id()?;
-        #[cfg(rapx_alias_const_inherent_self)]
         let def_id = {
             match alias_const.kind {
                 AliasConstKind::Projection { def_id } => def_id,
@@ -1262,17 +1222,7 @@ pub fn type_contains_raw_ptr<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
     }
 }
 
-/// Resolve a struct field's type, normalizing where the rustc version requires it.
-///
-/// On newer rustc `field.ty(tcx, args)` returns an `Unnormalized<Ty>` that must
-/// be `.skip_norm_wip()`-ed; on older toolchains the `SkipNormWip` shim makes
-/// the same call a no-op, so this is version-independent.
-#[cfg(not(rapx_generic_args_value))]
-pub fn field_ty<'tcx>(tcx: TyCtxt<'tcx>, field: &FieldDef, args: GenericArgsRef<'tcx>) -> Ty<'tcx> {
-    field.ty(tcx, args).skip_norm_wip()
-}
-
-#[cfg(rapx_generic_args_value)]
+/// Resolve and normalize a struct field's type.
 pub fn field_ty<'tcx>(
     tcx: TyCtxt<'tcx>,
     field: &FieldDef,
@@ -1328,14 +1278,9 @@ fn generic_param_impl_layouts<'tcx>(
     if !matches!(ty.kind(), TyKind::Param(_)) {
         return Vec::new();
     }
-    #[cfg(not(rapx_caller_bounds_accessor))]
-    let param_env = tcx.param_env(caller);
     let typing_env = TypingEnv::post_analysis(tcx, caller);
-    #[cfg(rapx_caller_bounds_accessor)]
     let clauses = std::iter::successors(Some(caller), |&did| tcx.clauses_of(did).parent)
         .flat_map(|did| tcx.clauses_of(did).clauses.iter().map(|(clause, _)| clause));
-    #[cfg(not(rapx_caller_bounds_accessor))]
-    let clauses = param_env.caller_bounds();
     for clause in clauses {
         let Some(trait_clause) = clause.as_trait_clause() else {
             continue;

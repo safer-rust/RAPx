@@ -1,6 +1,4 @@
 use rustc_abi::VariantIdx;
-#[cfg(rapx_const_ext)]
-use rustc_middle::ty::consts::ConstExt;
 use rustc_middle::{
     mir::{
         AggregateKind, CopyNonOverlapping, Local, Operand, Place, ProjectionElem, Rvalue,

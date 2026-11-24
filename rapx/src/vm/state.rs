@@ -7,8 +7,6 @@ use crate::def_ids::type_ids;
 use crate::util::mir_utils;
 use rustc_abi::VariantIdx;
 use rustc_hir::def_id::DefId;
-#[cfg(rapx_const_ext)]
-use rustc_middle::ty::consts::ConstExt;
 use rustc_middle::{
     mir::{Body, ConstValue, Local, Operand, Place, ProjectionElem},
     ty::{Region, Ty, TyKind, TypingEnv},

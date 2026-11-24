@@ -71,7 +71,6 @@ impl DataflowGraph {
                 PlaceElem::UnwrapUnsafeBinder(_) => {
                     graph.add_node_edge(src, dst, EdgeOp::Nop, block, stmt_idx);
                 }
-                #[cfg(rapx_has_phantom_deref)]
                 PlaceElem::PhantomDeref => {
                     graph.add_node_edge(src, dst, EdgeOp::Nop, block, stmt_idx);
                 }

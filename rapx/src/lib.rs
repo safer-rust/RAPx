@@ -16,7 +16,6 @@ pub(crate) mod vm;
 
 extern crate rustc_abi;
 extern crate rustc_ast;
-#[cfg(rapx_has_attr_ir)]
 extern crate rustc_attr_ir;
 extern crate rustc_data_structures;
 extern crate rustc_driver;

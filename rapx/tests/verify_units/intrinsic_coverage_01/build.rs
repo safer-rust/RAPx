@@ -1,26 +1,10 @@
 use std::process::Command;
 
 fn main() {
-    println!("cargo:rustc-check-cfg=cfg(rapx_ge_100)");
     println!("cargo:rustc-check-cfg=cfg(rapx_generic_float_intrinsics)");
     println!("cargo:rustc-check-cfg=cfg(rapx_generic_float_minmax)");
 
     let rustc = std::env::var("RUSTC").expect("RUSTC is set by Cargo");
-    let version = Command::new(&rustc)
-        .arg("--version")
-        .output()
-        .expect("rustc --version succeeds");
-    let version = String::from_utf8(version.stdout).expect("rustc version is UTF-8");
-    let minor = version
-        .split_whitespace()
-        .nth(1)
-        .and_then(|version| version.split('.').nth(1))
-        .and_then(|minor| minor.parse::<u32>().ok())
-        .expect("rustc version contains a minor version");
-    if minor >= 100 {
-        println!("cargo:rustc-cfg=rapx_ge_100");
-    }
-
     let sysroot = Command::new(rustc)
         .args(["--print", "sysroot"])
         .output()

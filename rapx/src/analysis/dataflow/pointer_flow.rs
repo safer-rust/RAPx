@@ -3,10 +3,8 @@
 use std::collections::HashSet;
 
 use rustc_hir::{def::DefKind, def_id::DefId};
-#[cfg(rapx_box_deref_transmute)]
-use rustc_middle::mir::CastKind;
 use rustc_middle::{
-    mir::{Body, Local, Rvalue, StatementKind, TerminatorKind},
+    mir::{Body, CastKind, Local, Rvalue, StatementKind, TerminatorKind},
     ty::{TyCtxt, TyKind},
 };
 
@@ -160,7 +158,6 @@ pub(crate) fn trace_source_arg<'tcx>(
                         trace_source_arg(tcx, body, place.local, &mut seen.clone(), depth)
                     })
                 }
-                #[cfg(rapx_box_deref_transmute)]
                 Rvalue::Cast(CastKind::BoxDerefTransmute, operand, _) => {
                     mir_utils::operand_mir_place(operand).and_then(|place| {
                         trace_source_arg(tcx, body, place.local, &mut seen.clone(), depth)

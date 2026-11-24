@@ -192,23 +192,12 @@ impl<'tcx> MonoSet<'tcx> {
     }
 }
 
-/// Resolve inference variables to concrete values after unification.  The
-/// method was renamed `resolve_vars_if_possible` → `deeply_resolve_ignoring_regions`
-/// in nightly 2026-09-11.
-#[cfg(rapx_has_deeply_resolve_ignoring_regions)]
+/// Resolve inference variables to concrete values after unification.
 fn resolve_var<'tcx, T: rustc_middle::ty::TypeFoldable<TyCtxt<'tcx>>>(
     infcx: &InferCtxt<'tcx>,
     value: T,
 ) -> T {
     infcx.deeply_resolve_ignoring_regions(value)
-}
-
-#[cfg(not(rapx_has_deeply_resolve_ignoring_regions))]
-fn resolve_var<'tcx, T: rustc_middle::ty::TypeFoldable<TyCtxt<'tcx>>>(
-    infcx: &InferCtxt<'tcx>,
-    value: T,
-) -> T {
-    infcx.resolve_vars_if_possible(value)
 }
 
 /// try to unfiy lhs = rhs,
@@ -270,9 +259,6 @@ fn is_args_fit_trait_bound<'tcx>(
         tcx.def_path_str_with_args(fn_did, args)
     );
 
-    #[cfg(not(rapx_ge_100))]
-    let iter = inst_pred.predicates.iter();
-    #[cfg(rapx_ge_100)]
     let iter = inst_pred.clauses.iter();
     for pred in iter {
         let pred = pred.skip_norm_wip();
@@ -304,9 +290,6 @@ fn is_args_fit_trait_bound<'tcx>(
 
 fn is_fn_solvable<'tcx>(fn_did: DefId, tcx: TyCtxt<'tcx>) -> bool {
     let predicates = crate::compat::predicates_of(tcx, fn_did);
-    #[cfg(not(rapx_ge_100))]
-    let iter = predicates.instantiate_identity(tcx).predicates;
-    #[cfg(rapx_ge_100)]
     let iter = predicates.instantiate_identity(tcx).clauses;
     for pred in iter {
         let pred = pred.skip_norm_wip();
@@ -438,9 +421,6 @@ fn solve_unbound_type_generics<'tcx>(
     let preds = preds.instantiate(tcx, args);
     let mut mset = MonoSet::all(args.as_slice());
     rap_debug!("[solve_unbound] did = {did:?}, mset={mset:?}");
-    #[cfg(not(rapx_ge_100))]
-    let pred_iter = preds.predicates.iter();
-    #[cfg(rapx_ge_100)]
     let pred_iter = preds.clauses.iter();
     for pred in pred_iter {
         rap_debug!("[solve_unbound] pred = {:?}", pred);

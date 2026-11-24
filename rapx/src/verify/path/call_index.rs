@@ -10,10 +10,7 @@ use crate::contract::ensures::has_slice_offset_ensures;
 use crate::verify::config::VerifyConfig;
 use crate::vm::constructor_policy::effective_constructor_mir_mode;
 use std::rc::Rc;
-#[cfg(rapx_has_attr_ir)]
 use rustc_attr_ir::InlineAttr;
-#[cfg(not(rapx_has_attr_ir))]
-use rustc_hir::attrs::InlineAttr;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{BasicBlock, Body, Operand, Terminator, TerminatorKind},

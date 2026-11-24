@@ -210,9 +210,6 @@ fn param_bound_is_satisfied(
         return false;
     };
     let predicates = crate::compat::predicates_of(tcx, impl_def_id);
-    #[cfg(not(rapx_ge_100))]
-    let iter = predicates.predicates.iter();
-    #[cfg(rapx_ge_100)]
     let iter = predicates.clauses.iter();
     for (pred, _) in iter {
         if let ClauseKind::Trait(trait_ref) = pred.kind().skip_binder()

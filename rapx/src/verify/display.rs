@@ -65,21 +65,10 @@ pub(crate) fn fmt_fn_path_with_bounds(tcx: TyCtxt<'_>, def_id: DefId) -> String 
         };
     }
 
-    #[cfg(not(rapx_ge_100))]
-    {
-        collect_bounds!(predicates.predicates.iter());
-        if let Some(parent_def_id) = predicates.parent {
-            let parent_preds = crate::compat::predicates_of(tcx, parent_def_id);
-            collect_bounds!(parent_preds.predicates.iter());
-        }
-    }
-    #[cfg(rapx_ge_100)]
-    {
-        collect_bounds!(predicates.clauses.iter());
-        if let Some(parent_def_id) = predicates.parent {
-            let parent_preds = crate::compat::predicates_of(tcx, parent_def_id);
-            collect_bounds!(parent_preds.clauses.iter());
-        }
+    collect_bounds!(predicates.clauses.iter());
+    if let Some(parent_def_id) = predicates.parent {
+        let parent_preds = crate::compat::predicates_of(tcx, parent_def_id);
+        collect_bounds!(parent_preds.clauses.iter());
     }
 
     if param_bounds.is_empty() {

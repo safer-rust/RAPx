@@ -76,9 +76,6 @@ impl PropertyChecker {
         }
 
         let predicates = crate::compat::predicates_of(tcx, checkpoint.caller);
-        #[cfg(not(rapx_ge_100))]
-        let pred_iter = predicates.predicates.iter();
-        #[cfg(rapx_ge_100)]
         let pred_iter = predicates.clauses.iter();
         for (predicate, _span) in pred_iter {
             if let rustc_middle::ty::ClauseKind::Trait(trait_ref) = predicate.kind().skip_binder()

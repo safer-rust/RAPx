@@ -38,8 +38,6 @@ use crate::compat::{FxHashMap, FxHashSet};
 use crate::contract::{ContractExpr, NumericPredicate, Property, PropertyArg, PropertyKind, RelOp};
 use crate::util::mir_utils;
 use rustc_hir::def_id::DefId;
-#[cfg(rapx_const_ext)]
-use rustc_middle::ty::consts::ConstExt;
 use rustc_middle::{
     mir::{
         AggregateKind, BasicBlock, BinOp, Body, Local, Operand, Place, ProjectionElem, Rvalue,
