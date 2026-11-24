@@ -38,14 +38,20 @@ pub(crate) enum MemoryEventKind {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct MemoryEvent {
+    /// Allocation accessed by this event.
     pub alloc_id: AllocId,
+    /// Whether this event drops or uses the allocation.
     pub kind: MemoryEventKind,
     /// Whether the allocation was already dead when this operation occurred.
     pub was_dead: bool,
+    /// MIR block containing the access, when known.
     pub block: Option<usize>,
+    /// MIR local used for the access.
     pub local: usize,
+    /// Source location attributed to the access.
     pub span: Span,
 }
+
 /// The structure of a pointer's byte offset, when it has one.
 ///
 /// Each variant lets the verifier use a cheaper, more precise proof: `Field`
@@ -90,9 +96,13 @@ pub(crate) struct Provenance<'z3> {
 /// unequal.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ValueFacts<'z3> {
+    /// The pointer value is known to be non-null.
     pub non_null: bool,
+    /// The pointer is known to be dangling.
     pub dangling: bool,
+    /// The value is known to be initialized.
     pub init: bool,
+    /// The pointer is known to stay within its allocation.
     pub in_bounds: bool,
     /// Slice bounds established for this index value by `InBound` contracts.
     pub index_bounds: Option<Box<Vec<IndexBoundFact<'z3>>>>,
@@ -105,9 +115,13 @@ pub(crate) struct ValueFacts<'z3> {
 /// A declared slice/index bound retained when a generic `SliceIndex` cannot be reduced to arithmetic.
 #[derive(Clone, Debug)]
 pub(crate) struct IndexBoundFact<'z3> {
+    /// Symbolic identity of the slice whose bound was checked.
     pub slice_term: Int<'z3>,
+    /// Slice length at the time of the bound check.
     pub slice_len: Int<'z3>,
+    /// Backing allocation, when the slice has known provenance.
     pub slice_alloc: Option<AllocId>,
+    /// Symbolic index licensed by the bound check.
     pub index_term: Int<'z3>,
 }
 
@@ -128,9 +142,11 @@ pub(crate) struct IndexBoundFact<'z3> {
 pub(crate) struct VmValue<'z3, 'tcx> {
     /// Symbolic address or scalar value, according to `ty`.
     pub z3_term: Int<'z3>,
+    /// Rust type used to interpret the symbolic term.
     pub ty: Ty<'tcx>,
     /// Allocation origin and offset, when this is a pointer.
     pub provenance: Option<Provenance<'z3>>,
+    /// Facts that travel with this value through copies and calls.
     pub facts: ValueFacts<'z3>,
     /// Semantic origin used by guard and arithmetic reasoning.
     pub source: ValueSource<'z3>,
@@ -195,6 +211,7 @@ pub(crate) enum AllocKind<'z3> {
     /// term (the caller may pass any allocation); nullability is *not* stored
     /// here — it is tracked via the pointer term (`term == 0`) path conditions.
     External,
+    /// External allocation with a known, possibly symbolic element count.
     ExternalSlice {
         len: Int<'z3>,
     },
@@ -421,11 +438,15 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
 pub(crate) struct InlineCtx<'z3, 'tcx> {
     /// Recursive inlining depth, bounded by `MAX_INLINE_DEPTH`.
     pub inline_depth: usize,
+    /// The inline call passes a symbolic generic type through a const argument.
     pub symbolic_generic_const_inline: bool,
     /// Terms from depth-limited calls; dependent checks become `Unknown`.
     pub inline_truncated_terms: FxHashSet<Int<'z3>>,
+    /// Terms from incompletely explored inline branches.
     pub inline_branch_terms: FxHashSet<Int<'z3>>,
+    /// Alternative VM states produced by inline branches.
     pub pending_states: Vec<Box<VmExecutor<'z3, 'tcx>>>,
+    /// Terms returned by intrinsic effects the VM could not model.
     pub opaque_intrinsic_terms: FxHashSet<Int<'z3>>,
     /// Caller referent local for each inlined callee argument.
     pub arg_referents: Vec<Option<Local>>,
@@ -455,6 +476,7 @@ pub(crate) enum ValueSource<'z3> {
     SliceLen(Int<'z3>),
     /// A compile-time `offset_of!` field offset.
     FieldOffset,
+    /// Borrow of a field path rooted at a caller local.
     FieldBorrow {
         base: Local,
         fields: Vec<usize>,
@@ -516,7 +538,9 @@ impl<'z3> ValueSource<'z3> {
 /// and value ([`ValueFacts`] on each [`VmValue`]) — see each type's doc.
 #[derive(Clone)]
 pub(crate) struct MemoryUnit<'z3, 'tcx> {
+    /// Allocation identity, layout, and lifecycle facts.
     pub(crate) allocation: Allocation<'z3, 'tcx>,
+    /// Bytes, typed values, and content facts stored in the allocation.
     pub(crate) content: MemoryContent<'z3, 'tcx>,
 }
 
@@ -533,9 +557,13 @@ pub(crate) struct MemoryContent<'z3, 'tcx> {
     pub(crate) values: FxHashMap<(Ty<'tcx>, Vec<usize>), VmValue<'z3, 'tcx>>,
     /// `(address, type)` facts established by `Typed` contracts.
     pub(crate) typed_facts: FxHashSet<(Int<'z3>, Ty<'tcx>)>,
+    /// Values written at symbolic array indices.
     pub(crate) indexed_elements: Vec<(Int<'z3>, VmValue<'z3, 'tcx>)>,
+    /// Whether indexed writes invalidate fallback reads from typed fields.
     pub(crate) indexed_elements_modified: bool,
+    /// Initialized prefix copied into this allocation, with its element type.
     pub(crate) copied_prefix: Option<(Ty<'tcx>, Int<'z3>)>,
+    /// Initialization and validity facts about the stored contents.
     pub(crate) facts: ContentFacts<'tcx>,
 }
 
@@ -620,8 +648,11 @@ pub(crate) struct SavedCallerFrame<'z3, 'tcx> {
 /// A transferable ownership share. Copies of its pointer use the same entry.
 #[derive(Clone)]
 pub(crate) struct OwnershipTransfer {
+    /// Root allocation whose ownership is being transferred.
     alloc_id: AllocId,
+    /// Type whose destructor consumes this share.
     owner: DefId,
+    /// Shares still available to copied pointers.
     available: usize,
 }
 
@@ -684,34 +715,23 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     }
 
     pub(crate) fn record_memory_drop(&mut self, alloc_id: AllocId, local: Local) {
-        if let Some(events) = &self.path_state.memory_events {
-            events.borrow_mut().push(MemoryEvent {
-                alloc_id,
-                kind: MemoryEventKind::Drop,
-                was_dead: self.alloc(alloc_id).facts.dead,
-                block: self.path_state.diagnostics.active_mir.as_ref().map(|location| location.block),
-                local: local.as_usize(),
-                span: self.path_state
-                    .diagnostics.active_mir
-                    .as_ref()
-                    .map(|location| location.span)
-                    .unwrap_or(rustc_span::DUMMY_SP),
-            });
-        }
+        self.record_memory_event(alloc_id, local, MemoryEventKind::Drop);
         self.alloc_mut(alloc_id).facts.dead = true;
     }
 
     pub(crate) fn record_memory_use(&self, alloc_id: AllocId, local: Local) {
+        self.record_memory_event(alloc_id, local, MemoryEventKind::Use);
+    }
+
+    fn record_memory_event(&self, alloc_id: AllocId, local: Local, kind: MemoryEventKind) {
         if let Some(events) = &self.path_state.memory_events {
             events.borrow_mut().push(MemoryEvent {
                 alloc_id,
-                kind: MemoryEventKind::Use,
+                kind,
                 was_dead: self.alloc(alloc_id).facts.dead,
                 block: self.path_state.diagnostics.active_mir.as_ref().map(|location| location.block),
                 local: local.as_usize(),
-                span: self.path_state
-                    .diagnostics.active_mir
-                    .as_ref()
+                span: self.path_state.diagnostics.active_mir.as_ref()
                     .map(|location| location.span)
                     .unwrap_or(rustc_span::DUMMY_SP),
             });
@@ -812,34 +832,22 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
 
     pub(crate) fn record_unsupported(&mut self, operation: &str) {
         let location = self.path_state.diagnostics.location_label(self.tcx);
-        self.path_state.diagnostics.record_unsupported(
-            location.as_deref(),
-            operation,
-        );
+        self.path_state.diagnostics.record_unsupported(location.as_deref(), operation);
     }
 
     pub(crate) fn record_unsupported_effect(&mut self, effect: &str) {
         let location = self.path_state.diagnostics.location_label(self.tcx);
-        self.path_state.diagnostics.record_unsupported_effect(
-            location.as_deref(),
-            effect,
-        );
+        self.path_state.diagnostics.record_unsupported_effect(location.as_deref(), effect);
     }
 
     pub(crate) fn record_missing_mir(&mut self, callee: DefId) {
         let location = self.path_state.diagnostics.location_label(self.tcx);
-        self.path_state.diagnostics.record_missing_mir(
-            location.as_deref(),
-            &self.tcx.def_path_str(callee),
-        );
+        self.path_state.diagnostics.record_missing_mir(location.as_deref(), &self.tcx.def_path_str(callee));
     }
 
     pub(crate) fn record_opaque_control_flow(&mut self, operation: &str) {
         let location = self.path_state.diagnostics.location_label(self.tcx);
-        self.path_state.diagnostics.record_opaque_control_flow(
-            location.as_deref(),
-            operation,
-        );
+        self.path_state.diagnostics.record_opaque_control_flow(location.as_deref(), operation);
     }
 
     /// Capture the frame-scoped state before switching to an inlined callee.
@@ -936,9 +944,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             let was_tracked = content.indexed_elements_modified || !content.indexed_elements.is_empty();
             content.indexed_elements.clear();
             content.indexed_elements_modified = was_tracked;
-            content
-                .values
-                .retain(|(ty, path), _| *ty != view_ty || path.is_empty());
+            content.values.retain(|(ty, path), _| *ty != view_ty || path.is_empty());
         }
     }
 
@@ -1011,15 +1017,8 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     ) -> (AllocId, Int<'z3>) {
         let id = AllocId(self.path_state.mem_units.len());
         let base = {
-            let name = format!(
-                "{}_{}",
-                if matches!(kind, AllocKind::External) {
-                    "ext"
-                } else {
-                    "heap"
-                },
-                id.0
-            );
+            let prefix = if matches!(kind, AllocKind::External) { "ext" } else { "heap" };
+            let name = format!("{prefix}_{}", id.0);
             Int::new_const(self.z3_ctx, name.as_str())
         };
         let alloc = Allocation::new(base.clone(), size, align, element_ty, kind);
@@ -1672,9 +1671,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                             return None;
                         };
                         (int_val == Some(0)
-                            && self
-                                .tcx
-                                .is_diagnostic_item(rustc_span::sym::Option, adt.did())
+                            && self.tcx.is_diagnostic_item(rustc_span::sym::Option, adt.did())
                             && matches!(args.type_at(0).kind(), TyKind::Ref(..)))
                         .then_some(0)
                     });
@@ -1685,13 +1682,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                         | TyKind::Uint(rustc_middle::ty::UintTy::U128)
                 )
                 .then(|| {
-                    constant
-                        .const_
-                        .eval(
-                            self.tcx,
-                            TypingEnv::fully_monomorphized(),
-                            rustc_span::DUMMY_SP,
-                        )
+                    constant.const_.eval(self.tcx, TypingEnv::fully_monomorphized(), rustc_span::DUMMY_SP)
                         .ok()
                         .and_then(|value| value.try_to_scalar_int())
                         .and_then(|scalar| self.scalar_bits_term(ty, scalar.to_bits(scalar.size())))

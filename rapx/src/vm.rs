@@ -70,21 +70,21 @@ struct VmState<'z3, 'tcx> {
     caller_frames: Vec<SavedCallerFrame<'z3, 'tcx>>,
     /// Allocation units indexed by `AllocId`.
     mem_units: Vec<MemoryUnit<'z3, 'tcx>>,
-    /// Ownership transfers shared by copies of the same raw pointer.
-    ownership_transfers: Vec<OwnershipTransfer>,
     /// Stable allocation for each static across MIR locals and frames.
     static_allocs: FxHashMap<DefId, AllocId>,
     /// Path conditions and term caches.
     constraints: Constraints<'z3, 'tcx>,
     /// Scratch state for recursive inlining.
     inline: InlineCtx<'z3, 'tcx>,
-    /// Stable `&self` results reused by contracts only when the method, caller,
-    /// receiver allocation and offset, fields, and slice length still match.
-    method_result_cache: Vec<CachedMethodResult<'z3, 'tcx>>,
+    /// Ownership transfers shared by copies of the same raw pointer.
+    ownership_transfers: Vec<OwnershipTransfer>,
     /// Allocation roots licensed by declared `Alias` contract sources.
     alias_hazard_allocs: FxHashSet<AllocId>,
     /// Optional trace of memory uses and drops on this path.
     memory_events: Option<RefCell<Vec<MemoryEvent>>>,
+    /// Stable `&self` results reused by contracts only when the method, caller,
+    /// receiver allocation and offset, fields, and slice length still match.
+    method_result_cache: Vec<CachedMethodResult<'z3, 'tcx>>,
     /// Path diagnostics and the MIR location used to attribute new records.
     diagnostics: Diagnostics,
 }
@@ -124,13 +124,13 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 },
                 caller_frames: Vec::default(),
                 mem_units: Vec::default(),
-                ownership_transfers: Vec::new(),
                 static_allocs: FxHashMap::default(),
                 constraints,
                 inline: InlineCtx::default(),
-                method_result_cache: Vec::default(),
+                ownership_transfers: Vec::new(),
                 alias_hazard_allocs: FxHashSet::default(),
                 memory_events: None,
+                method_result_cache: Vec::default(),
                 diagnostics: Diagnostics::default(),
             },
         }
