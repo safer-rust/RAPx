@@ -327,7 +327,13 @@ fn hashmap_skip_invariant() {
 // ================ Allocator Tests ================
 #[test]
 fn bump_allocator() {
-    let output = run_with_args("verify_cases/bump_allocator", CMD_VERIFY_TARGETED);
+    // Constructor invariants generate more than the CI-wide 128-path budget.
+    // Keep this fixture's intended coverage explicit instead of letting the
+    // shared smoke-test cap turn a proved constructor into UNKNOWN.
+    let output = run_with_args(
+        "verify_cases/bump_allocator",
+        &["verify", "--mode", "targeted", "--path-limit", "256"],
+    );
     assert_function_result(&output, "BumpAllocator::new", "SOUND");
     assert_function_result(&output, "BumpAllocator::alloc", "SOUND");
     assert_function_result(&output, "BumpAllocator::reset", "SOUND");

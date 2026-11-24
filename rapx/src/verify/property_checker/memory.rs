@@ -49,6 +49,22 @@ fn multiple_of(term: &Int<'_>, divisor: u64, depth: usize) -> bool {
     }
 }
 
+/// Check whether the current path permits `term` to have a non-zero residue.
+/// Keeping this query separate avoids coupling simple congruence facts to the
+/// VM's full finite-width address expression.
+fn can_be_non_multiple<'z3, 'tcx>(
+    vm_state: &VmExecutor<'z3, 'tcx>,
+    term: &Int<'z3>,
+    divisor: u64,
+) -> SatResult {
+    let solver = Solver::new(vm_state.z3_ctx);
+    let zero = Int::from_u64(vm_state.z3_ctx, 0);
+    let divisor = Int::from_u64(vm_state.z3_ctx, divisor);
+    vm_state.assert_path_constraints(&solver);
+    solver.assert(&term.rem(&divisor)._eq(&zero).not());
+    solver.check()
+}
+
 impl PropertyChecker {
     pub(super) fn check_align<'z3, 'tcx>(
         &self,
@@ -213,6 +229,39 @@ impl PropertyChecker {
                         && off % align_u64 != 0 {
                             return CheckResult::Failed;
                         }
+        }
+        // Address arithmetic emitted by rustc commonly appears as
+        // `AddWithOverflow` followed by an assert and a cast back to a pointer.
+        // For a power-of-two Rust alignment, wrapping modulo 2^N preserves the
+        // residue. Once the original address is proved aligned, the result is
+        // aligned iff the offset delta is aligned. Prove those two smaller
+        // facts independently instead of asking Z3 to solve the combined
+        // finite-width modulo expression.
+        if let (
+            ValueSource::ExposedAddress {
+                address,
+                provenance: original,
+            },
+            Some(current),
+            Some(required),
+        ) = (
+            &value.source,
+            &value.provenance,
+            align.simplify().as_u64(),
+        )
+            && current.alloc_id == original.alloc_id
+            && required.is_power_of_two()
+            && matches!(
+                can_be_non_multiple(vm_state, address, required),
+                SatResult::Unsat
+            )
+        {
+            let delta = Int::sub(vm_state.z3_ctx, &[&current.offset, &original.offset]);
+            match can_be_non_multiple(vm_state, &delta, required) {
+                SatResult::Unsat => return CheckResult::ProvedBySmt,
+                SatResult::Sat => return CheckResult::Failed,
+                SatResult::Unknown => {}
+            }
         }
         let align_term = align;
         let zero = Int::from_u64(vm_state.z3_ctx, 0);
