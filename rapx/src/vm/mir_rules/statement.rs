@@ -432,6 +432,7 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
                 value.facts.init = initialized;
             }
             let track_iter = field_indices == [0];
+            state.clear_index_bounds(place.local);
             state.set_field_value(place.local, field_indices.clone(), value);
             for (path, field) in source_fields {
                 let mut full = field_indices.clone();

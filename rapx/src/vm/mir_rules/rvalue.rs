@@ -115,6 +115,7 @@ pub(crate) fn eval_ref<'z3, 'tcx>(
                 non_null: true,
                 init: true,
                 in_bounds: src_in_bounds,
+                index_bounds: None,
                 align_n: slice_elem_align.or(alloc_align),
                 dangling: false,
                 ownership_transfer: addr.facts.ownership_transfer,
@@ -518,6 +519,7 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
             dangling: src_val.facts.dangling || numeric_transmute,
             init: src_val.facts.init,
             in_bounds: src_val.facts.in_bounds,
+            index_bounds: None,
             ownership_transfer: src_val.facts.ownership_transfer,
             align_n: if mir_utils::pointee_ty(src_ty).is_some_and(|t| t.is_unit()) {
                 None

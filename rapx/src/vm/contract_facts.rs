@@ -13,7 +13,7 @@ use crate::{
 
 use crate::contract::place::{index_access_locals, rebind_property_place, slice_offset_locals};
 use super::state::{
-    AllocId, ElementTy, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue,
+    AllocId, ElementTy, IndexBoundFact, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue,
 };
 
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
@@ -132,14 +132,9 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                                 .assertions
                                 .push(previous.z3_term._eq(&expected.z3_term));
                         }
-                        let indexed_in_bounds = self.path_state.index_access_facts.iter().any(
-                            |(slice, index_term, slice_local, indexed_local)| {
-                                *slice_local == base_local
-                                    && *indexed_local == index_local
-                                    && *slice == base.z3_term
-                                    && *index_term == index.z3_term
-                            },
-                        );
+                        let indexed_in_bounds = self.has_matching_index_access_fact(&base, &index)
+                            || self.slice_len_from_value(&base)
+                                .is_some_and(|len| self.path_implies(&index.z3_term.lt(&len)));
                         if indexed_in_bounds {
                             self.record_bounded_result_span(dest);
                         }
@@ -423,6 +418,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 dangling: false,
                 init: true,
                 in_bounds: true,
+                index_bounds: None,
                 align_n: heap_align_n,
                 ownership_transfer: None,
             },
@@ -754,19 +750,19 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     }
 
     fn record_index_access_fact(&mut self, property: &Property<'tcx>) {
-        let Some((slice_local, index_local)) = index_access_locals(property) else {
-            return;
-        };
-        if let (Some(slice), Some(index)) =
-            (self.local_value(slice_local), self.local_value(index_local))
-        {
-            self.path_state.index_access_facts.push((
-                slice.z3_term.clone(),
-                index.z3_term.clone(),
-                slice_local,
-                index_local,
-            ));
-        }
+        let Some((slice_local, index_local)) = index_access_locals(property) else { return };
+        let Some(slice) = self.local_value(slice_local) else { return };
+        let Some(slice_len) = self.slice_len_from_value(slice) else { return };
+        let slice_term = slice.z3_term.clone();
+        let slice_alloc = slice.provenance_alloc_id();
+        let Some(mut index) = self.local_value(index_local).cloned() else { return };
+        index.facts.index_bounds.get_or_insert_with(|| Box::new(Vec::new())).push(IndexBoundFact {
+            slice_term,
+            slice_len,
+            slice_alloc,
+            index_term: index.z3_term.clone(),
+        });
+        self.set_local(index_local, index);
     }
 
     /// When a `&T`/`&mut T` reference is created (e.g. via `&*NonNull<T>`), assume

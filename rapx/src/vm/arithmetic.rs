@@ -545,6 +545,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 non_null: base.facts.non_null,
                 dangling: base.facts.dangling,
                 in_bounds: dereferenceable,
+                index_bounds: None,
                 align_n,
                 init: base.facts.init,
                 ownership_transfer: base.facts.ownership_transfer,

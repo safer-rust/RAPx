@@ -77,8 +77,8 @@ pub(crate) struct Provenance<'z3> {
     pub offset_kind: Option<OffsetKind<'z3>>,
 }
 
-/// Value-level facts about a single symbolic value (nullness, alignment,
-/// bounds, and whether it has been written).  These travel *with* the value — a
+/// Value-level facts about a symbolic value (nullness, alignment, bounds, and
+/// relationships to other values). These travel *with* the value — a
 /// [`VmValue`] leaves its allocation when passed as an operand or stashed in
 /// `InlineCtx::deferred_field_writes` — so they live on the value, not the
 /// allocation.  The allocation-level counterpart to `init` is
@@ -94,10 +94,21 @@ pub(crate) struct ValueFacts<'z3> {
     pub dangling: bool,
     pub init: bool,
     pub in_bounds: bool,
+    /// Slice bounds established for this index value by `InBound` contracts.
+    pub index_bounds: Option<Box<Vec<IndexBoundFact<'z3>>>>,
     /// Known divisor `n` for which `z3_term % n == 0`, possibly symbolic.
     pub align_n: Option<Int<'z3>>,
     /// Identity of an ownership transfer carried by this pointer and its copies.
     pub ownership_transfer: Option<usize>,
+}
+
+/// A declared slice/index bound retained when a generic `SliceIndex` cannot be reduced to arithmetic.
+#[derive(Clone, Debug)]
+pub(crate) struct IndexBoundFact<'z3> {
+    pub slice_term: Int<'z3>,
+    pub slice_len: Int<'z3>,
+    pub slice_alloc: Option<AllocId>,
+    pub index_term: Int<'z3>,
 }
 
 /// A symbolic value tracked by the VM.
@@ -1247,6 +1258,15 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         self.store_value(alloc_id, view_ty, path, value);
     }
 
+    /// Discard slice bounds tied to a local whose index fields are being changed.
+    pub(crate) fn clear_index_bounds(&mut self, local: Local) {
+        let Some(&alloc_id) = self.path_state.current_frame.local_alloc.get(&local) else { return };
+        let view_ty = self.body().local_decls[local].ty;
+        if let Some(whole) = self.content_mut(alloc_id).values.get_mut(&(view_ty, Vec::new())) {
+            whole.facts.index_bounds = None;
+        }
+    }
+
     pub(crate) fn write_local_path(
         &mut self,
         local: Local,
@@ -1260,17 +1280,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             && !path.is_empty()
             && path.iter().all(|field| *field == 0)
             && value.facts.init;
-        let prior_term = self
-            .local_value(local)
-            .map(|value| value.z3_term.to_string());
-        self.path_state.index_access_facts
-            .retain(|(slice_term, index_term, slice, index)| {
-                *slice != local
-                    && *index != local
-                    && prior_term.as_ref().is_none_or(|term| {
-                        *term != slice_term.to_string() && *term != index_term.to_string()
-                    })
-            });
+        if !path.is_empty() { self.clear_index_bounds(local); }
         if path.is_empty() {
             self.invalidate_indexed_array(local);
             self.invalidate_field_descendants(local, &[]);

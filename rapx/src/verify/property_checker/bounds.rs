@@ -392,8 +392,6 @@ impl PropertyChecker {
         };
         if let Some(index_op) = index_arg_idx.and_then(|idx| checkpoint.args.get(idx)) {
             let index_val = vm_state.value_of_operand(index_op);
-            // The slice term is only an address, and a shorter view of the same
-            // slice has the same address. So a fact must also match the length.
             if vm_state.has_matching_index_access_fact(&slice_val, &index_val) {
                 return CheckResult::ProvedByRule;
             }

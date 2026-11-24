@@ -48,11 +48,12 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
 
     pub(crate) fn has_matching_index_access_fact(&self, slice_val: &VmValue<'z3, 'tcx>, index_val: &VmValue<'z3, 'tcx>) -> bool {
         let Some(slice_len) = self.slice_len_from_value(slice_val) else { return false };
-        self.path_state.index_access_facts.iter().any(|(slice, index, slice_local, _)| {
-            slice.to_string() == slice_val.z3_term.to_string()
-                && index.to_string() == index_val.z3_term.to_string()
-                && self.local_value(*slice_local).and_then(|value| self.slice_len_from_value(value)) == Some(slice_len.clone())
-        })
+        index_val.facts.index_bounds.as_deref().is_some_and(|facts| facts.iter().any(|fact| {
+            fact.slice_term == slice_val.z3_term
+                && fact.slice_len == slice_len
+                && fact.slice_alloc == slice_val.provenance_alloc_id()
+                && fact.index_term == index_val.z3_term
+        }))
     }
 
     pub(crate) fn enable_memory_events(&mut self) {

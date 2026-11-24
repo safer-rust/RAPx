@@ -616,6 +616,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                             non_null: true,
                             init: true,
                             in_bounds: false,
+                            index_bounds: None,
                             align_n: None,
                             dangling: false,
                             ownership_transfer: None,

@@ -24,7 +24,7 @@ mod step;
 pub(crate) use step::RelevantItem;
 
 use rustc_hir::def_id::DefId;
-use rustc_middle::{mir::{Body, Local}, ty::TyCtxt};
+use rustc_middle::{mir::Body, ty::TyCtxt};
 use std::cell::RefCell;
 use z3::{Context, ast::Int};
 
@@ -83,8 +83,6 @@ struct VmState<'z3, 'tcx> {
     method_result_cache: Vec<CachedMethodResult<'z3, 'tcx>>,
     /// Allocation roots licensed by declared `Alias` contract sources.
     alias_hazard_allocs: FxHashSet<AllocId>,
-    /// Slice and index terms with their originating MIR locals.
-    index_access_facts: Vec<(Int<'z3>, Int<'z3>, Local, Local)>,
     /// Optional trace of memory uses and drops on this path.
     memory_events: Option<RefCell<Vec<MemoryEvent>>>,
     /// Path diagnostics and the MIR location used to attribute new records.
@@ -132,7 +130,6 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 inline: InlineCtx::default(),
                 method_result_cache: Vec::default(),
                 alias_hazard_allocs: FxHashSet::default(),
-                index_access_facts: Vec::new(),
                 memory_events: None,
                 diagnostics: Diagnostics::default(),
             },
