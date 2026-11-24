@@ -25,6 +25,7 @@ use crate::def_ids;
 use crate::contract::type_invariants::constructor_result_has_invariant;
 use crate::vm::constructor_policy::effective_constructor_mir_mode;
 
+
 #[derive(Clone, Copy)]
 struct CallSite<'a, 'z3, 'tcx> {
     func: &'a Operand<'tcx>,
@@ -215,13 +216,6 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 .is_some_and(|id| crate::contract::ensures::has_slice_offset_ensures(self.tcx, id))
             {
                 return CallModel::PostconditionsOnly;
-            }
-            if args
-                .first()
-                .is_some_and(|value| !self.vec_reallocation_targets(value).is_empty())
-                && call_summary::pointer_semantics::callsite_replaces_pointer_field(self.tcx, func)
-            {
-                return CallModel::Summary(vec![CallEffect::ReallocateVec { arg: 0 }]);
             }
             if let Some(effects) = call_summary::effects::lookup_effect(
                 self.tcx, caller_def_id, callee, func,

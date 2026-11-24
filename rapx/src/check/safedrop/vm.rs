@@ -96,7 +96,7 @@ pub(crate) fn analyze<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, paths: &PathTree) 
     let body = tcx.optimized_mir(def_id);
     let mut bugs = BugRecords::new();
     for path in paths.to_vecs() {
-        let mut state = VmExecutor::new(&context, tcx, def_id, None, ConstructorMirMode::Default);
+        let mut state = VmExecutor::new(&context, tcx, def_id, None, ConstructorMirMode::InvariantFirst);
         state.enable_memory_events();
         let mut states = state.execute_items(&[]);
         for (position, &bb_idx) in path.iter().enumerate() {

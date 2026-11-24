@@ -10,14 +10,15 @@ use crate::util::def_use::PlaceKey;
 use crate::util::mir_utils;
 use crate::contract::{PropertyKind, type_invariants::has_owner_ptr_invariant};
 
-/// The `IS_ZST` fold selects an equivalent path without asserting its guard.
+/// Select a known discriminator before trying MIR-wide constant folds.
 pub(crate) fn forced_inline_switch_target<'z3, 'tcx>(
     state: &VmExecutor<'z3, 'tcx>,
     body: &Body<'tcx>,
     discr: &Operand<'tcx>,
     targets: &SwitchTargets,
 ) -> Option<BasicBlock> {
-    let value = inline_switch_discr_const(state, body, discr)?;
+    let value = state.value_of_operand(discr).z3_term.simplify().as_u64()
+        .or_else(|| inline_switch_discr_const(state, body, discr))?;
     Some(
         targets
             .iter()
@@ -105,7 +106,7 @@ pub(crate) fn exec_switch_int<'z3, 'tcx>(
         ValueSource::CallsiteConst | ValueSource::KnownDiscriminant(_) => {
             discr_val.z3_term.simplify().as_u64()
         }
-        _ => None,
+        _ => discr_val.z3_term.simplify().as_u64(),
     };
     if !state.path_state.diagnostics.is_unsupported()
         && !state.path_state.diagnostics.has_incomplete_inline_branch()

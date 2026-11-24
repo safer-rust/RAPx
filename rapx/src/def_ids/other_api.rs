@@ -47,6 +47,20 @@ pub fn is_box_new(tcx: TyCtxt<'_>, did: DefId) -> bool {
     matches!(self_ty.kind(), TyKind::Adt(adt, _) if type_ids::is_std_box(adt.did()))
 }
 
+/// Identify Vec/String constructors whose MIR retains their length and capacity.
+pub fn is_vec_string_mir_constructor(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    if !is_std_api(tcx, did)
+        || !tcx.opt_item_name(did).is_some_and(|name| matches!(name.as_str(), "new" | "with_capacity"))
+    {
+        return false;
+    }
+    let Some(impl_id) = tcx.inherent_impl_of_assoc(did) else {
+        return false;
+    };
+    let self_ty = tcx.type_of(impl_id).instantiate_identity().skip_norm_wip();
+    matches!(self_ty.kind(), TyKind::Adt(adt, _) if type_ids::is_std_vec(adt.did()) || type_ids::is_std_string(adt.did()))
+}
+
 /// Identify `NonNull::dangling` for its constructor summary when MIR expansion
 /// is disabled. Unlike an arbitrary `NonNull<T>`, its result is aligned for `T`
 /// and has no allocation provenance; the type invariant only guarantees non-nullness.

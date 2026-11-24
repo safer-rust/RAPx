@@ -697,6 +697,9 @@ pub(crate) fn eval_aggregate<'z3, 'tcx>(
         let mut field_path = dest_prefix.clone();
         field_path.push(i);
         state.set_field_value(dest_local, field_path.clone(), field_val);
+        if let Operand::Constant(constant) = operand {
+            state.materialize_const_fields(dest_local, field_path.clone(), &constant.const_);
+        }
         // Flatten a nested aggregate: if the operand is a local whose own fields
         // are tracked (e.g. `_0 = Result::Ok(_24)` where `_24 = RawVecInner { ptr:
         // _25, .. }`), expose the nested fields under the destination's field

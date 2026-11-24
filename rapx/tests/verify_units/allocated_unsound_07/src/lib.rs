@@ -12,9 +12,11 @@ pub fn unsound_vec_reallocates_old_pointer() {
     data.push(1_u32);
     let ptr = data.as_ptr();
 
-    for value in 2_u32..20 {
+    for value in 2_u32..7 {
         data.push(value);
     }
+    // The nonempty Vec must grow beyond its current capacity.
+    data.reserve_exact(data.capacity());
 
     unsafe {
         require_allocated_u32(ptr);

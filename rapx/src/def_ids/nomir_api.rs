@@ -52,6 +52,14 @@ pub fn is_global_alloc_shim(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     })
 }
 
+/// Identify the allocator reallocation shim, whose MIR is unavailable.
+pub fn is_global_realloc_shim(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
+    callee.is_some_and(|did| {
+        has_no_mir(tcx, did)
+            && matches_path(tcx, did, &["alloc::alloc::__rust_realloc", "std::alloc::__rust_realloc"])
+    })
+}
+
 pub fn is_alloc_shim_marker(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     callee.is_some_and(|did| {
         has_no_mir(tcx, did)

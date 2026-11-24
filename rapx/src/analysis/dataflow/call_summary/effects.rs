@@ -56,6 +56,7 @@ macro_rules! ED {
 static REGISTRY: &[Entry] = &[
     // ── APIs without MIR ────────────────────────────────────────────
     ED!(nomir_api::is_global_alloc_shim, eff_nullable_allocation),
+    ED!(nomir_api::is_global_realloc_shim, eff_nullable_reallocation),
     ED!(nomir_api::is_global_alloc_zeroed_shim, eff_nullable_zeroed_allocation),
     ED!(nomir_api::is_alloc_shim_marker, eff_no_effect),
     ED!(nomir_api::is_convert_vec_to_vec, eff_vec_from_slice),
@@ -517,6 +518,10 @@ fn eff_nullable_allocation(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
         align_arg: 1,
         zeroed: false,
     }]
+}
+
+fn eff_nullable_reallocation(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnNullableReallocation { pointer_arg: 0, old_size_arg: 1, size_arg: 3, align_arg: 2 }]
 }
 
 fn eff_nullable_zeroed_allocation(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {

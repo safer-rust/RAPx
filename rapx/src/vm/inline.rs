@@ -803,6 +803,28 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     )
                 });
             if let Some(referent) = outer_referent {
+                let mut path = path;
+                // Restore a field-borrow prefix only when the outer field type identifies it uniquely.
+                if let Some(outer_ty) = self.body().local_decls.get(referent).map(|decl| decl.ty)
+                    && mir_utils::projected_field_ty(self.tcx, outer_ty, &path) != Some(value.ty)
+                    && let TyKind::Adt(adt, _) = outer_ty.peel_refs().kind()
+                    && !adt.is_enum()
+                {
+                    let mut match_path = None;
+                    for index in 0..adt.non_enum_variant().fields.len() {
+                        let candidate: Vec<_> = std::iter::once(index).chain(path.iter().copied()).collect();
+                        if mir_utils::projected_field_ty(self.tcx, outer_ty, &candidate) == Some(value.ty) {
+                            if match_path.is_some() {
+                                match_path = None;
+                                break;
+                            }
+                            match_path = Some(candidate);
+                        }
+                    }
+                    if let Some(candidate) = match_path {
+                        path = candidate;
+                    }
+                }
                 self.path_state.inline
                     .deferred_field_writes
                     .push((referent, path, value));

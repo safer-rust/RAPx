@@ -1711,12 +1711,45 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             }
             return;
         }
+        self.materialize_const_fields(local, Vec::new(), constant);
+    }
+
+    /// Materialize scalar fields nested inside a constant aggregate.
+    pub(crate) fn materialize_const_fields(
+        &mut self,
+        local: Local,
+        prefix: Vec<usize>,
+        constant: &rustc_middle::mir::Const<'tcx>,
+    ) {
+        self.materialize_const_fields_rec(local, prefix, constant, 0);
+    }
+
+    fn materialize_const_fields_rec(
+        &mut self,
+        local: Local,
+        prefix: Vec<usize>,
+        constant: &rustc_middle::mir::Const<'tcx>,
+        depth: usize,
+    ) {
+        if depth >= 8 {
+            return;
+        }
         let Some((_variant, fields)) = mir_utils::const_destructure(self.tcx, constant) else {
             return;
         };
         for (idx, (field_val, field_ty)) in fields.iter().enumerate() {
             let term = self.const_field_term(field_val, *field_ty);
-            self.set_field_value(local, vec![idx], VmValue::new(term, *field_ty));
+            let mut path = prefix.clone();
+            path.push(idx);
+            self.set_field_value(local, path.clone(), VmValue::new(term, *field_ty));
+            let nested_aggregate = match field_ty.kind() {
+                TyKind::Tuple(..) => true,
+                TyKind::Adt(adt, _) => !adt.is_enum() && !adt.is_union(),
+                _ => false,
+            };
+            if nested_aggregate {
+                self.materialize_const_fields_rec(local, path, &rustc_middle::mir::Const::Val(*field_val, *field_ty), depth + 1);
+            }
         }
     }
 
