@@ -1,9 +1,8 @@
 //! Backward relevance rules for MIR statements.
 
 use rustc_hir::def_id::DefId;
-use rustc_middle::mir::{BasicBlock, Body, Local, Operand, Place, ProjectionElem, Rvalue};
+use rustc_middle::mir::{BasicBlock, Body, Operand, Place, ProjectionElem, Rvalue};
 
-use crate::analysis::dataflow::slicing::SlicingGraph;
 use crate::analysis::dataflow::types::DataflowGraph;
 use crate::util::def_use::{RelevantPlaces, operand_uses};
 use crate::util::mir_utils;
@@ -21,10 +20,9 @@ impl<'tcx> BackwardSlicer<'tcx> {
         place: &Place<'tcx>,
         rvalue: &'tcx Rvalue<'tcx>,
         body: &'tcx Body<'tcx>,
-        flow: &SlicingGraph,
+        flow: &DataflowGraph,
         relevant: &mut RelevantPlaces,
         items: &mut Vec<RelevantItem<'tcx>>,
-        keep_owner: bool,
     ) {
         let mut defs = RelevantPlaces::new();
         defs.insert_mir_place(place);
@@ -58,7 +56,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         }
         // Keep the definition of a `needs_drop` local (an owner's construction
         // chain) so `Owning` can trace its field provenance.
-        if keep_owner && flow.effects_at(block.as_usize(), stmt_index).owner_source {
+        if super::may_need_drop(self.tcx, def_id, body.local_decls[place.local].ty) {
             let uses = collect_assignment_uses(rvalue, block, stmt_index, flow, &defs);
             items.push(RelevantItem::Statement {
                 global_block: None,
@@ -158,43 +156,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 });
             }
         }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn visit_storage_dead<'tcx>(
-    def_id: DefId,
-    block: BasicBlock,
-    stmt_index: usize,
-    local: Local,
-    flow: &DataflowGraph,
-    relevant: &mut RelevantPlaces,
-    items: &mut Vec<RelevantItem<'tcx>>,
-    keep_invalidations: bool,
-) {
-    if keep_invalidations {
-        items.push(RelevantItem::Statement {
-            global_block: None,
-            def_id,
-            block,
-            stmt_index,
-        });
-        return;
-    }
-    let mut defs = RelevantPlaces::new();
-    defs.insert_local(local);
-    if defs.intersects(relevant) {
-        let mut uses = collect_flow_uses(flow, block, stmt_index, &defs);
-        items.push(RelevantItem::Statement {
-            global_block: None,
-            def_id,
-            block,
-            stmt_index,
-        });
-        let already_seen = relevant.places.clone();
-        relevant.remove_all(&defs);
-        uses.places.retain(|p| !already_seen.contains(p));
-        relevant.extend(uses);
     }
 }
 

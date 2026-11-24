@@ -6,12 +6,12 @@ use rustc_middle::mir::{
     Terminator, TerminatorKind,
 };
 
-use crate::analysis::dataflow::slicing::SlicingGraph;
+use crate::analysis::dataflow::types::DataflowGraph;
 use crate::util::def_use::{RelevantPlaces, operand_uses};
 
 use super::super::RelevantItem;
 use super::super::BackwardSlicer;
-use super::{statement, terminator};
+use super::terminator;
 
 pub(super) struct StatementContext<'a, 'tcx> {
     pub slicer: &'a BackwardSlicer<'tcx>,
@@ -20,11 +20,9 @@ pub(super) struct StatementContext<'a, 'tcx> {
     pub stmt_index: usize,
     pub statement: &'tcx Statement<'tcx>,
     pub body: &'tcx Body<'tcx>,
-    pub flow: &'a SlicingGraph,
+    pub flow: &'a DataflowGraph,
     pub relevant: &'a mut RelevantPlaces,
     pub items: &'a mut Vec<RelevantItem<'tcx>>,
-    pub keep_invalidations: bool,
-    pub keep_owner: bool,
 }
 
 pub(super) struct TerminatorContext<'a, 'tcx> {
@@ -32,12 +30,10 @@ pub(super) struct TerminatorContext<'a, 'tcx> {
     pub def_id: DefId,
     pub block: BasicBlock,
     pub terminator: &'a Terminator<'tcx>,
-    pub flow: &'a SlicingGraph,
+    pub flow: &'a DataflowGraph,
     pub body: &'a Body<'tcx>,
     pub relevant: &'a mut RelevantPlaces,
     pub items: &'a mut Vec<RelevantItem<'tcx>>,
-    pub keep_invalidations: bool,
-    pub keep_owner: bool,
     pub successor: Option<BasicBlock>,
 }
 
@@ -55,7 +51,6 @@ pub(super) fn apply_statement(ctx: &mut StatementContext<'_, '_>) {
                 ctx.flow,
                 ctx.relevant,
                 ctx.items,
-                ctx.keep_owner,
             );
             "Assign"
         }
@@ -85,28 +80,22 @@ pub(super) fn apply_statement(ctx: &mut StatementContext<'_, '_>) {
             }
             "SetDiscriminant"
         }
-        StatementKind::StorageDead(local) => {
-            statement::visit_storage_dead(
-                ctx.def_id,
-                ctx.block,
-                ctx.stmt_index,
-                *local,
-                ctx.flow,
-                ctx.relevant,
-                ctx.items,
-                ctx.keep_invalidations && ctx.flow.effects_at(ctx.block.as_usize(), ctx.stmt_index).memory_state,
-            );
+        StatementKind::StorageDead(..) => {
+            ctx.items.push(RelevantItem::Statement {
+                global_block: None,
+                def_id: ctx.def_id,
+                block: ctx.block,
+                stmt_index: ctx.stmt_index,
+            });
             "StorageDead"
         }
         StatementKind::StorageLive(..) => {
-            if ctx.keep_invalidations && ctx.flow.effects_at(ctx.block.as_usize(), ctx.stmt_index).memory_state {
-                ctx.items.push(RelevantItem::Statement {
-                    global_block: None,
-                    def_id: ctx.def_id,
-                    block: ctx.block,
-                    stmt_index: ctx.stmt_index,
-                });
-            }
+            ctx.items.push(RelevantItem::Statement {
+                global_block: None,
+                def_id: ctx.def_id,
+                block: ctx.block,
+                stmt_index: ctx.stmt_index,
+            });
             "StorageLive"
         }
         StatementKind::Intrinsic(intrinsic)
@@ -176,8 +165,6 @@ pub(super) fn apply_terminator(ctx: &mut TerminatorContext<'_, '_>) {
                 ctx.body,
                 ctx.relevant,
                 ctx.items,
-                ctx.keep_invalidations,
-                ctx.keep_owner,
             );
             "Call"
         }
@@ -194,8 +181,6 @@ pub(super) fn apply_terminator(ctx: &mut TerminatorContext<'_, '_>) {
                 ctx.body,
                 ctx.relevant,
                 ctx.items,
-                ctx.keep_invalidations,
-                ctx.keep_owner,
             );
             "TailCall"
         }
@@ -241,7 +226,6 @@ fn visit_non_call(ctx: &mut TerminatorContext<'_, '_>) {
         ctx.terminator,
         ctx.relevant,
         ctx.items,
-        ctx.keep_invalidations && ctx.flow.effects_at(ctx.block.as_usize(), ctx.body.basic_blocks[ctx.block].statements.len()).memory_state,
         ctx.successor,
     );
 }

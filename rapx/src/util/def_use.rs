@@ -207,8 +207,8 @@ impl RelevantPlaces {
 
 /// Collect definitions and uses for one MIR terminator.
 ///
-/// Ordinary calls are handled by the slicer's call visitor. Tail calls also
-/// expose their return place and operand uses here for generic consumers.
+/// Call effects are handled by the slicer; this records their syntactic
+/// destination and operand dependencies for generic consumers.
 pub fn terminator_use_def<'tcx>(terminator: &Terminator<'tcx>) -> DefUse {
     let mut use_def = DefUse::new();
     match &terminator.kind {
@@ -220,6 +220,13 @@ pub fn terminator_use_def<'tcx>(terminator: &Terminator<'tcx>) -> DefUse {
         }
         TerminatorKind::Drop { place, .. } => {
             use_def.uses.extend(place_uses(place));
+        }
+        TerminatorKind::Call { func, args, destination, .. } => {
+            use_def.defs.insert_mir_place(destination);
+            use_def.uses.extend(operand_uses(func));
+            for arg in args.iter() {
+                use_def.uses.extend(operand_uses(&arg.node));
+            }
         }
         TerminatorKind::TailCall { func, args, .. } => {
             use_def.defs.insert_local(Local::from_usize(0));

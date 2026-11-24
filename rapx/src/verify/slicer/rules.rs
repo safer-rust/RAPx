@@ -2,16 +2,25 @@
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{BasicBlock, Body, Statement, Terminator};
+use rustc_middle::ty::{Ty, TyCtxt, TypeFlags, TypeVisitableExt, TypingEnv};
 
 use super::RelevantItem;
 use super::BackwardSlicer;
-use crate::analysis::dataflow::slicing::SlicingGraph;
+use crate::analysis::dataflow::types::DataflowGraph;
 use crate::util::def_use::RelevantPlaces;
 
 mod call;
 mod dispatch;
 mod statement;
 mod terminator;
+
+fn may_need_drop<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, ty: Ty<'tcx>) -> bool {
+    // Generic consts and placeholders can make rustc's `needs_drop` query fail.
+    ty.has_type_flags(TypeFlags::HAS_CT_PARAM)
+        || ty.has_non_region_placeholders()
+        || ty.has_escaping_bound_vars()
+        || ty.needs_drop(tcx, TypingEnv::post_analysis(tcx, def_id))
+}
 
 impl<'tcx> BackwardSlicer<'tcx> {
     #[allow(clippy::too_many_arguments)]
@@ -22,11 +31,9 @@ impl<'tcx> BackwardSlicer<'tcx> {
         stmt_index: usize,
         statement: &'tcx Statement<'tcx>,
         body: &'tcx Body<'tcx>,
-        flow: &SlicingGraph,
+        flow: &DataflowGraph,
         relevant: &mut RelevantPlaces,
         items: &mut Vec<RelevantItem<'tcx>>,
-        keep_invalidations: bool,
-        keep_owner: bool,
     ) {
         dispatch::apply_statement(&mut dispatch::StatementContext {
             slicer: self,
@@ -38,8 +45,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
             flow,
             relevant,
             items,
-            keep_invalidations,
-            keep_owner,
         });
     }
 
@@ -49,12 +54,10 @@ impl<'tcx> BackwardSlicer<'tcx> {
         def_id: DefId,
         block: BasicBlock,
         terminator: &Terminator<'tcx>,
-        flow: &SlicingGraph,
+        flow: &DataflowGraph,
         body: &Body<'tcx>,
         relevant: &mut RelevantPlaces,
         items: &mut Vec<RelevantItem<'tcx>>,
-        keep_invalidations: bool,
-        keep_owner: bool,
         successor: Option<BasicBlock>,
     ) {
         dispatch::apply_terminator(&mut dispatch::TerminatorContext {
@@ -66,8 +69,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
             body,
             relevant,
             items,
-            keep_invalidations,
-            keep_owner,
             successor,
         });
     }

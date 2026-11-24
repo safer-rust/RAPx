@@ -2,10 +2,14 @@
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{BasicBlock, Body, Operand, Place, TerminatorKind};
+use rustc_middle::ty::TyCtxt;
 
-use crate::analysis::dataflow::slicing::SlicingGraph;
+use crate::analysis::dataflow::types::DataflowGraph;
 use crate::compat::Spanned;
+use crate::contract::{PropertyKind, json::query_json_contracts};
+use crate::def_ids::other_api;
 use crate::util::def_use::{RelevantPlaces, call_args_uses_at, terminator_use_def};
+use crate::util::mir_utils::dep_callee_def_id;
 
 use super::super::RelevantItem;
 use super::super::BackwardSlicer;
@@ -21,15 +25,12 @@ impl<'tcx> BackwardSlicer<'tcx> {
         func: &Operand<'tcx>,
         args: &[Spanned<Operand<'tcx>>],
         destination: &Place<'tcx>,
-        flow: &SlicingGraph,
+        flow: &DataflowGraph,
         body: &Body<'tcx>,
         relevant: &mut RelevantPlaces,
         items: &mut Vec<RelevantItem<'tcx>>,
-        keep_invalidations: bool,
-        keep_owner: bool,
     ) {
-        let effects = flow.effects_at(block.as_usize(), body.basic_blocks[block].statements.len());
-        if keep_invalidations && effects.memory_state {
+        if call_changes_memory_state(self.tcx, func) {
             // Keep calls that can change an allocation's lifetime or consume
             // a raw ownership share, together with their argument sources.
             items.push(RelevantItem::Terminator {
@@ -45,7 +46,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
         // `Owning` traces an owner's construction chain: keep a call whose
         // destination is a `needs_drop` value even when that local is not
         // itself relevant, so its field provenance survives.
-        if keep_owner && effects.owner_source {
+        if super::may_need_drop(self.tcx, def_id, body.local_decls[destination.local].ty) {
             let use_def = terminator_use_def(terminator);
             items.push(RelevantItem::Terminator {
                 global_block: None,
@@ -79,10 +80,9 @@ pub(super) fn visit_non_call_terminator<'tcx>(
     terminator: &rustc_middle::mir::Terminator<'tcx>,
     relevant: &mut RelevantPlaces,
     items: &mut Vec<RelevantItem<'tcx>>,
-    keep_invalidations: bool,
     successor: Option<BasicBlock>,
 ) {
-    if keep_invalidations && matches!(terminator.kind, TerminatorKind::Drop { .. }) {
+    if matches!(terminator.kind, TerminatorKind::Drop { .. }) {
         items.push(RelevantItem::Terminator {
             global_block: None,
             def_id,
@@ -129,4 +129,11 @@ pub(super) fn visit_non_call_terminator<'tcx>(
             switch_succ: None,
         });
     }
+}
+
+fn call_changes_memory_state(tcx: TyCtxt<'_>, func: &Operand<'_>) -> bool {
+    dep_callee_def_id(func).is_some_and(|callee| {
+        other_api::is_drop_fn(tcx, callee)
+            || query_json_contracts(tcx, callee).iter().any(|property| property.kind() == Some(PropertyKind::RefCountShare))
+    })
 }

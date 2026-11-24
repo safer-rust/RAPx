@@ -14,7 +14,7 @@ use std::{cell::RefCell, collections::{HashMap, HashSet}, rc::Rc};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{mir::{BasicBlock, Body, Local}, ty::TyCtxt};
 
-use crate::analysis::dataflow::slicing::SlicingGraph;
+use crate::analysis::dataflow::{graph::build_dataflow_graph_from_body, types::DataflowGraph};
 use crate::analysis::path::{CallArg, PathNode, PathTree};
 use crate::contract;
 use crate::util::def_use::RelevantPlaces;
@@ -39,33 +39,7 @@ type LeafItem<'tcx> = (
     RelevantPlaces,
     Vec<(DefId, Vec<CallArg>, RelevantPlaces)>,
 );
-type EntryData<'tcx> = (&'tcx Body<'tcx>, Rc<SlicingGraph>);
-
-#[derive(Clone, Copy)]
-struct SliceOptions {
-    keep_invalidation: bool,
-    keep_owner: bool,
-}
-
-impl SliceOptions {
-    fn for_property(property: &contract::Property<'_>) -> Self {
-        Self {
-            keep_invalidation: needs_invalidation_tracking(property),
-            keep_owner: property.contains_kind(contract::PropertyKind::Owning)
-                || property.contains_kind(contract::PropertyKind::Allocated),
-        }
-    }
-
-    fn for_properties(properties: &[&contract::Property<'_>]) -> Self {
-        properties.iter().map(|property| Self::for_property(property)).fold(
-            Self { keep_invalidation: false, keep_owner: false },
-            |acc, next| Self {
-                keep_invalidation: acc.keep_invalidation || next.keep_invalidation,
-                keep_owner: acc.keep_owner || next.keep_owner,
-            },
-        )
-    }
-}
+type EntryData<'tcx> = (&'tcx Body<'tcx>, Rc<DataflowGraph>);
 
 /// Entry point for backward path visiting.
 pub(crate) struct BackwardSlicer<'tcx> {
@@ -74,7 +48,7 @@ pub(crate) struct BackwardSlicer<'tcx> {
     instance_body: Option<&'tcx Body<'tcx>>,
     callee_bodies: CalleeBodies<'tcx>,
     entry_bodies: EntryBodies<'tcx>,
-    flow_cache: RefCell<HashMap<(DefId, usize), Rc<SlicingGraph>>>,
+    flow_cache: RefCell<HashMap<(DefId, usize), Rc<DataflowGraph>>>,
 }
 
 impl<'tcx> BackwardSlicer<'tcx> {
@@ -121,7 +95,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
         properties: &[&contract::Property<'tcx>],
     ) -> Vec<SlicedPath<'tcx>> {
         let combined = contract::Property::new_and(properties.iter().map(|property| (*property).clone()).collect());
-        let options = SliceOptions::for_properties(properties);
         self.visit_path_tree_impl(
             tree,
             checkpoint.block.as_usize(),
@@ -129,7 +102,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
             checkpoint.block,
             Some(checkpoint),
             &combined,
-            options,
         )
     }
 
@@ -151,7 +123,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
             checkpoint_loc.block,
             None,
             &combined,
-            SliceOptions::for_properties(properties),
         )
     }
 
@@ -164,7 +135,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
         checkpoint_block: BasicBlock,
         bind_checkpoint: Option<&Checkpoint<'tcx>>,
         property: &contract::Property<'tcx>,
-        options: SliceOptions,
     ) -> Vec<SlicedPath<'tcx>> {
         let Some(root) = tree.root() else {
             return Vec::new();
@@ -183,7 +153,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             let body = self.entry_bodies.get(&entry).copied().unwrap_or_else(|| self.body_for(def_id));
             let key = (def_id, body as *const Body<'tcx> as usize);
             let flow = self.flow_cache.borrow_mut().entry(key)
-                .or_insert_with(|| Rc::new(SlicingGraph::new(self.tcx, def_id, body)))
+                .or_insert_with(|| Rc::new(build_dataflow_graph_from_body(def_id, body)))
                 .clone();
             entries.insert(entry, (body, flow));
         }
@@ -196,7 +166,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
             checkpoint_block,
             bind_checkpoint,
             property,
-            options,
             caller,
             &entries,
         );
@@ -228,7 +197,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
         checkpoint_block: BasicBlock,
         bind_checkpoint: Option<&Checkpoint<'tcx>>,
         property: &contract::Property<'tcx>,
-        options: SliceOptions,
         caller: DefId,
         entries: &HashMap<usize, EntryData<'tcx>>,
     ) -> Vec<LeafItem<'tcx>> {
@@ -236,10 +204,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
         let entry = node.block - local_index;
         let (body, flow) = &entries[&entry];
         let block = BasicBlock::from(local_index);
-        let keep_inv = options.keep_invalidation;
-        // `Allocated` also needs the construction chain of owners that may be
-        // dropped before the checkpoint.
-        let keep_owner = options.keep_owner;
         let block_data = &body.basic_blocks[block];
         let mut results = Vec::new();
 
@@ -282,8 +246,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
                     flow,
                     &mut relevant,
                     &mut items,
-                    keep_inv,
-                    keep_owner,
                 );
             }
             Self::re_visit_newly_added(
@@ -297,8 +259,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 &mut relevant,
                 &mut items,
                 0,
-                keep_inv,
-                keep_owner,
             );
             for item in &mut items {
                 item.set_global_block(node.block);
@@ -317,7 +277,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 checkpoint_block,
                 bind_checkpoint,
                 property,
-                options,
                 caller,
                 entries,
             );
@@ -365,8 +324,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
                         body,
                         &mut relevant,
                         &mut items,
-                        keep_inv,
-                        keep_owner,
                         successor,
                     );
                 }
@@ -381,8 +338,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
                         flow,
                         &mut relevant,
                         &mut items,
-                        keep_inv,
-                        keep_owner,
                     );
                 }
                 let dist_to_target = child_path.iter().position(|&b| b == target_block);
@@ -398,8 +353,6 @@ impl<'tcx> BackwardSlicer<'tcx> {
                         &mut relevant,
                         &mut items,
                         block_items_start,
-                        keep_inv,
-                        keep_owner,
                     );
                 }
                 for item in &mut items[node_items_start..] {
@@ -453,12 +406,10 @@ impl<'tcx> BackwardSlicer<'tcx> {
         block_data: &'tcx rustc_middle::mir::BasicBlockData<'tcx>,
         statement_end: usize,
         body: &'tcx Body<'tcx>,
-        flow: &SlicingGraph,
+        flow: &DataflowGraph,
         relevant: &mut RelevantPlaces,
         items: &mut Vec<RelevantItem<'tcx>>,
         block_items_start: usize,
-        keep_inv: bool,
-        keep_owner: bool,
     ) {
         let newly_added = std::mem::take(&mut relevant.just_added);
         if newly_added.is_empty() {
@@ -478,9 +429,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                 .iter()
                 .any(|dp| newly_added.iter().any(|np| dp.local() == np.local()));
             if any_new {
-                visitor.visit_statement(
-                    def_id, block, si, stmt, body, flow, relevant, items, keep_inv, keep_owner,
-                );
+                visitor.visit_statement(def_id, block, si, stmt, body, flow, relevant, items);
             }
         }
         let mut seen = HashSet::new();
@@ -496,15 +445,4 @@ impl<'tcx> BackwardSlicer<'tcx> {
         });
         items.extend(block_items);
     }
-}
-
-// ── property helpers ──────────────────────────────────────────────────
-
-/// Whether a property can depend on state changes outside its direct value
-/// dependencies, including drops and raw-share updates before an index read.
-fn needs_invalidation_tracking(property: &contract::Property<'_>) -> bool {
-    use contract::PropertyKind;
-    [PropertyKind::InBound, PropertyKind::Allocated, PropertyKind::Init, PropertyKind::Alive,
-        PropertyKind::ValidString, PropertyKind::ValidCStr, PropertyKind::Owning, PropertyKind::RefCountShare]
-        .into_iter().any(|kind| property.contains_kind(kind))
 }
