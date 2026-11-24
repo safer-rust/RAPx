@@ -245,14 +245,12 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         value
     }
 
-    /// Whether `value` is known to be aligned: either `align_n` carries a
-    /// concrete alignment, or the value sits at the base of an allocation whose
-    /// `align` is not 1.
+    /// Whether `value` has tracked alignment or sits at a base with known alignment above 1.
     pub(crate) fn is_value_aligned(&self, value: &VmValue<'z3, 'tcx>) -> bool {
         value.facts.align_n.is_some()
             || value.provenance.as_ref().is_some_and(|p| {
-                p.offset_kind.is_none()
-                    && self.alloc(p.alloc_id).align.simplify().as_u64() != Some(1)
+                p.offset.simplify().as_u64() == Some(0)
+                    && self.alloc(p.alloc_id).align.simplify().as_u64().is_some_and(|align| align > 1)
             })
     }
 

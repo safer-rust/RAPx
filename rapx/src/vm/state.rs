@@ -23,7 +23,8 @@ pub(crate) use super::VmExecutor;
 use super::diagnostics::ActiveMirLocation;
 use crate::util::def_use::PlaceKey;
 
-pub(crate) const REPEATED_ARRAY_ELEMENT: usize = usize::MAX;
+/// Reserved field-path index for array repeats, not a valid element bound.
+pub(crate) const ARRAY_INDEX_MAX: usize = usize::MAX;
 
 /// Unique identifier for a VM allocation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -76,7 +77,7 @@ pub(crate) struct Provenance<'z3> {
     pub alloc_id: AllocId,
     /// Byte offset from the allocation base; zero for a base pointer.
     pub offset: Int<'z3>,
-    /// Known structure of the offset; `None` denotes an unclassified base offset.
+    /// Offset structure; `None` means a base or an unclassified address calculation.
     pub offset_kind: Option<OffsetKind<'z3>>,
 }
 
@@ -1073,12 +1074,12 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         self.load_value(alloc_id, view_ty, path).or_else(|| {
             let mut candidates = vec![path.to_vec()];
             for position in (0..path.len()).rev() {
-                if path[position] == REPEATED_ARRAY_ELEMENT {
+                if path[position] == ARRAY_INDEX_MAX {
                     continue;
                 }
                 let alternatives = candidates.clone();
                 for mut candidate in alternatives {
-                    candidate[position] = REPEATED_ARRAY_ELEMENT;
+                    candidate[position] = ARRAY_INDEX_MAX;
                     if let Some(value) = self.load_value(alloc_id, view_ty, &candidate) {
                         return Some(value);
                     }
@@ -1839,7 +1840,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                                 .local_value(local)
                                 .and_then(|value| value.z3_term.simplify().as_u64())
                                 .and_then(|index| usize::try_from(index).ok())
-                                .unwrap_or(REPEATED_ARRAY_ELEMENT);
+                                .unwrap_or(ARRAY_INDEX_MAX);
                             path.push(index);
                         }
                         ProjectionElem::ConstantIndex {
@@ -2104,7 +2105,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 && let Some(length) = length.try_to_target_usize(self.tcx)
             {
                 let repeated = self
-                    .field_value(place.local, &[REPEATED_ARRAY_ELEMENT])
+                    .field_value(place.local, &[ARRAY_INDEX_MAX])
                     .cloned();
                 let elements = if repeated.is_some() {
                     self.field_paths(place.local)
@@ -2112,7 +2113,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                         .filter_map(|path| {
                             (path.len() == 1
                                 && path[0] < length as usize
-                                && path[0] != REPEATED_ARRAY_ELEMENT)
+                                && path[0] != ARRAY_INDEX_MAX)
                                 .then(|| {
                                     self.field_value(place.local, &path)
                                         .cloned()
