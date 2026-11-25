@@ -55,7 +55,7 @@ impl PropertyChecker {
         let tcx = vm_state.tcx;
 
         if trait_name == "Copy" {
-            let typing_env = rustc_middle::ty::TypingEnv::post_analysis(tcx, checkpoint.caller);
+            let typing_env = crate::compat::typing_env_post_analysis(tcx, checkpoint.caller);
             if tcx.type_is_copy_modulo_regions(typing_env, ty) {
                 return CheckResult::ProvedByRule;
             }
@@ -68,7 +68,7 @@ impl PropertyChecker {
         if trait_name == "Sized" {
             if !ty.is_sized(
                 tcx,
-                rustc_middle::ty::TypingEnv::post_analysis(tcx, checkpoint.caller),
+                crate::compat::typing_env_post_analysis(tcx, checkpoint.caller),
             ) {
                 return CheckResult::Failed;
             }
@@ -189,7 +189,7 @@ impl PropertyChecker {
             return sz;
         }
         let typing_env =
-            rustc_middle::ty::TypingEnv::post_analysis(vm_state.tcx, vm_state.current_def_id());
+            crate::compat::typing_env_post_analysis(vm_state.tcx, vm_state.current_def_id());
         let sz = mir_utils::catch_panic(|| {
             vm_state
                 .tcx

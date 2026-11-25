@@ -214,10 +214,11 @@ fn unify_ty<'tcx>(
 ) -> Option<Mono<'tcx>> {
     // rap_info!("check {} = {}", lhs, rhs);
     infcx.probe(|_| {
-        match infcx
-            .at(cause, param_env)
-            .eq(DefineOpaqueTypes::Yes, lhs, rhs)
-        {
+        #[cfg(rapx_post_analysis_no_rigid_aliases)]
+        let unified = infcx.eq_raw(cause, param_env, DefineOpaqueTypes::Yes, lhs, rhs);
+        #[cfg(not(rapx_post_analysis_no_rigid_aliases))]
+        let unified = infcx.at(cause, param_env).eq(DefineOpaqueTypes::Yes, lhs, rhs);
+        match unified {
             Ok(_infer_ok) => {
                 // rap_trace!("[infer_ok] {} = {} : {:?}", lhs, rhs, infer_ok);
                 let mono = identity

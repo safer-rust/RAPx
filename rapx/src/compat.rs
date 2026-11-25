@@ -21,7 +21,16 @@ pub type GenericArgsRef<'tcx> = rustc_middle::ty::GenericArgs<'tcx>;
 pub use rustc_span::Spanned;
 
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::TyCtxt;
+use rustc_middle::ty::{TyCtxt, TypingEnv};
+
+/// Post-analysis typing environment across rustc nightly API versions.
+#[inline]
+pub fn typing_env_post_analysis<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> TypingEnv<'tcx> {
+    #[cfg(rapx_post_analysis_no_rigid_aliases)]
+    { TypingEnv::post_analysis_no_rigid_aliases(tcx, def_id) }
+    #[cfg(not(rapx_post_analysis_no_rigid_aliases))]
+    { TypingEnv::post_analysis(tcx, def_id) }
+}
 
 /// Type alias for the return type of `clauses_of`.
 pub type GenericPredicatesC<'tcx> = rustc_middle::ty::GenericClauses<'tcx>;

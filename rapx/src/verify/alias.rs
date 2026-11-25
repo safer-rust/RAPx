@@ -395,7 +395,7 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(vm_state: &VmExecutor<'z3, 'tcx>, checkp
                     // handled by the shared/mut-ref origin paths above.
                     let root_ty = vm_state.body().local_decls[Local::from_usize(root)].ty;
                     if !matches!(root_ty.kind(), rustc_middle::ty::TyKind::Ref(..)) {
-                        let typing_env = rustc_middle::ty::TypingEnv::post_analysis(tcx, caller);
+                        let typing_env = crate::compat::typing_env_post_analysis(tcx, caller);
                         if !tcx.type_is_copy_modulo_regions(typing_env, root_ty) {
                             return VmAliasResult::Proved;
                         }
@@ -895,7 +895,7 @@ fn check_read_memory_alias<'z3, 'tcx>(
 
     if let rustc_middle::ty::TyKind::RawPtr(pointee, _) = origin_val.ty.kind() {
         let tcx = vm_state.tcx;
-        let typing_env = rustc_middle::ty::TypingEnv::post_analysis(tcx, checkpoint.caller);
+        let typing_env = crate::compat::typing_env_post_analysis(tcx, checkpoint.caller);
         if tcx.type_is_copy_modulo_regions(typing_env, *pointee) {
             return VmAliasResult::Proved;
         }
@@ -925,7 +925,7 @@ fn check_copy_memory_alias<'z3, 'tcx>(
         return VmAliasResult::Proved;
     }
     if let rustc_middle::ty::TyKind::RawPtr(pointee, _) = origin_val.ty.kind() {
-        let typing_env = rustc_middle::ty::TypingEnv::post_analysis(vm_state.tcx, checkpoint.caller);
+        let typing_env = crate::compat::typing_env_post_analysis(vm_state.tcx, checkpoint.caller);
         if vm_state.tcx.type_is_copy_modulo_regions(typing_env, *pointee) {
             return VmAliasResult::Proved;
         }

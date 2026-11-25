@@ -36,14 +36,14 @@
 use crate::analysis::path::graph::PathGraph;
 use crate::compat::{FxHashMap, FxHashSet};
 use crate::contract::{ContractExpr, NumericPredicate, Property, PropertyArg, PropertyKind, RelOp};
-use crate::util::mir_utils;
+use crate::util::{mir_utils, resolve};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{
         AggregateKind, BasicBlock, BinOp, Body, Local, Operand, Place, ProjectionElem, Rvalue,
         StatementKind, TerminatorKind,
     },
-    ty::{TyCtxt, TyKind, TypingEnv},
+    ty::{TyCtxt, TyKind},
 };
 
 use super::{
@@ -695,7 +695,7 @@ fn exact_range_repeat<'tcx>(
                 },
             )
             .unwrap_or(false);
-        let is_next = mir_utils::resolve_callee_def_id(tcx, def_id, func)
+        let is_next = resolve::resolve_callee_def_id(tcx, def_id, func)
             .and_then(|callee| tcx.opt_item_name(callee))
             .is_some_and(|name| name.as_str() == "next");
         if !receiver_is_range || !is_next {
@@ -1297,7 +1297,7 @@ fn operand_const_i128<'tcx>(
     let Operand::Constant(constant) = operand else {
         return None;
     };
-    let typing_env = TypingEnv::post_analysis(tcx, def_id);
+    let typing_env = crate::compat::typing_env_post_analysis(tcx, def_id);
     match constant.const_.ty().kind() {
         TyKind::Bool => constant
             .const_

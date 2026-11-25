@@ -1,5 +1,6 @@
 use super::default::CallGraph;
-use crate::util::mir_utils::{dep_callee_def_id, instance_def_id, resolve_callee_instance};
+use crate::util::mir_utils::dep_callee_def_id;
+use crate::util::resolve::{self, instance_def_id, resolve_callee_instance};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{mir, ty::TyCtxt};
 
@@ -64,7 +65,7 @@ impl<'b, 'tcx> CallGraphVisitor<'b, 'tcx> {
         }
 
         // Step 2: Find all impls of the virtual function;
-        let candidates = crate::util::mir_utils::trait_impl_candidates(self.tcx, stub_def_id);
+        let candidates = resolve::all_trait_impl_methods(self.tcx, stub_def_id);
         rap_debug!(
             "[Callgraph] Implementors of {:?}: {:?}",
             stub_def_id,

@@ -19,7 +19,7 @@ use crate::vm::constructor_policy::ConstructorMirMode;
 use crate::compat::Spanned;
 use crate::def_ids::{diagnostic_api, lang_api};
 use crate::util::fn_info::{self, FnKind};
-use crate::util::mir_utils;
+use crate::util::{mir_utils, resolve};
 use crate::analysis::dataflow::call_summary::{self, CallEffect};
 use crate::def_ids;
 use crate::contract::type_invariants::constructor_result_has_invariant;
@@ -97,7 +97,7 @@ pub(super) fn exec_call<'z3, 'tcx>(
         .iter()
         .map(|a| a.node.place().map(|p| p.local))
         .collect();
-    let callee = mir_utils::resolve_callee_def_id(state.tcx, caller_def_id, func);
+    let callee = resolve::resolve_callee_def_id(state.tcx, caller_def_id, func);
     if let Some((source, owner)) = callee
         .and_then(|id| crate::analysis::alias::hazard::reconstructed_owner(state.tcx, id))
         && let Some(value) = arg_values.get(source)
@@ -323,7 +323,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 RuleFlow::Continue
             }
             CallModel::Inline(callee) => {
-                let instance = mir_utils::resolve_callee_instance(self.tcx, caller_def_id, func)
+                let instance = resolve::resolve_callee_instance(self.tcx, caller_def_id, func)
                     .or_else(|| {
                         let Operand::Constant(constant) = func else {
                             return None;

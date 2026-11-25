@@ -4,7 +4,7 @@ use crate::limit::MAX_VALUES_PER_PATH;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{Operand, ProjectionElem, TerminatorKind},
-    ty::{self, TyCtxt, TypingEnv},
+    ty::{self, TyCtxt},
 };
 use std::collections::HashSet;
 
@@ -21,7 +21,7 @@ impl<'tcx> AliasGraph<'tcx> {
                     if !self.values[value_idx].fields.contains_key(&field_idx) {
                         if self.values.len() < MAX_VALUES_PER_PATH
                         {
-                            let ty_env = TypingEnv::post_analysis(self.tcx(), self.def_id());
+                            let ty_env = crate::compat::typing_env_post_analysis(self.tcx(), self.def_id());
                             let need_drop = ty.needs_drop(self.tcx(), ty_env);
                             let may_drop = !super::types::is_not_drop(self.tcx(), ty);
                             let mut node = super::value::Value::new(self.values.len(), local);

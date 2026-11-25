@@ -181,7 +181,7 @@ impl<'tcx> PlaceInfo {
     /// Build PlaceInfo from MIR body
     pub fn build(tcx: TyCtxt<'tcx>, def_id: DefId, body: &'tcx Body<'tcx>) -> Self {
         let mut info = Self::default();
-        let ty_env = TypingEnv::post_analysis(tcx, def_id);
+        let ty_env = crate::compat::typing_env_post_analysis(tcx, def_id);
 
         // Register all locals first
         for (local, local_decl) in body.local_decls.iter_enumerated() {

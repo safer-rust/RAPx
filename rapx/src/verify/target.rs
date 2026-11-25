@@ -19,6 +19,7 @@ use crate::def_ids::{
     lang_api::{self, LangItem},
 };
 use crate::util::name::short_fn_name;
+use crate::util::resolve;
 use crate::verify::checkpoint::{
     collect_raw_ptr_deref_checkpoints, collect_static_mut_checkpoints,
 };
@@ -30,7 +31,7 @@ use rustc_hir::{
 use rustc_middle::{
     hir::nested_filter,
     mir::{Body, NonDivergingIntrinsic, StatementKind, TerminatorKind},
-    ty::{EarlyBinder, Instance, InstanceKind, TyCtxt, TypingEnv},
+    ty::{EarlyBinder, Instance, InstanceKind, TyCtxt},
 };
 use rustc_span::Span;
 use std::collections::{HashMap, HashSet};
@@ -601,12 +602,12 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         instance: Option<Instance<'tcx>>,
     ) -> FunctionTarget<'tcx> {
         let body: Option<&'tcx Body<'tcx>> = instance
-            .filter(|inst| !crate::util::mir_utils::has_unresolved_const_args(self.tcx, def_id, inst.args))
+            .filter(|inst| !resolve::has_unresolved_const_args(self.tcx, def_id, inst.args))
             .and_then(|inst| {
                 let mir = self.tcx.optimized_mir(def_id);
                 inst.try_instantiate_mir_and_normalize_erasing_regions(
                     self.tcx,
-                    rustc_middle::ty::TypingEnv::post_analysis(self.tcx, def_id),
+                    crate::compat::typing_env_post_analysis(self.tcx, def_id),
                     rustc_middle::ty::EarlyBinder::bind(self.tcx, mir.clone()),
                 )
                 .ok()
@@ -620,7 +621,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                 let TerminatorKind::Call { func, .. } = &block.terminator().kind else {
                     continue;
                 };
-                let Some(callee) = crate::util::mir_utils::resolve_callee_def_id(
+                let Some(callee) = resolve::resolve_callee_def_id(
                     self.tcx, def_id, func,
                 ) else {
                     continue;
@@ -630,7 +631,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                 {
                     continue;
                 }
-                let Some(inst) = crate::util::mir_utils::resolve_callee_instance(
+                let Some(inst) = resolve::resolve_callee_instance(
                     self.tcx, def_id, func,
                 ) else {
                     continue;
@@ -638,7 +639,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                 if !matches!(inst.def, InstanceKind::Item(_)) || inst.def_id() != callee {
                     continue;
                 }
-                if crate::util::mir_utils::has_unresolved_const_args(self.tcx, def_id, inst.args) {
+                if resolve::has_unresolved_const_args(self.tcx, def_id, inst.args) {
                     continue;
                 }
                 if let Some(previous) = instances.insert(callee, inst)
@@ -654,7 +655,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                 let mir = self.tcx.optimized_mir(callee).clone();
                 let Ok(instantiated) = inst.try_instantiate_mir_and_normalize_erasing_regions(
                     self.tcx,
-                    TypingEnv::post_analysis(self.tcx, def_id),
+                    crate::compat::typing_env_post_analysis(self.tcx, def_id),
                     EarlyBinder::bind(self.tcx, mir),
                 ) else {
                     continue;

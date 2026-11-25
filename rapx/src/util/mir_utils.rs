@@ -10,7 +10,6 @@ use rustc_hir::{
     def::DefKind,
     def_id::{DefId, LocalDefId},
 };
-use rustc_middle::ty::ShimKind;
 use rustc_middle::ty::AliasConstKind;
 use rustc_middle::{
     mir::interpret::{AllocId, GlobalAlloc},
@@ -19,16 +18,16 @@ use rustc_middle::{
         TerminatorKind,
     },
     ty::{
-        Const, ConstKind, FieldDef, GenericArgKind, GenericArgs, GenericParamDefKind,
-        Instance, InstanceKind, PseudoCanonicalInput, ScalarInt, Ty, TyCtxt, TyKind, TypeFlags,
-        TypeSuperVisitable, TypeVisitable, TypeVisitableExt, TypeVisitor, TypingEnv,
+        ConstKind, FieldDef, GenericArgKind, GenericArgs, GenericParamDefKind,
+        Instance, PseudoCanonicalInput, ScalarInt, Ty, TyCtxt, TyKind, TypeVisitableExt, TypingEnv,
     },
 };
 use rustc_span::{DUMMY_SP, Symbol};
 
-use std::{collections::HashSet, ops::ControlFlow};
+use std::collections::HashSet;
 
 use super::def_use::PlaceKey;
+use super::resolve;
 
 pub(crate) fn pointee_ty<'tcx>(ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
     match ty.kind() {
@@ -140,118 +139,6 @@ pub(crate) fn range_kind(tcx: TyCtxt<'_>, def_id: DefId) -> RangeKind {
     } else {
         RangeKind::Other
     }
-}
-
-/// Resolve a `FnDef(def_id, args)` (already `skip_binder`d by the caller) to
-/// its monomorphized [`Instance`] in `caller`'s post-analysis typing env.
-pub(crate) fn resolve_instance<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    caller: DefId,
-    def_id: DefId,
-    args: GenericArgsRef<'tcx>,
-) -> Option<Instance<'tcx>> {
-    if has_unresolved_const_args(tcx, caller, args) {
-        return None;
-    }
-    let typing_env = TypingEnv::post_analysis(tcx, caller);
-    Instance::try_resolve(tcx, typing_env, def_id, args)
-        .ok()
-        .flatten()
-}
-
-pub(crate) fn has_unresolved_const_args<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    caller: DefId,
-    args: GenericArgsRef<'tcx>,
-) -> bool {
-    if !args.has_type_flags(TypeFlags::HAS_CT_PARAM) {
-        return false;
-    }
-    struct UnboundConstParam<'tcx> {
-        tcx: TyCtxt<'tcx>,
-        caller: DefId,
-    }
-    impl<'tcx> TypeVisitor<TyCtxt<'tcx>> for UnboundConstParam<'tcx> {
-        type Result = ControlFlow<()>;
-
-        fn visit_const(&mut self, ct: Const<'tcx>) -> Self::Result {
-            if let ConstKind::Param(param) = ct.kind() {
-                let generics = self.tcx.generics_of(self.caller);
-                let index = param.index as usize;
-                if index >= generics.count() {
-                    return ControlFlow::Break(());
-                }
-                let definition = generics.param_at(index, self.tcx);
-                if !matches!(definition.kind, GenericParamDefKind::Const { .. })
-                    || definition.name != param.name
-                {
-                    return ControlFlow::Break(());
-                }
-            }
-            ct.super_visit_with(self)
-        }
-    }
-    args.visit_with(&mut UnboundConstParam { tcx, caller })
-        .is_break()
-}
-
-/// Map a resolved [`Instance`] to its concrete target `DefId` and whether the
-/// dispatch is virtual. `None` for kinds with no single target (e.g. a closure's
-/// `Clone` shim).
-pub(crate) fn instance_def_id<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    instance: Instance<'tcx>,
-) -> (Option<DefId>, bool) {
-    let mut is_virtual = false;
-    let def_id = match instance.def {
-        InstanceKind::Item(def_id) => Some(def_id),
-        InstanceKind::Intrinsic(def_id) => Some(def_id),
-        InstanceKind::Virtual(def_id, _) => {
-            is_virtual = true;
-            Some(def_id)
-        }
-        InstanceKind::Shim(shim_kind) => match shim_kind {
-            ShimKind::VTable(def_id) => Some(def_id),
-            ShimKind::Reify(def_id, _) => Some(def_id),
-            ShimKind::FnPtr(def_id, _) => Some(def_id),
-            ShimKind::ClosureOnce { call_once, .. } => Some(call_once),
-            ShimKind::ConstructCoroutineInClosure {
-                coroutine_closure_def_id,
-                ..
-            } => Some(coroutine_closure_def_id),
-            ShimKind::ThreadLocal(def_id) => Some(def_id),
-            ShimKind::DropGlue(def_id, _) => Some(def_id),
-            ShimKind::FnAddrAsPtr(def_id, _) => Some(def_id),
-            ShimKind::AsyncDropGlueCtor(def_id, _) => Some(def_id),
-            ShimKind::Clone(def_id, _) => {
-                if !tcx.is_closure_like(def_id) {
-                    Some(def_id)
-                } else {
-                    None
-                }
-            }
-            _ => todo!(),
-        },
-        #[allow(unreachable_patterns)]
-        _ => None,
-    };
-    (def_id, is_virtual)
-}
-
-/// Enumerate the concrete impl methods that could be dispatched for a trait
-/// method (the set of targets behind a trait-object / virtual call). Each
-/// returned `DefId` is an impl's override of `method_def_id`.
-pub(crate) fn trait_impl_candidates(tcx: TyCtxt<'_>, method_def_id: DefId) -> Vec<DefId> {
-    let mut candidates = Vec::new();
-    if let Some(trait_def_id) = tcx.trait_of_assoc(method_def_id) {
-        for impl_id in tcx.all_impls(trait_def_id) {
-            let impl_map = tcx.impl_item_implementor_ids(impl_id);
-            if let Some(candidate_def_id) = impl_map.get(&method_def_id) {
-                candidates.push(*candidate_def_id);
-            }
-        }
-    }
-    candidates
 }
 
 /// Build a partially-monomorphized [`Instance`] for `def_id`, replacing one
@@ -409,7 +296,7 @@ pub(crate) fn has_direct_unmodeled_generic_call<'tcx>(tcx: TyCtxt<'tcx>, def_id:
         tcx.opt_associated_item(callee)
             .and_then(|item| item.trait_container(tcx))
             .is_some()
-            && resolve_callee_def_id(tcx, def_id, func)
+            && resolve::resolve_callee_def_id(tcx, def_id, func)
                 .is_none_or(|target| !tcx.is_mir_available(target))
             && !has_function_var_effect(tcx, callee, body.local_decls[destination.local].ty)
             && !has_registered_effect(tcx, Some(callee))
@@ -446,7 +333,7 @@ fn has_unmodeled_generic_call_rec<'tcx>(
             // A resolved `Instance` may still be virtual or name the trait
             // method itself. What matters is whether the actual target has
             // executable MIR after resolving this call.
-            let target = resolve_callee_def_id(tcx, def_id, func);
+            let target = resolve::resolve_callee_def_id(tcx, def_id, func);
             if target.is_none_or(|target| !tcx.is_mir_available(target))
                 && !has_function_var_effect(tcx, callee, body.local_decls[destination.local].ty)
                 && !has_registered_effect(tcx, Some(callee))
@@ -471,48 +358,6 @@ fn has_function_var_effect(tcx: TyCtxt<'_>, callee: DefId, result_ty: Ty<'_>) ->
     tcx.trait_of_assoc(callee)
         .is_some_and(|trait_id| lang_api::is_fn_trait(tcx, trait_id))
         && supports_result(result_ty)
-}
-
-/// Resolve a call `func` operand to its monomorphized [`Instance`].
-pub(crate) fn resolve_callee_instance<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    caller: DefId,
-    func: &Operand<'tcx>,
-) -> Option<Instance<'tcx>> {
-    let Operand::Constant(c) = func else {
-        return None;
-    };
-    let TyKind::FnDef(def_id, callee_args) = c.const_.ty().kind() else {
-        return None;
-    };
-    let callee_args = callee_args.skip_binder();
-    resolve_instance(tcx, caller, *def_id, callee_args)
-}
-
-/// Return the call's `DefId`, using the selected impl method's `DefId` when
-/// available. Otherwise return the `DefId` from the operand.
-pub(crate) fn resolve_callee_def_id<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    caller: DefId,
-    func: &Operand<'tcx>,
-) -> Option<DefId> {
-    let Operand::Constant(c) = func else {
-        return None;
-    };
-    let TyKind::FnDef(def_id, callee_args) = c.const_.ty().kind() else {
-        return None;
-    };
-    let callee_def_id = *def_id;
-    let callee_args = callee_args.skip_binder();
-    let resolved = tcx
-        .opt_associated_item(callee_def_id)
-        .and_then(|item| item.trait_container(tcx))
-        .and_then(|_| resolve_instance(tcx, caller, callee_def_id, callee_args))
-        .and_then(|instance| match instance.def {
-            InstanceKind::Item(def_id) => Some(def_id),
-            _ => None,
-        });
-    Some(resolved.unwrap_or(callee_def_id))
 }
 
 /// Collect all return basic block indices for a function body.
@@ -934,7 +779,7 @@ pub fn layout_of_ty<'tcx>(
     caller: DefId,
     ty: Ty<'tcx>,
 ) -> Option<rustc_abi::TyAndLayout<'tcx, Ty<'tcx>>> {
-    let env = TypingEnv::post_analysis(tcx, caller);
+    let env = crate::compat::typing_env_post_analysis(tcx, caller);
     catch_panic(|| {
         tcx.layout_of(PseudoCanonicalInput {
             typing_env: env,
@@ -1278,7 +1123,7 @@ fn generic_param_impl_layouts<'tcx>(
     if !matches!(ty.kind(), TyKind::Param(_)) {
         return Vec::new();
     }
-    let typing_env = TypingEnv::post_analysis(tcx, caller);
+    let typing_env = crate::compat::typing_env_post_analysis(tcx, caller);
     let clauses = std::iter::successors(Some(caller), |&did| tcx.clauses_of(did).parent)
         .flat_map(|did| tcx.clauses_of(did).clauses.iter().map(|(clause, _)| clause));
     for clause in clauses {

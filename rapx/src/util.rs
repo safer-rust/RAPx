@@ -14,3 +14,4 @@ pub(crate) mod path;
 pub(crate) mod show_mir;
 pub mod source;
 pub mod span;
+pub(crate) mod resolve;

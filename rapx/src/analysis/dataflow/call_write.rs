@@ -8,7 +8,7 @@ use rustc_middle::{
         BasicBlock, Body, Local, NonDivergingIntrinsic, Operand, ProjectionElem, Rvalue,
         StatementKind, TerminatorKind,
     },
-    ty::{EarlyBinder, InstanceKind, TyCtxt, TypingEnv},
+    ty::{EarlyBinder, InstanceKind, TyCtxt},
 };
 
 use crate::analysis::dataflow::pointer_copy;
@@ -16,6 +16,7 @@ use crate::analysis::path::graph::{PathEnumerator, PathGraph};
 use crate::compat::Spanned;
 use crate::def_ids::diagnostic_api;
 use crate::util::mir_utils as helpers;
+use crate::util::resolve;
 
 /// API-specific facts needed by the MIR write tracer.
 pub(crate) trait WriteSemantics {
@@ -179,7 +180,7 @@ fn callsite_write_args_rec<'tcx>(
     if !is_trait_method && !tcx.generics_of(base).requires_monomorphization(tcx) {
         return write_args_rec(semantics, tcx, base, depth, memo);
     }
-    let Some(instance) = helpers::resolve_callee_instance(tcx, caller, func) else {
+    let Some(instance) = resolve::resolve_callee_instance(tcx, caller, func) else {
         return (!is_trait_method)
             .then(|| write_args_rec(semantics, tcx, base, depth, memo))
             .flatten();
@@ -192,7 +193,7 @@ fn callsite_write_args_rec<'tcx>(
     let body = instance
         .try_instantiate_mir_and_normalize_erasing_regions(
             tcx,
-            TypingEnv::post_analysis(tcx, caller),
+            crate::compat::typing_env_post_analysis(tcx, caller),
             EarlyBinder::bind(tcx, mir.clone()),
         )
         .ok()?;

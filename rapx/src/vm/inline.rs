@@ -4,14 +4,14 @@ use rustc_middle::{
         BasicBlock, Local, Operand, Place, ProjectionElem, Rvalue, StatementKind, Terminator,
         TerminatorKind,
     },
-    ty::{EarlyBinder, Instance, TyKind, TypingEnv},
+    ty::{EarlyBinder, Instance, TyKind},
 };
 use z3::ast::{Bool, Int};
 use z3::{SatResult, Solver};
 
 use super::state::{AllocId, MemoryContent, VmExecutor, VmValue};
 use crate::compat::{FxHashSet, Spanned};
-use crate::util::mir_utils;
+use crate::util::{mir_utils, resolve};
 use crate::limit::MAX_INLINE_DEPTH;
 
 type InlineWorkItem<'z3, 'tcx> = (VmExecutor<'z3, 'tcx>, BasicBlock, FxHashSet<BasicBlock>);
@@ -174,14 +174,14 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         }
         let instantiated_body = if let Some(instance) = instance {
             let caller_def_id = self.path_state.current_frame.current_def_id;
-            if mir_utils::has_unresolved_const_args(self.tcx, caller_def_id, instance.args) {
+            if resolve::has_unresolved_const_args(self.tcx, caller_def_id, instance.args) {
                 self.record_missing_mir(callee_def_id);
                 return true;
             }
             let body = self.tcx.optimized_mir(callee_def_id).clone();
             let Ok(body) = instance.try_instantiate_mir_and_normalize_erasing_regions(
                 self.tcx,
-                TypingEnv::post_analysis(self.tcx, caller_def_id),
+                crate::compat::typing_env_post_analysis(self.tcx, caller_def_id),
                 EarlyBinder::bind(self.tcx, body),
             ) else {
                 self.record_missing_mir(callee_def_id);
@@ -326,7 +326,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             let TerminatorKind::Call { func, .. } = &block.terminator().kind else {
                 return false;
             };
-            mir_utils::resolve_callee_def_id(self.tcx, callee_def_id, func)
+            resolve::resolve_callee_def_id(self.tcx, callee_def_id, func)
                 == Some(callee_def_id)
         });
         let mut returns = self.inline_execute_body(&pre_uninit);
@@ -774,7 +774,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     target: Some(target),
                     ..
                 } => {
-                    let callee = mir_utils::resolve_callee_def_id(
+                    let callee = resolve::resolve_callee_def_id(
                         state.tcx,
                         state.path_state.current_frame.current_def_id,
                         func,

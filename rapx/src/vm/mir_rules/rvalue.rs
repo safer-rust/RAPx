@@ -396,7 +396,7 @@ pub(crate) fn eval_unary_op<'z3, 'tcx>(
         let is_dst = mir_utils::pointee_ty(val.ty).is_some_and(|p| {
             !p.is_sized(
                 state.tcx,
-                rustc_middle::ty::TypingEnv::post_analysis(
+                crate::compat::typing_env_post_analysis(
                     state.tcx,
                     state.path_state.current_frame.current_def_id,
                 ),
@@ -558,7 +558,7 @@ pub(crate) fn eval_aggregate<'z3, 'tcx>(
         let sized = (!mir_utils::ty_has_type_param(*pointee_ty)
             && pointee_ty.is_sized(
                 state.tcx,
-                rustc_middle::ty::TypingEnv::post_analysis(
+                crate::compat::typing_env_post_analysis(
                     state.tcx,
                     state.path_state.current_frame.current_def_id,
                 ),
