@@ -151,10 +151,10 @@ impl<'tcx> LoopSensitivityAnalyzer<'tcx> {
             return 0;
         }
 
-        let mut graph = PathGraph::new(self.tcx, target.def_id);
+        let body = target.body.unwrap_or_else(|| self.tcx.optimized_mir(target.def_id));
+        let mut graph = PathGraph::new_with_body(self.tcx, target.def_id, body);
         graph.find_scc();
-        let body = self.tcx.optimized_mir(target.def_id);
-        let dependencies = LocalDependencyIndex::new(self.tcx, target.def_id);
+        let dependencies = LocalDependencyIndex::new(body);
         let component_summaries: Vec<_> = loop_components(&graph)
             .into_iter()
             .map(|component| {
@@ -1344,8 +1344,7 @@ impl LocalDependencyIndex {
     /// locals.  That is coarse but useful for wrappers such as
     /// `ptr.wrapping_add(offset)`: the resulting pointer local depends on both
     /// the base pointer and the offset local.
-    fn new(tcx: TyCtxt<'_>, def_id: DefId) -> Self {
-        let body = tcx.optimized_mir(def_id);
+    fn new(body: &Body<'_>) -> Self {
         let mut sources_by_dest: FxHashMap<Local, FxHashSet<Local>> = FxHashMap::default();
 
         for data in body.basic_blocks.iter() {
