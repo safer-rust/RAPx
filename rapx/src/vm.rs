@@ -44,8 +44,7 @@ use self::{
 pub(crate) struct VmExecutor<'z3, 'tcx> {
     /// Function being verified, retained while inlined callee frames execute.
     target_def_id: DefId,
-    /// Target MIR instantiated with a selected trait-bound implementor when an
-    /// unresolved, unmodeled generic trait call needs a concrete method target.
+    /// Target MIR instantiated for selected generic arguments, including bounded array lengths.
     /// `None` uses the original optimized MIR, even for generic functions.
     instantiated_target_body: Option<&'tcx Body<'tcx>>,
     /// Shared Z3 context.

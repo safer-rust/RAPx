@@ -383,6 +383,9 @@ pub(crate) fn emit_results_and_verdict<'tcx>(all_results: &[PropertyCheckResult<
         if limits.mono_limited {
             labels.push("mono limit");
         }
+        if limits.array_length_limited {
+            labels.push("array length limit");
+        }
         if labels.is_empty() {
             rap_info!(green, "  result: SOUND");
         } else {

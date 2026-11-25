@@ -148,6 +148,7 @@ impl<'tcx> VerifyDriver<'tcx> {
         FunctionTarget {
             def_id: read_def_id,
             body: read_target.body,
+            array_length_limited: read_target.array_length_limited,
             callee_bodies: read_target.callee_bodies.clone(),
             owner_struct_def_id: read_target.owner_struct_def_id,
             checkpoints: read_target.checkpoints.clone(),
@@ -247,7 +248,8 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
                 && target.static_mut_checks.is_empty()
                 && target.invariants.is_empty();
 
-            limits.mono_limited |= target.body.is_some();
+            limits.mono_limited |= target.body.is_some() && !target.array_length_limited;
+            limits.array_length_limited |= target.array_length_limited;
             let entry = function_verdicts.entry(target.def_id).or_default();
             entry.results.extend(all_results);
             entry.has_obligations |= !no_obligations;

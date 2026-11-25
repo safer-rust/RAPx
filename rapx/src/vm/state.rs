@@ -1633,7 +1633,18 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                         return VmValue::new(term, constant.const_.ty());
                     }
                 }
-                let int_val = mir_utils::eval_const_scalar_int(self.tcx, &constant.const_, &text);
+                let int_val = mir_utils::eval_const_scalar_int(self.tcx, &constant.const_, &text)
+                    .or_else(|| {
+                        (self.path_state.current_frame.current_def_id == self.target_def_id
+                            && self.instantiated_target_body.is_some())
+                            .then(|| match constant.const_ {
+                                rustc_middle::mir::Const::Ty(_, value) => value.try_to_target_usize(self.tcx),
+                                _ => None,
+                            })
+                            .flatten()
+                            .filter(|value| *value <= u32::MAX as u64)
+                            .map(|value| value as i128)
+                    });
                 let field_offset = int_val.is_none()
                     && mir_utils::offset_of_container(self.tcx, &constant.const_).is_some();
                 let enum_variant = mir_utils::const_destructure(self.tcx, &constant.const_)

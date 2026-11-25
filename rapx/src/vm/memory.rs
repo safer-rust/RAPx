@@ -8,7 +8,7 @@ use rustc_middle::{
 };
 use z3::{Context, Sort, ast::{Array, Ast, Bool, Int}};
 
-use super::state::{AllocId, AllocKind, Allocation, ElementTy, MemoryContent, MemoryUnit, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue};
+use super::state::{AllocId, AllocKind, Allocation, ElementTy, MemoryContent, MemoryUnit, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue, ARRAY_INDEX_MAX};
 
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     /// The key of a bounded span. Unsized slices and strings also need their length.
@@ -408,6 +408,20 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         offset: u64,
         target_ty: Ty<'tcx>,
     ) -> Option<Vec<usize>> {
+        // Resolve a concrete array element before looking for ADT or tuple fields.
+        if let TyKind::Array(element, length) = ty.kind() {
+            let size = self.size_of_ty(*element);
+            let index = offset.checked_div(size)?;
+            if index >= length.try_to_target_usize(self.tcx)? { return None; }
+            let remainder = offset % size;
+            let mut path = if remainder == 0 && *element == target_ty {
+                Vec::new()
+            } else {
+                self.field_path_at_offset(*element, remainder, target_ty)?
+            };
+            path.insert(0, index as usize);
+            return Some(path);
+        }
         let fields = match ty.kind() {
             TyKind::Adt(def, args) if !def.is_enum() && !def.is_union() => def
                 .non_enum_variant()
@@ -439,6 +453,21 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             }
         }
         found
+    }
+
+    /// Find the array view and element index for a pointer into a known array.
+    fn concrete_array_view(&self, pointer: &VmValue<'z3, 'tcx>) -> Option<(AllocId, Ty<'tcx>, usize)> {
+        let provenance = pointer.provenance.as_ref()?;
+        let pointee_ty = mir_utils::pointee_ty(pointer.ty)?;
+        let size = self.size_of_ty(pointee_ty);
+        let offset = provenance.offset.simplify().as_u64()?;
+        if size == 0 || offset % size != 0 { return None; }
+        let index = offset / size;
+        if index >= self.alloc(provenance.alloc_id).slice_len()?.simplify().as_u64()? { return None; }
+        let view_ty = self.content(provenance.alloc_id).values.keys().find_map(|(ty, path)| {
+            (path.is_empty() && matches!(ty.kind(), TyKind::Array(inner, _) if *inner == pointee_ty)).then_some(*ty)
+        })?;
+        Some((provenance.alloc_id, view_ty, index as usize))
     }
 
     fn write_indexed_allocation(
@@ -479,9 +508,13 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     .then(|| Int::from_u64(self.z3_ctx, offset / element_size))
             }),
         };
-        self.content_mut(provenance.alloc_id)
-            .values
-            .retain(|(_, path), _| path.is_empty());
+        let array_view = self.concrete_array_view(pointer).map(|(_, ty, index)| (ty, index));
+        // A concrete element write invalidates that element and any repeated initializer.
+        self.content_mut(provenance.alloc_id).values.retain(|(ty, path), _| {
+            path.is_empty() || array_view.is_some_and(|(view_ty, index)| {
+                *ty == view_ty && path.first() != Some(&index) && path.first() != Some(&ARRAY_INDEX_MAX)
+            })
+        });
         if element_size == 1
             && matches!(pointee_ty.kind(), TyKind::Uint(rustc_middle::ty::UintTy::U8))
         {
@@ -502,7 +535,10 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             }
         }
         if let Some(index) = index {
-            self.store_indexed_element(provenance.alloc_id, index, value);
+            self.store_indexed_element(provenance.alloc_id, index, value.clone());
+            if let Some((view_ty, index)) = array_view {
+                self.store_value(provenance.alloc_id, view_ty, vec![index], value);
+            }
         } else {
             let content = self.content_mut(provenance.alloc_id);
             content.indexed_elements.clear();
@@ -571,6 +607,24 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 let elem_sz = Int::from_u64(self.z3_ctx, self.size_of_ty(elem_ty).max(1));
                 let idx = self.local_value(local)?.z3_term.clone();
                 let scaled = Int::mul(self.z3_ctx, &[&idx, &elem_sz]);
+                term = Int::add(self.z3_ctx, &[&term, &scaled]);
+                if let Some(ref mut prov) = provenance {
+                    prov.offset = Int::add(self.z3_ctx, &[&prov.offset, &scaled]);
+                }
+                current_ty = elem_ty;
+                continue;
+            }
+            // `slice::first` uses a ConstantIndex projection to form its result reference.
+            if let ProjectionElem::ConstantIndex { offset, from_end, .. } = proj {
+                let (elem_ty, len) = match current_ty.kind() {
+                    TyKind::Array(elem, len) => (*elem, self.const_len_term(len)),
+                    TyKind::Slice(elem) => (*elem, self.len_from_value(self.local_value(place.local)?)?),
+                    _ => return None,
+                };
+                let index = Int::from_u64(self.z3_ctx, offset);
+                let index = if from_end { Int::sub(self.z3_ctx, &[&len, &index]) } else { index };
+                let stride = Int::from_u64(self.z3_ctx, self.size_of_ty(elem_ty).max(1));
+                let scaled = Int::mul(self.z3_ctx, &[&index, &stride]);
                 term = Int::add(self.z3_ctx, &[&term, &scaled]);
                 if let Some(ref mut prov) = provenance {
                     prov.offset = Int::add(self.z3_ctx, &[&prov.offset, &scaled]);
@@ -1465,7 +1519,11 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             self.invalidate_provenance_allocation(pointer);
             false
         } else {
-            false
+            let Some((alloc_id, view_ty, index)) = self.concrete_array_view(pointer) else { return false };
+            let mut full = vec![index];
+            full.extend(path);
+            self.store_value(alloc_id, view_ty, full, value);
+            true
         }
     }
 

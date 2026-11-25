@@ -372,12 +372,10 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             }
             CallModel::Unknown => {
                 if let Some(callee) = callee {
-                    if let Some(trait_id) = self.tcx.trait_of_assoc(callee) {
-                        if crate::def_ids::lang_api::is_fn_trait(self.tcx, trait_id) {
-                            self.apply_function_var_effect(arg_values, arg_locals, destination, callee);
-                        } else {
-                            self.record_unsupported_effect(&format!("unresolved trait dispatch: {}", self.tcx.def_path_str(callee)));
-                        }
+                    if crate::analysis::dataflow::closure::is_fn_trait_method(self.tcx, callee) {
+                        self.apply_function_var_effect(arg_values, arg_locals, destination, callee);
+                    } else if self.tcx.trait_of_assoc(callee).is_some() {
+                        self.record_unsupported_effect(&format!("unresolved trait dispatch: {}", self.tcx.def_path_str(callee)));
                     } else if !crate::def_ids::lang_api::is_panic_exit(self.tcx, callee) {
                         self.record_missing_mir(callee);
                     }

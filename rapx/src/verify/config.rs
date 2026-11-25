@@ -85,6 +85,10 @@ pub struct VerifyConfig {
     /// checked during monomorphization. Defaults to 1; 0 also selects that default.
     #[arg(long)]
     pub trait_impl_limit: Option<usize>,
+    /// Check array const generic lengths from zero through this bound.
+    /// Defaults to `ARRAY_LENGTH_LIMIT` when omitted.
+    #[arg(long)]
+    pub array_length_limit: Option<usize>,
     /// Print all contract resolutions for every verification target: each
     /// unsafe callee with its resolved contracts, and the caller's own
     /// contracts (expanded form), without running verification.
@@ -101,6 +105,10 @@ impl VerifyConfig {
     /// Effective trait implementation cap, including the default for zero or omission.
     pub(crate) fn trait_impl_limit(&self) -> usize {
         self.trait_impl_limit.filter(|n| *n != 0).unwrap_or(crate::limit::TRAIT_IMPL_LIMIT)
+    }
+
+    pub(crate) fn array_length_limit(&self) -> usize {
+        self.array_length_limit.unwrap_or(crate::limit::ARRAY_LENGTH_LIMIT)
     }
 
     /// Invariant-less runs expand constructor MIR under the default mode.

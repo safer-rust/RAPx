@@ -12,12 +12,14 @@ use crate::verify::checkpoint::CheckpointLocation;
 pub(crate) struct VerificationLimits {
     pub path_limited: bool,
     pub mono_limited: bool,
+    pub array_length_limited: bool,
 }
 
 impl VerificationLimits {
     pub(crate) fn merge(&mut self, other: Self) {
         self.path_limited |= other.path_limited;
         self.mono_limited |= other.mono_limited;
+        self.array_length_limited |= other.array_length_limited;
     }
 }
 

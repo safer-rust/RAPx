@@ -2,6 +2,7 @@ pub(crate) mod call;
 pub(crate) mod call_read;
 pub(crate) mod call_summary;
 pub(crate) mod call_write;
+pub(crate) mod closure;
 pub(crate) mod pointer_copy;
 pub(crate) mod pointer_flow;
 pub(crate) mod pointer_offset;

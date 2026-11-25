@@ -4,17 +4,17 @@ use rustc_middle::{
         BasicBlock, Local, Operand, Place, ProjectionElem, Rvalue, StatementKind, Terminator,
         TerminatorKind,
     },
-    ty::{EarlyBinder, Instance, TyKind},
+    ty::{EarlyBinder, GenericParamDefKind, Instance, TyKind},
 };
 use z3::ast::{Bool, Int};
 use z3::{SatResult, Solver};
 
 use super::state::{AllocId, MemoryContent, VmExecutor, VmValue};
-use crate::compat::{FxHashSet, Spanned};
+use crate::compat::{FxHashMap, FxHashSet, Spanned};
 use crate::util::{mir_utils, resolve};
-use crate::limit::MAX_INLINE_DEPTH;
+use crate::limit::{MAX_INLINE_BLOCK_VISITS, MAX_INLINE_DEPTH};
 
-type InlineWorkItem<'z3, 'tcx> = (VmExecutor<'z3, 'tcx>, BasicBlock, FxHashSet<BasicBlock>);
+type InlineWorkItem<'z3, 'tcx> = (VmExecutor<'z3, 'tcx>, BasicBlock, FxHashMap<BasicBlock, usize>);
 
 enum InlineStep<'z3, 'tcx> {
     Complete(bool),
@@ -23,6 +23,11 @@ enum InlineStep<'z3, 'tcx> {
 }
 
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
+    fn bounded_const_array_target(&self) -> bool {
+        self.instantiated_target_body.is_some()
+            && self.tcx.generics_of(self.target_def_id).own_params.iter()
+                .any(|param| matches!(param.kind, GenericParamDefKind::Const { .. }))
+    }
     pub(crate) fn eval_contract_method(
         &self,
         method: DefId,
@@ -490,11 +495,14 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     }
 
     fn inline_execute_single(&mut self) -> InlineStep<'z3, 'tcx> {
-        let mut visited = FxHashSet::default();
+        let mut visited = FxHashMap::default();
         let mut queue = vec![BasicBlock::from_usize(0)];
         let mut returned = false;
         while let Some(block) = queue.pop() {
-            if !visited.insert(block) {
+            let visits = visited.entry(block).or_insert(0);
+            *visits += 1;
+            if *visits > if self.bounded_const_array_target() { MAX_INLINE_BLOCK_VISITS } else { 1 } {
+                if self.bounded_const_array_target() { return InlineStep::Incomplete; }
                 continue;
             }
             let bb_data = &self.body().basic_blocks[block];
@@ -605,7 +613,10 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     ) -> Option<Vec<Self>> {
         let mut returns = Vec::new();
         while let Some((mut state, block, mut visited)) = pending.pop() {
-            if !visited.insert(block) {
+            let visits = visited.entry(block).or_insert(0);
+            *visits += 1;
+            if *visits > if state.bounded_const_array_target() { MAX_INLINE_BLOCK_VISITS } else { 1 } {
+                if state.bounded_const_array_target() { return None; }
                 continue;
             }
             let bb_data = &state.body().basic_blocks[block];

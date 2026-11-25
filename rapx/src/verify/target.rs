@@ -31,7 +31,7 @@ use rustc_hir::{
 use rustc_middle::{
     hir::nested_filter,
     mir::{Body, NonDivergingIntrinsic, StatementKind, TerminatorKind},
-    ty::{EarlyBinder, Instance, InstanceKind, TyCtxt},
+    ty::{Const, EarlyBinder, GenericArgs, GenericParamDefKind, Instance, InstanceKind, Ty, TyCtxt, TyKind, TypeFlags, TypeVisitableExt},
 };
 use rustc_span::Span;
 use std::collections::{HashMap, HashSet};
@@ -60,6 +60,15 @@ pub(crate) type FnContracts<'tcx> = Vec<Property<'tcx>>;
 /// Invariants declared on a struct.
 pub(crate) type StructInvariants<'tcx> = Vec<Property<'tcx>>;
 
+fn has_symbolic_array_length(ty: Ty<'_>) -> bool {
+    match ty.kind() {
+        TyKind::Array(elem, len) => len.has_type_flags(TypeFlags::HAS_CT_PARAM) || has_symbolic_array_length(*elem),
+        TyKind::Slice(elem) | TyKind::Ref(_, elem, _) | TyKind::RawPtr(elem, _) => has_symbolic_array_length(*elem),
+        TyKind::Tuple(fields) => fields.iter().any(has_symbolic_array_length),
+        _ => false,
+    }
+}
+
 /// Checkpoints, contracts, and invariants for one function.
 ///
 /// The collector records unsafe calls, raw pointer dereferences, and static mut
@@ -72,6 +81,9 @@ pub(crate) struct FunctionTarget<'tcx> {
 
     /// Instantiated MIR shared by path extraction, slicing, and symbolic replay.
     pub body: Option<&'tcx rustc_middle::mir::Body<'tcx>>,
+
+    /// This instance checks one length in a bounded array const generic sweep.
+    pub array_length_limited: bool,
 
     /// Unique direct generic callees instantiated in the root's parameter environment.
     pub callee_bodies: CalleeBodies<'tcx>,
@@ -732,6 +744,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         let mut target = FunctionTarget {
             def_id,
             body,
+            array_length_limited: false,
             callee_bodies,
             owner_struct_def_id,
             checkpoints,
@@ -751,11 +764,47 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         target
     }
 
-    /// Build one target per monomorphized instance when `def_id` has an
-    /// unmodeled generic trait call (monomorphization is the fallback for an
-    /// opaque call with no summary), or a single non-generic target.
+    /// Check small concrete array lengths, or monomorphize unmodeled trait calls.
     fn build_function_targets(&mut self, def_id: DefId) -> Vec<FunctionTarget<'tcx>> {
-        if !crate::util::mir_utils::has_unmodeled_generic_call(self.tcx, def_id) {
+        let unmodeled_generic_call = crate::util::mir_utils::has_unmodeled_generic_call(self.tcx, def_id);
+        if self.tcx.is_mir_available(def_id) {
+            let params: Vec<_> = std::iter::successors(Some(def_id), |id| self.tcx.generics_of(*id).parent)
+                .flat_map(|id| self.tcx.generics_of(id).own_params.iter())
+                .collect();
+            let has_type_params = params.iter().any(|param| matches!(param.kind, GenericParamDefKind::Type { .. }));
+            let const_params: Vec<_> = params.iter().copied()
+                .filter(|param| matches!(param.kind, GenericParamDefKind::Const { .. })).collect();
+            let body = self.tcx.optimized_mir(def_id);
+            if !has_type_params && let [param] = const_params.as_slice()
+                && self.tcx.type_of(param.def_id).instantiate_identity().skip_norm_wip() == self.tcx.types.usize
+                && body.local_decls.iter().any(|decl| has_symbolic_array_length(decl.ty))
+            {
+                let mut targets = Vec::new();
+                let mut needs_generic = false;
+                for length in 0..=self.config.array_length_limit() {
+                    let args = GenericArgs::for_item(self.tcx, def_id, |candidate, _| {
+                        if candidate.def_id == param.def_id {
+                            Const::from_target_usize(self.tcx, length as u64).into()
+                        } else {
+                            self.tcx.mk_param_from_def(candidate)
+                        }
+                    });
+                    let instance = Instance::new_raw(def_id, args);
+                    let mut target = self.build_function_target(def_id, Some(instance));
+                    if target.body.is_some() {
+                        target.array_length_limited = true;
+                        targets.push(target);
+                    } else {
+                        needs_generic = true;
+                    }
+                }
+                if needs_generic {
+                    targets.push(self.build_function_target(def_id, None));
+                }
+                return targets;
+            }
+        }
+        if !unmodeled_generic_call {
             return vec![self.build_function_target(def_id, None)];
         }
         let instances = crate::util::mir_utils::enumerate_mono_instances(
