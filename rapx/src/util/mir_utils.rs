@@ -20,7 +20,7 @@ use rustc_middle::{
     },
     ty::{
         ConstKind, FieldDef, GenericArgKind, GenericArgs, GenericParamDefKind,
-        Instance, PseudoCanonicalInput, ScalarInt, Ty, TyCtxt, TyKind, TypeVisitableExt, TypingEnv,
+        Instance, PseudoCanonicalInput, ScalarInt, Ty, TyCtxt, TyKind, TypeFlags, TypeVisitableExt, TypingEnv,
     },
 };
 use rustc_span::{DUMMY_SP, Symbol};
@@ -958,6 +958,16 @@ pub(crate) fn eval_array_len<'tcx>(
         return Some(scalar.to_target_usize(tcx));
     }
     None
+}
+
+/// Whether an array nested in this type has a const-generic length.
+pub(crate) fn has_symbolic_array_length(ty: Ty<'_>) -> bool {
+    match ty.kind() {
+        TyKind::Array(element, len) => len.has_type_flags(TypeFlags::HAS_CT_PARAM) || has_symbolic_array_length(*element),
+        TyKind::Slice(element) | TyKind::Ref(_, element, _) | TyKind::RawPtr(element, _) => has_symbolic_array_length(*element),
+        TyKind::Tuple(fields) => fields.iter().any(has_symbolic_array_length),
+        _ => false,
+    }
 }
 
 /// Try to extract raw bytes from a MIR constant operand that is a reference

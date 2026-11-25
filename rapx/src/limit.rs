@@ -53,7 +53,7 @@ pub(crate) const HINTED_CALLEE_BLOCK_LIMIT: usize = 128;
 /// Recursion depth bound for runtime MIR inlining; this caps Rust stack nesting.
 pub(crate) const MAX_INLINE_DEPTH: usize = 8;
 
-/// Maximum visits to one MIR block when replaying a bounded const-generic array.
+/// Fallback block visits when an instantiated array's length cannot be recovered.
 pub(crate) const MAX_INLINE_BLOCK_VISITS: usize = 8;
 
 /// Maximum number of trait impls or generic type combinations analyzed.

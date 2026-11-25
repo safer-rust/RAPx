@@ -31,7 +31,7 @@ use rustc_hir::{
 use rustc_middle::{
     hir::nested_filter,
     mir::{Body, NonDivergingIntrinsic, StatementKind, TerminatorKind},
-    ty::{Const, EarlyBinder, GenericArgs, GenericParamDefKind, Instance, InstanceKind, Ty, TyCtxt, TyKind, TypeFlags, TypeVisitableExt},
+    ty::{Const, EarlyBinder, GenericArgs, GenericParamDefKind, Instance, InstanceKind, TyCtxt},
 };
 use rustc_span::Span;
 use std::collections::{HashMap, HashSet};
@@ -47,7 +47,7 @@ use super::{
 };
 use crate::util::fn_info::get_adt_def_id_by_adt_method;
 use crate::util::mir_utils::{
-    collect_return_block_indices, has_rapx_verify_attr, is_std_crate_def_id, is_trait_unsafe,
+    collect_return_block_indices, has_rapx_verify_attr, has_symbolic_array_length, is_std_crate_def_id, is_trait_unsafe,
     resolve_impl_self_ty_def_id,
 };
 use crate::verify::checkpoint::{Checkpoint, CheckpointKind, collect_unsafe_callsites};
@@ -59,15 +59,6 @@ pub(crate) type FnContracts<'tcx> = Vec<Property<'tcx>>;
 
 /// Invariants declared on a struct.
 pub(crate) type StructInvariants<'tcx> = Vec<Property<'tcx>>;
-
-fn has_symbolic_array_length(ty: Ty<'_>) -> bool {
-    match ty.kind() {
-        TyKind::Array(elem, len) => len.has_type_flags(TypeFlags::HAS_CT_PARAM) || has_symbolic_array_length(*elem),
-        TyKind::Slice(elem) | TyKind::Ref(_, elem, _) | TyKind::RawPtr(elem, _) => has_symbolic_array_length(*elem),
-        TyKind::Tuple(fields) => fields.iter().any(has_symbolic_array_length),
-        _ => false,
-    }
-}
 
 /// Checkpoints, contracts, and invariants for one function.
 ///
@@ -766,7 +757,6 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
 
     /// Check small concrete array lengths, or monomorphize unmodeled trait calls.
     fn build_function_targets(&mut self, def_id: DefId) -> Vec<FunctionTarget<'tcx>> {
-        let unmodeled_generic_call = crate::util::mir_utils::has_unmodeled_generic_call(self.tcx, def_id);
         if self.tcx.is_mir_available(def_id) {
             let params: Vec<_> = std::iter::successors(Some(def_id), |id| self.tcx.generics_of(*id).parent)
                 .flat_map(|id| self.tcx.generics_of(id).own_params.iter())
@@ -774,10 +764,9 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
             let has_type_params = params.iter().any(|param| matches!(param.kind, GenericParamDefKind::Type { .. }));
             let const_params: Vec<_> = params.iter().copied()
                 .filter(|param| matches!(param.kind, GenericParamDefKind::Const { .. })).collect();
-            let body = self.tcx.optimized_mir(def_id);
             if !has_type_params && let [param] = const_params.as_slice()
                 && self.tcx.type_of(param.def_id).instantiate_identity().skip_norm_wip() == self.tcx.types.usize
-                && body.local_decls.iter().any(|decl| has_symbolic_array_length(decl.ty))
+                && self.tcx.optimized_mir(def_id).local_decls.iter().any(|decl| has_symbolic_array_length(decl.ty))
             {
                 let mut targets = Vec::new();
                 let mut needs_generic = false;
@@ -804,7 +793,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                 return targets;
             }
         }
-        if !unmodeled_generic_call {
+        if !crate::util::mir_utils::has_unmodeled_generic_call(self.tcx, def_id) {
             return vec![self.build_function_target(def_id, None)];
         }
         let instances = crate::util::mir_utils::enumerate_mono_instances(

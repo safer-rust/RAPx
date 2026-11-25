@@ -1,18 +1,18 @@
 use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::{
     mir::{
-        BasicBlock, Local, Operand, Place, ProjectionElem, Rvalue, StatementKind, Terminator,
+        BasicBlock, Body, Local, Operand, Place, ProjectionElem, Rvalue, StatementKind, Terminator,
         TerminatorKind,
     },
-    ty::{EarlyBinder, GenericParamDefKind, Instance, TyKind},
+    ty::{EarlyBinder, Instance, Ty, TyKind},
 };
 use z3::ast::{Bool, Int};
 use z3::{SatResult, Solver};
 
 use super::state::{AllocId, MemoryContent, VmExecutor, VmValue};
 use crate::compat::{FxHashMap, FxHashSet, Spanned};
-use crate::util::{mir_utils, resolve};
 use crate::limit::{MAX_INLINE_BLOCK_VISITS, MAX_INLINE_DEPTH};
+use crate::util::{mir_utils, resolve};
 
 type InlineWorkItem<'z3, 'tcx> = (VmExecutor<'z3, 'tcx>, BasicBlock, FxHashMap<BasicBlock, usize>);
 
@@ -23,10 +23,32 @@ enum InlineStep<'z3, 'tcx> {
 }
 
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
-    fn bounded_const_array_target(&self) -> bool {
-        self.instantiated_target_body.is_some()
-            && self.tcx.generics_of(self.target_def_id).own_params.iter()
-                .any(|param| matches!(param.kind, GenericParamDefKind::Const { .. }))
+    fn concrete_array_length(&self, ty: Ty<'tcx>) -> Option<usize> {
+        match ty.kind() {
+            TyKind::Array(element, len) => len.try_to_target_usize(self.tcx).and_then(|length| usize::try_from(length).ok())
+                .or_else(|| self.concrete_array_length(*element)),
+            TyKind::Slice(element) | TyKind::Ref(_, element, _) | TyKind::RawPtr(element, _) => self.concrete_array_length(*element),
+            TyKind::Tuple(fields) => fields.iter().filter_map(|field| self.concrete_array_length(field)).max(),
+            _ => None,
+        }
+    }
+
+    fn instantiated_array_length(&self, generic: &Body<'tcx>, instance: &Body<'tcx>) -> Option<usize> {
+        generic.local_decls.iter().zip(instance.local_decls.iter())
+            .filter(|(original, _)| mir_utils::has_symbolic_array_length(original.ty))
+            .filter_map(|(_, concrete)| self.concrete_array_length(concrete.ty))
+            .max()
+    }
+
+    fn array_inline_visit_budget(&self) -> Option<usize> {
+        let instance = self.instantiated_target_body?;
+        let generic = self.tcx.optimized_mir(self.target_def_id);
+        if !generic.local_decls.iter().any(|decl| mir_utils::has_symbolic_array_length(decl.ty)) {
+            return None;
+        }
+        // Array length only raises the fallback budget; other loops in a callee may run longer.
+        Some(self.instantiated_array_length(generic, instance)
+            .map_or(MAX_INLINE_BLOCK_VISITS, |length| length.saturating_add(1).max(MAX_INLINE_BLOCK_VISITS)))
     }
     pub(crate) fn eval_contract_method(
         &self,
@@ -495,14 +517,16 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     }
 
     fn inline_execute_single(&mut self) -> InlineStep<'z3, 'tcx> {
+        let array_limit = self.array_inline_visit_budget();
+        let visit_limit = array_limit.unwrap_or(1);
         let mut visited = FxHashMap::default();
         let mut queue = vec![BasicBlock::from_usize(0)];
         let mut returned = false;
         while let Some(block) = queue.pop() {
             let visits = visited.entry(block).or_insert(0);
             *visits += 1;
-            if *visits > if self.bounded_const_array_target() { MAX_INLINE_BLOCK_VISITS } else { 1 } {
-                if self.bounded_const_array_target() { return InlineStep::Incomplete; }
+            if *visits > visit_limit {
+                if array_limit.is_some() { return InlineStep::Incomplete; }
                 continue;
             }
             let bb_data = &self.body().basic_blocks[block];
@@ -611,12 +635,14 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         pre_uninit: &[AllocId],
         mut pending: Vec<InlineWorkItem<'z3, 'tcx>>,
     ) -> Option<Vec<Self>> {
+        let array_limit = self.array_inline_visit_budget();
+        let visit_limit = array_limit.unwrap_or(1);
         let mut returns = Vec::new();
         while let Some((mut state, block, mut visited)) = pending.pop() {
             let visits = visited.entry(block).or_insert(0);
             *visits += 1;
-            if *visits > if state.bounded_const_array_target() { MAX_INLINE_BLOCK_VISITS } else { 1 } {
-                if state.bounded_const_array_target() { return None; }
+            if *visits > visit_limit {
+                if array_limit.is_some() { return None; }
                 continue;
             }
             let bb_data = &state.body().basic_blocks[block];
