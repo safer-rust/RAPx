@@ -143,7 +143,7 @@
           {
             "tag": "ValidNum",
             "args": [
-              "new_layout.size() > old_layout.size()"
+              "new_layout.size() >= old_layout.size()"
             ]
           }
         ]
@@ -168,7 +168,7 @@
           {
             "tag": "ValidNum",
             "args": [
-              "new_layout.size() > old_layout.size()"
+              "new_layout.size() >= old_layout.size()"
             ]
           }
         ]

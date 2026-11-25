@@ -1,7 +1,7 @@
 use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::{
     mir::{
-        BasicBlock, Local, Operand, ProjectionElem, Rvalue, StatementKind, Terminator,
+        BasicBlock, Local, Operand, Place, ProjectionElem, Rvalue, StatementKind, Terminator,
         TerminatorKind,
     },
     ty::{EarlyBinder, Instance, TyKind, TypingEnv},
@@ -54,13 +54,29 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         receiver_local: Option<Local>,
     ) -> Option<Int<'z3>> {
         let mut state = self.clone();
+        let input_ty = state.tcx.fn_sig(method).skip_binder().inputs().skip_binder()[0];
+        let same_receiver = values[0].ty == input_ty
+            || matches!((values[0].ty.kind(), input_ty.kind()),
+                (TyKind::Ref(_, actual, _), TyKind::Ref(_, expected, _)) if actual == expected);
+        let receiver_ref = if same_receiver {
+            None
+        } else {
+            let TyKind::Ref(_, pointee, _) = input_ty.kind() else { return None };
+            if *pointee != values[0].ty { return None; }
+            let source = receiver_local?;
+            // Contract arguments can own the ADT while its getter expects `&self`.
+            let mut address = state.address_of_place(&Place::from(source))?;
+            address.ty = input_ty;
+            Some(address)
+        };
         let frame = state.enter_frame(method, None);
         for (index, value) in values.iter().enumerate() {
             let local = Local::from_usize(index + 1);
             state.ensure_local_allocation(local);
-            state.set_local(local, value.clone());
+            let bound = if index == 0 { receiver_ref.clone().unwrap_or_else(|| value.clone()) } else { value.clone() };
+            state.set_local(local, bound);
         }
-        if let Some(source) = receiver_local {
+        if let Some(source) = receiver_local.filter(|_| receiver_ref.is_none()) {
             for path in self.frame_field_paths(&frame, source) {
                 if let Some(value) = self.frame_field_value(&frame, source, &path) {
                     state.set_field_value(Local::from_usize(1), path, value.clone());

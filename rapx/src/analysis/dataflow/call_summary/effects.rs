@@ -16,7 +16,7 @@ use crate::def_ids::type_ids;
 use crate::{
     analysis::dataflow::pointer_copy,
     def_ids::{
-        intrinsic_api,
+        canonical_std_def_path, intrinsic_api,
         lang_api::{self, LangItem},
         nomir_api, other_api,
     },
@@ -169,8 +169,9 @@ fn lookup_builder(tcx: TyCtxt<'_>, callee: Option<DefId>) -> Option<EffectBuilde
     }
     if tcx.is_foreign_item(id) {
         validate_model_effects();
+        let path = canonical_std_def_path(tcx, id).unwrap_or_else(|| public_def_path(tcx, id));
         if let Some(builder) = ffi_effects()
-            .get(&public_def_path(tcx, id))
+            .get(&path)
             .map(model_builder)
         {
             return Some(builder);

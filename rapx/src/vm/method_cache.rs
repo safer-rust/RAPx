@@ -199,8 +199,11 @@ fn stable_local_query(tcx: TyCtxt<'_>, method: DefId) -> bool {
     stable_query_body(tcx, method)
 }
 
+/// Accept local or external method MIR only when its result is a stable read.
 pub(super) fn stable_contract_query(tcx: TyCtxt<'_>, method: DefId) -> bool {
-    if !has_method_body(tcx, method) {
+    if !matches!(tcx.def_kind(method), DefKind::Fn | DefKind::AssocFn)
+        || !tcx.is_mir_available(method)
+    {
         return false;
     }
     let sig = tcx.fn_sig(method).skip_binder();

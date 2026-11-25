@@ -35,10 +35,9 @@ Ptr2RefUninit(p: Ptr, T: Ty) { Typed(p, T) && ValidPtr(p, T, 1) && Align(p, T) &
 /// reads through the freed allocation).
 Drop(p: Ptr, T: Ty?) { ValidPtr(p, T) && Alias(p) }
 
-/// The pointer matches the `Layout` it was allocated with (`realloc`/`dealloc`
-/// require "the same layout that was used to allocate the block"): aligned to
-/// `layout.align()`, and pointing at `layout.size()` heap bytes.
-Layout(p: Ptr, layout: Ptr) { ValidNum(p % layout.align == 0) && Allocated(p, u8, layout.size, Global) }
+/// Check pointer alignment and accessible bytes required by a layout. This
+/// does not establish the allocator's full layout-fit condition.
+Layout(p: Ptr, layout: Ptr) { ValidNum(p % layout.align() == 0) && Allocated(p, u8, layout.size(), Global) }
 
 /// A pointer to an unsized value whose metadata is read (`size_of_val`,
 /// `align_of_val`, `for_value_raw`, `min_align_of_val`). Enforces non-null;

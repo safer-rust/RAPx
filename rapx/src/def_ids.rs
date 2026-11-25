@@ -19,6 +19,18 @@ fn is_std_api(tcx: TyCtxt<'_>, did: DefId) -> bool {
     matches!(tcx.crate_name(did.krate).as_str(), "core" | "alloc" | "std")
 }
 
+/// Replace a displayed std-crate import alias with the crate's metadata name.
+/// Paths without a crate prefix (such as trait impl paths) are left to callers.
+pub(crate) fn canonical_std_def_path(tcx: TyCtxt<'_>, did: DefId) -> Option<String> {
+    if !is_std_api(tcx, did) {
+        return None;
+    }
+    let displayed_crate = tcx.def_path_str(did.krate.as_mod_id());
+    let path = tcx.def_path_str(did);
+    let suffix = path.strip_prefix(&displayed_crate)?.strip_prefix("::")?;
+    Some(format!("{}::{suffix}", tcx.crate_name(did.krate)))
+}
+
 /// Whether `callee` explicitly drops the value stored in `ManuallyDrop<T>`.
 pub(crate) fn is_manually_drop_drop(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
     callee.is_some_and(|did| other_api::is_manually_drop(tcx, did))

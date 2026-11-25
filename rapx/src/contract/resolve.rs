@@ -25,13 +25,12 @@ pub(crate) fn parse_contract_expr<'tcx>(
     sp: &str,
 ) -> ContractExpr<'tcx> {
     if let Expr::MethodCall(expr_method) = expr
-        && let Some(method) = resolve_self_method(
+        && let Some(method) = resolve_method(
             tcx,
             def_id,
             &expr_method.receiver,
             &expr_method.method.to_string(),
         )
-        && method.is_local()
         && !tcx
             .opt_associated_item(method)
             .and_then(|item| item.impl_container(tcx))
@@ -88,7 +87,7 @@ pub(crate) fn parse_len_call<'tcx>(
     receiver: &Expr,
     sp: &str,
 ) -> ContractExpr<'tcx> {
-    let method = resolve_self_method(tcx, def_id, receiver, "len");
+    let method = resolve_method(tcx, def_id, receiver, "len");
     ContractExpr::Len(
         Box::new(parse_contract_expr(tcx, def_id, receiver, sp)),
         method,
@@ -104,7 +103,7 @@ pub(crate) fn parse_is_empty_call<'tcx>(
     let receiver = syn::parse_str::<Expr>(receiver_text).ok();
     let method = receiver
         .as_ref()
-        .and_then(|receiver| resolve_self_method(tcx, def_id, receiver, "is_empty"));
+        .and_then(|receiver| resolve_method(tcx, def_id, receiver, "is_empty"));
     let inner = match receiver_text {
         "return" => ContractExpr::Place(ContractPlace {
             base: PlaceBase::Return,
@@ -125,24 +124,41 @@ pub(crate) fn parse_is_empty_call<'tcx>(
     )
 }
 
-fn resolve_self_method(
+/// Resolve an inherent method only when the receiver type selects one definition.
+fn resolve_method(
     tcx: TyCtxt<'_>,
     def_id: DefId,
     receiver: &Expr,
     name: &str,
 ) -> Option<DefId> {
     if matches!(receiver, Expr::Path(path) if path.path.is_ident("self")) {
-        tcx.opt_associated_item(def_id)
+        return tcx.opt_associated_item(def_id)
             .and_then(|assoc| assoc.impl_container(tcx))
             .and_then(|impl_id| {
                 tcx.associated_items(impl_id)
                     .in_definition_order()
                     .find(|item| item.name().as_str() == name)
                     .map(|item| item.def_id)
-            })
-    } else {
-        None
+            });
     }
+    let receiver_ty = if let Expr::Path(path) = receiver
+        && let Some(index) = path.path.get_ident().and_then(|name| name.to_string().strip_prefix("Arg_")?.parse::<usize>().ok())
+        && matches!(tcx.def_kind(def_id), DefKind::Fn | DefKind::AssocFn)
+    {
+        *tcx.fn_sig(def_id).skip_binder().inputs().skip_binder().get(index)?
+    } else {
+        place::parse_expr_into_local_and_ty(tcx, def_id, receiver)?.2
+    };
+    let TyKind::Adt(adt, _) = receiver_ty.peel_refs().kind() else { return None };
+    let mut methods = tcx.inherent_impls(adt.did()).iter().filter(|impl_id| {
+        tcx.type_of(**impl_id).skip_binder() == receiver_ty.peel_refs()
+    }).flat_map(|impl_id| {
+        tcx.associated_items(*impl_id).in_definition_order()
+            .filter(move |item| item.name().as_str() == name && matches!(tcx.def_kind(item.def_id), DefKind::AssocFn))
+            .map(|item| item.def_id)
+    });
+    let method = methods.next()?;
+    methods.next().is_none().then_some(method)
 }
 
 pub(crate) fn resolve_type_name<'tcx>(

@@ -8,13 +8,12 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 
-use super::is_std_api;
+use super::canonical_std_def_path;
 
 fn matches_path(tcx: TyCtxt<'_>, did: DefId, paths: &[&str]) -> bool {
-    if !is_std_api(tcx, did) {
+    let Some(name) = canonical_std_def_path(tcx, did) else {
         return false;
-    }
-    let name = tcx.def_path_str(did);
+    };
     paths.iter().any(|path| {
         name == *path
             || path
