@@ -1410,6 +1410,12 @@ fn trait_obj_inline_limit_four() {
     );
     // All four impls inlined: `Dd`'s null pointer now fails NonNull.
     assert_function_result(&output, "multi_impl_truncated", "UNSOUND");
+    let typed = extract_block_after(&output, "function: typed_trait_argument");
+    assert_contain(typed, "result: SOUND (with mono limit)");
+    let default_method = extract_block_after(&output, "function: default_method_dispatch");
+    assert_contain(default_method, "result: SOUND (with mono limit)");
+    let unresolved_default = extract_block_after(&output, "function: unresolved_default_dispatch");
+    assert_contain(unresolved_default, "result: SOUND (with mono limit)");
 }
 
 // Generic Monomorphization

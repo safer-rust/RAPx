@@ -172,7 +172,9 @@ impl<'tcx> CallSiteIndex<'tcx> {
     }
 
     pub(crate) fn collect(&mut self) {
+        let mut expanded = FxHashSet::default();
         let mut parent_of_entry: FxHashMap<usize, usize> = FxHashMap::default();
+        expanded.insert(self.blocks[0].0);
         let mut next_block = 0;
         loop {
             let block_count = self.blocks.len();
@@ -247,24 +249,24 @@ impl<'tcx> CallSiteIndex<'tcx> {
                     continue;
                 }
                 if is_trait_method {
-                    let is_virtual = resolve::resolve_callee_instance(self.tcx, caller, func)
+                    let resolved_instance = resolve::resolve_callee_instance(self.tcx, caller, func);
+                    let is_virtual = resolved_instance
                         .is_some_and(|instance| resolve::instance_def_id(self.tcx, instance).1);
-                    // Only enumerate local traits when rustc cannot resolve the call.
-                    let unresolved = base_callee.is_local()
-                        && callee == base_callee
-                        && !self.tcx.is_mir_available(callee);
+                    // A trait default body is not selected by an unresolved call.
+                    let unresolved = callee == base_callee
+                        && !resolved_instance.is_some_and(|instance| matches!(instance.def, InstanceKind::Item(_)));
                     if is_virtual || unresolved {
-                        if !effect_modeled {
-                            let candidates: Vec<_> = resolve::all_trait_impl_methods(self.tcx, base_callee)
-                                .into_iter()
-                                .filter(|candidate| self.tcx.is_mir_available(*candidate))
-                                .collect();
-                            if candidates.len() > self.config.trait_impl_limit() {
-                                self.trait_impl_limited = true;
-                            }
-                            for candidate in candidates.into_iter().take(self.config.trait_impl_limit()) {
-                                if !self.call_chain_contains(block, candidate, &parent_of_entry) {
-                                    pending.push((block, candidate, None));
+                        if !effect_modeled && !resolve::is_compiler_callable_trait_method(self.tcx, base_callee) {
+                            if let Some(candidates) = resolve::possible_trait_impl_methods(self.tcx, caller, base_callee, func, is_virtual) {
+                                // Enumerated impls are bounded even when all currently known
+                                // candidates fit: downstream crates may add more implementations.
+                                if !candidates.is_empty() {
+                                    self.trait_impl_limited = true;
+                                }
+                                for candidate in candidates.into_iter().take(self.config.trait_impl_limit()) {
+                                    if !self.call_chain_contains(block, candidate.def_id, &parent_of_entry) {
+                                        pending.push((block, candidate.def_id, candidate.instance));
+                                    }
                                 }
                             }
                         }
@@ -357,7 +359,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                         .then(|| effective_constructor_mir_mode(self.tcx, callee, self.config.constructor_mir_mode()));
                 if crate::def_ids::intrinsic_api::is_intrinsic(self.tcx, callee)
                     || !self.tcx.is_mir_available(callee)
-                    || self.call_chain_contains(block, callee, &parent_of_entry)
+                    || expanded.contains(&callee)
                     || (crate::verify::call_summary::effects::has_registered_effect(self.tcx, Some(callee))
                         && !matches!(ctor_mode, Some(ConstructorMirMode::True)))
                     || has_slice_offset_ensures(self.tcx, callee)
@@ -391,6 +393,9 @@ impl<'tcx> CallSiteIndex<'tcx> {
             next_block = block_count;
             if pending.is_empty() {
                 break;
+            }
+            for (_, callee, _) in &pending {
+                expanded.insert(*callee);
             }
             for (block, callee, instance) in pending {
                 let entry = self.blocks.len();

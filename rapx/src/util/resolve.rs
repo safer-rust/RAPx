@@ -2,15 +2,17 @@
 //!
 //! `resolve_callee_instance` preserves compiler shims; the `DefId` helper only
 //! substitutes resolved item methods.
-//! Enumerating impl methods does not check callsite types or trait obligations;
-//! consumers must treat the result as possible targets, not a resolved call.
+//! Enumerating impl methods does not prove trait obligations; consumers must
+//! treat the result as possible targets, not a resolved call.
 
 use crate::compat::GenericArgsRef;
+use crate::def_ids::lang_api::{self, LangItem};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::Operand,
     ty::{
-        Const, ConstKind, GenericParamDefKind, Instance, InstanceKind, ShimKind, TyCtxt, TyKind,
+        fast_reject::DeepRejectCtxt, ImplPolarity,
+        Const, ConstKind, EarlyBinder, GenericParamDefKind, Instance, InstanceKind, ShimKind, TyCtxt, TyKind,
         TypeFlags, TypeSuperVisitable, TypeVisitable, TypeVisitableExt, TypeVisitor,
     },
 };
@@ -124,6 +126,90 @@ pub(crate) fn all_trait_impl_methods(tcx: TyCtxt<'_>, method_def_id: DefId) -> V
         }
     }
     candidates
+}
+
+/// An impl method or a trait default method, instantiated when an impl is known.
+#[derive(Clone, Copy)]
+pub(crate) struct TraitCallTarget<'tcx> {
+    pub def_id: DefId,
+    pub instance: Option<Instance<'tcx>>,
+}
+
+/// Possible targets of an unresolved trait call, filtered by its trait
+/// arguments. A virtual receiver has no known concrete self type, so that
+/// argument is excluded. Fast rejection may retain extra impls but must not
+/// discard a possible target. `None` means a matching impl cannot be expanded.
+pub(crate) fn possible_trait_impl_methods<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    caller: DefId,
+    method: DefId,
+    func: &Operand<'tcx>,
+    is_virtual: bool,
+) -> Option<Vec<TraitCallTarget<'tcx>>> {
+    let trait_id = tcx.trait_of_assoc(method)?;
+    let Operand::Constant(constant) = func else { return None };
+    let TyKind::FnDef(def_id, args) = constant.const_.ty().kind() else { return None };
+    if *def_id != method {
+        return None;
+    }
+    let trait_arg_count = tcx.generics_of(trait_id).count();
+    let args = args.skip_binder();
+    if args.len() < trait_arg_count {
+        return None;
+    }
+    let requested = tcx.mk_args_from_iter(args.iter().take(trait_arg_count).skip(usize::from(is_virtual)));
+    let reject = DeepRejectCtxt::relate_infer_infer(tcx);
+    let mut candidates = Vec::new();
+    for impl_id in tcx.all_impls(trait_id) {
+        if tcx.impl_polarity(impl_id) != ImplPolarity::Positive {
+            continue;
+        }
+        let implemented = tcx.impl_trait_ref(impl_id).skip_binder();
+        let available = tcx.mk_args_from_iter(implemented.args.iter().skip(usize::from(is_virtual)));
+        if !reject.args_may_unify(requested, available) {
+            continue;
+        }
+        let target = if let Some(&def_id) = tcx.impl_item_implementor_ids(impl_id).get(&method) {
+            TraitCallTarget { def_id, instance: None }
+        } else {
+            // An impl without an override calls the trait's provided method.
+            if !tcx.is_mir_available(method) {
+                return None;
+            }
+            let method_args = tcx.mk_args_from_iter(implemented.args.iter().chain(args.iter().skip(trait_arg_count)));
+            let instance = resolve_instance(tcx, impl_id, method, method_args)?;
+            if !matches!(instance.def, InstanceKind::Item(def_id) if def_id == method)
+                || instance.try_instantiate_mir_and_normalize_erasing_regions(
+                    tcx,
+                    crate::compat::typing_env_post_analysis(tcx, caller),
+                    EarlyBinder::bind(tcx, tcx.optimized_mir(method).clone()),
+                ).is_err()
+            {
+                return None;
+            }
+            TraitCallTarget { def_id: method, instance: Some(instance) }
+        };
+        if !tcx.is_mir_available(target.def_id) {
+            return None;
+        }
+        candidates.push(target);
+    }
+    // With no known implementor, the provided method is still one possible
+    // target for a future impl that does not override it.
+    if candidates.is_empty() && tcx.is_mir_available(method) {
+        candidates.push(TraitCallTarget { def_id: method, instance: None });
+    }
+    candidates.sort_by_cached_key(|target| tcx.def_path_str(target.def_id));
+    Some(candidates)
+}
+
+/// Compiler callable traits use generated call shims, not arbitrary impl MIR.
+pub(crate) fn is_compiler_callable_trait_method(tcx: TyCtxt<'_>, method: DefId) -> bool {
+    tcx.trait_of_assoc(method).is_some_and(|trait_id| {
+        lang_api::is_fn_trait(tcx, trait_id)
+            || lang_api::matches(tcx, trait_id, LangItem::FnPtrTrait)
+            || lang_api::matches(tcx, trait_id, LangItem::FnAddrTrait)
+    })
 }
 
 /// Resolve a call `func` operand to its monomorphized [`Instance`].

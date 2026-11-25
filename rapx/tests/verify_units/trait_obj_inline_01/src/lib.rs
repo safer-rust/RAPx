@@ -72,3 +72,51 @@ pub fn multi_impl_truncated(x: &dyn MultiSource) {
         require_nonnull(p);
     }
 }
+
+pub trait TypedSource<T> {
+    fn ptr(&self) -> *const u8;
+}
+
+struct Typed;
+
+impl TypedSource<u8> for Typed {
+    fn ptr(&self) -> *const u8 {
+        std::ptr::NonNull::<u8>::dangling().as_ptr()
+    }
+}
+
+impl TypedSource<u16> for Typed {
+    fn ptr(&self) -> *const u8 {
+        std::ptr::null()
+    }
+}
+
+#[rapx::verify]
+pub fn typed_trait_argument(x: &dyn TypedSource<u8>) {
+    unsafe { require_nonnull(x.ptr()) }
+}
+
+pub trait DefaultSource {
+    fn ptr(&self) -> *const u8 {
+        std::ptr::NonNull::<u8>::dangling().as_ptr()
+    }
+}
+
+struct DefaultImpl;
+impl DefaultSource for DefaultImpl {}
+
+#[rapx::verify]
+pub fn default_method_dispatch(x: &dyn DefaultSource) {
+    unsafe { require_nonnull(x.ptr()) }
+}
+
+pub trait UnresolvedDefault {
+    fn ptr(&self) -> *const u8 {
+        std::ptr::NonNull::<u8>::dangling().as_ptr()
+    }
+}
+
+#[rapx::verify]
+pub fn unresolved_default_dispatch<T: UnresolvedDefault>(x: &T) {
+    unsafe { require_nonnull(x.ptr()) }
+}

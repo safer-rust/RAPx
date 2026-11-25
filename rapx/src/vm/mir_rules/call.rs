@@ -226,6 +226,15 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 return CallModel::Summary(effects);
             }
         }
+        // A trait declaration may have default MIR, but that is not the
+        // runtime target until rustc resolves this call to an item instance.
+        if callee.is_some_and(|id| self.tcx.opt_associated_item(id)
+            .and_then(|item| item.trait_container(self.tcx)).is_some())
+            && !resolve::resolve_callee_instance(self.tcx, caller_def_id, func)
+                .is_some_and(|instance| matches!(instance.def, InstanceKind::Item(_)))
+        {
+            return CallModel::Unknown;
+        }
         if let Some(callee) = callee
             && matches!(ctor_mode, Some(ConstructorMirMode::False))
         {
@@ -363,10 +372,12 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             }
             CallModel::Unknown => {
                 if let Some(callee) = callee {
-                    if self.tcx.trait_of_assoc(callee).is_some_and(|trait_id| {
-                        crate::def_ids::lang_api::is_fn_trait(self.tcx, trait_id)
-                    }) {
-                        self.apply_function_var_effect(arg_values, arg_locals, destination, callee);
+                    if let Some(trait_id) = self.tcx.trait_of_assoc(callee) {
+                        if crate::def_ids::lang_api::is_fn_trait(self.tcx, trait_id) {
+                            self.apply_function_var_effect(arg_values, arg_locals, destination, callee);
+                        } else {
+                            self.record_unsupported_effect(&format!("unresolved trait dispatch: {}", self.tcx.def_path_str(callee)));
+                        }
                     } else if !crate::def_ids::lang_api::is_panic_exit(self.tcx, callee) {
                         self.record_missing_mir(callee);
                     }
