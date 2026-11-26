@@ -228,7 +228,10 @@ impl PropertyChecker {
         } else {
             pred.op
         };
-        let condition = vm_state.contract_relop_bool(op, &lhs, &rhs);
+        let condition = vm_state.contract_relop_bool(op, &lhs, &rhs).simplify();
+        if condition.as_bool() == Some(true) {
+            return Some(CheckResult::ProvedByRule);
+        }
         solver.push();
         vm_state.assert_all(solver);
         // A predicate argument can be a boolean, so it cannot be equated with
@@ -241,11 +244,8 @@ impl PropertyChecker {
         // its terms with mathematical division would change signed rounding.
         self.inject_int_range_axioms(vm_state, solver, checkpoint, &pred.lhs);
         self.inject_int_range_axioms(vm_state, solver, checkpoint, &pred.rhs);
-        if matches!(pred.op, RelOp::Ne) && rhs.as_u64() == Some(0) {
-            vm_state.assert_all(solver);
-        }
         solver.assert(&condition.not());
-        let r0 = solver.check();
+        let r0 = crate::vm::integer_solver::check(solver);
         let mut unknown_reason =
             (r0 == SatResult::Unknown).then(|| UnknownReason::from_solver(solver));
         let mut r = match r0 {
@@ -253,23 +253,6 @@ impl PropertyChecker {
             SatResult::Sat => Some(CheckResult::Failed),
             _ => None,
         };
-        if matches!(r, Some(CheckResult::Failed))
-            && matches!(pred.op, RelOp::Le | RelOp::Ge | RelOp::Lt | RelOp::Gt)
-        {
-            solver.pop(1);
-            solver.push();
-            vm_state.assert_all(solver);
-            self.inject_nia_axioms(vm_state, solver, checkpoint, &pred.lhs);
-            self.inject_nia_axioms(vm_state, solver, checkpoint, &pred.rhs);
-            self.inject_int_range_axioms(vm_state, solver, checkpoint, &pred.lhs);
-            self.inject_int_range_axioms(vm_state, solver, checkpoint, &pred.rhs);
-            solver.assert(&condition.not());
-            r = match solver.check() {
-                SatResult::Unsat => Some(CheckResult::ProvedBySmt),
-                SatResult::Sat => Some(CheckResult::Failed),
-                _ => r,
-            };
-        }
         solver.pop(1);
         // If NIA left the check inconclusive and the predicate involves a
         // multiplication, retry with bit-blasting (`nla2bv`), which is decidable
@@ -344,7 +327,10 @@ impl PropertyChecker {
                 let Some(term) = self.eval_contract_expr(vm_state, checkpoint, expr) else {
                     return;
                 };
-                solver.assert(&layout.in_domain(vm_state.z3_ctx, &term));
+                let domain = layout.in_domain(vm_state.z3_ctx, &term);
+                if domain.as_bool() != Some(true) {
+                    solver.assert(&domain);
+                }
             }
             ContractExpr::Binary { lhs, rhs, .. } => {
                 self.inject_int_range_axioms(vm_state, solver, checkpoint, lhs);

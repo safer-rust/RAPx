@@ -2,6 +2,7 @@
 
 use crate::contract::{BinOp, ContractExpr, ContractPlace, ContractProjection, PlaceBase, RelOp, UnaryOp};
 use crate::util::mir_utils;
+use crate::vm::integer::integer_eq;
 use crate::vm::state::VmValue;
 use crate::vm::VmExecutor;
 use rustc_middle::{mir::Local, ty::TyKind};
@@ -162,8 +163,8 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         right: &Int<'z3>,
     ) -> Bool<'z3> {
         match op {
-            RelOp::Eq => left._eq(right),
-            RelOp::Ne => left._eq(right).not(),
+            RelOp::Eq => integer_eq(left, right),
+            RelOp::Ne => integer_eq(left, right).not(),
             RelOp::Le => left.le(right),
             RelOp::Lt => left.lt(right),
             RelOp::Ge => left.ge(right),

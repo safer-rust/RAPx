@@ -166,7 +166,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             // its usize count is no longer a live local in this frame.
             solver.assert(&size.ge(&Int::from_u64(self.z3_ctx, 0)));
             solver.assert(&covered.not());
-            let proved = solver.check() == z3::SatResult::Unsat;
+            let proved = crate::vm::integer_solver::check(&solver) == z3::SatResult::Unsat;
             solver.pop(1);
             proved
         })

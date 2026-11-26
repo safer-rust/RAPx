@@ -227,7 +227,7 @@ impl PropertyChecker {
         } else {
             let reachability = z3::Solver::new(vm_state.z3_ctx);
             vm_state.assert_path_constraints(&reachability);
-            let result = reachability.check();
+            let result = crate::vm::integer_solver::check(&reachability);
             if result != z3::SatResult::Unknown {
                 reachability_cache.set(Some(result));
             }

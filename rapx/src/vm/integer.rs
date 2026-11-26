@@ -4,7 +4,7 @@
 //! including negative signed values. Bit vectors are local to bitwise operations.
 
 use z3::{
-    Context,
+    Context, DeclKind,
     ast::{Ast, BV, Bool, Int},
 };
 
@@ -65,6 +65,12 @@ impl IntLayout {
     }
 
     pub(crate) fn in_domain<'z3>(self, ctx: &'z3 Context, value: &Int<'z3>) -> Bool<'z3> {
+        let magnitude_bits = self.bits - u16::from(self.signed);
+        if natural_upper_bound(value, 5)
+            .is_some_and(|bound| magnitude_bits == 128 || bound < (1_u128 << magnitude_bits))
+        {
+            return Bool::from_bool(ctx, true);
+        }
         Bool::and(ctx, &[&value.ge(&self.min(ctx)), &value.le(&self.max(ctx))])
     }
 
@@ -73,19 +79,30 @@ impl IntLayout {
         self.normalize(ctx, &u128_term(ctx, bits)).simplify()
     }
 
-    pub(crate) fn bitnot<'z3>(self, _ctx: &'z3 Context, value: &Int<'z3>) -> Int<'z3> {
-        BV::from_int(value, u32::from(self.bits))
-            .bvnot()
-            .to_int(self.signed)
+    pub(crate) fn bitnot<'z3>(self, ctx: &'z3 Context, value: &Int<'z3>) -> Int<'z3> {
+        // The complement of a signed value is -1 - x, including for MIN.
+        let all_ones = if self.signed {
+            Int::from_i64(ctx, -1)
+        } else {
+            self.max(ctx)
+        };
+        Int::sub(ctx, &[&all_ones, &self.normalize(ctx, value)])
     }
 
     pub(crate) fn bitwise<'z3>(
         self,
-        _ctx: &'z3 Context,
+        ctx: &'z3 Context,
         op: BitwiseOp,
         lhs: &Int<'z3>,
         rhs: &Int<'z3>,
     ) -> Int<'z3> {
+        if let Some((value, mask)) = numeral_bits(rhs)
+            .map(|mask| (lhs, mask))
+            .or_else(|| numeral_bits(lhs).map(|mask| (rhs, mask)))
+            && let Some(term) = self.bitwise_constant(ctx, op, value, mask)
+        {
+            return term;
+        }
         let left = BV::from_int(lhs, u32::from(self.bits));
         let right = BV::from_int(rhs, u32::from(self.bits));
         match op {
@@ -96,14 +113,179 @@ impl IntLayout {
         .to_int(self.signed)
     }
 
+    /// Extract the bit runs selected by the constant mask using Int residues.
+    /// The run containing the sign bit uses its signed positional weights.
+    /// Masks with many runs keep the compact BV encoding.
+    fn bitwise_constant<'z3>(
+        self,
+        ctx: &'z3 Context,
+        op: BitwiseOp,
+        value: &Int<'z3>,
+        mask: u128,
+    ) -> Option<Int<'z3>> {
+        let word_mask = u128::MAX >> (128 - self.bits);
+        let mask = mask & word_mask;
+        if mask == 0 {
+            return Some(match op {
+                BitwiseOp::And => Int::from_u64(ctx, 0),
+                _ => self.normalize(ctx, value),
+            });
+        }
+        if mask == word_mask {
+            return Some(match op {
+                BitwiseOp::And => self.normalize(ctx, value),
+                BitwiseOp::Or => self.from_bits(ctx, mask),
+                BitwiseOp::Xor => self.bitnot(ctx, value),
+            });
+        }
+        if !matches!(op, BitwiseOp::And) || (mask & !(mask << 1)).count_ones() > 2 {
+            return None;
+        }
+
+        let mut runs = Vec::new();
+        let mut remaining = mask;
+        while remaining != 0 {
+            let start = remaining.trailing_zeros();
+            let width = (remaining >> start).trailing_ones();
+            let run_mask = (u128::MAX >> (128 - width)) << start;
+            remaining &= !run_mask;
+            let stride = u128_term(ctx, 1_u128 << start);
+            let end = start + width;
+            let run = if end == u32::from(self.bits) {
+                // The discarded low bits have the same residue before and
+                // after word normalization, including on signed words.
+                Int::sub(ctx, &[&self.normalize(ctx, value), &value.modulo(&stride)])
+            } else {
+                let residue = value.modulo(&u128_term(ctx, 1_u128 << end));
+                if start == 0 {
+                    residue
+                } else if width == 1 {
+                    residue.ge(&stride).ite(&stride, &Int::from_u64(ctx, 0))
+                } else {
+                    Int::sub(ctx, &[&residue, &value.modulo(&stride)])
+                }
+            };
+            runs.push(run);
+        }
+        Some(Int::add(ctx, &runs.iter().collect::<Vec<_>>()))
+    }
+
     /// A bitwise AND with a constant mask clears its trailing zero bits in
     /// every result. Return the corresponding power-of-two divisor when it
-    /// fits in `u64`; the exact BV term remains the value's numeric semantics.
+    /// fits in `u64`. This fact supplements the exact bitwise result.
     pub(crate) fn bitand_multiple<'z3>(self, ctx: &'z3 Context, mask: &Int<'z3>) -> Option<Int<'z3>> {
         let bits = mask.simplify().as_u64()?;
         let zeros = bits.trailing_zeros().min(u32::from(self.bits));
         (zeros > 0 && zeros < 64).then(|| Int::from_u64(ctx, 1_u64 << zeros))
     }
+}
+
+fn numeral_bits(value: &Int<'_>) -> Option<u128> {
+    let value = value.simplify();
+    if let Some(unsigned) = value.as_u64() {
+        return Some(u128::from(unsigned));
+    }
+    if let Some(signed) = value.as_i64() {
+        return Some(i128::from(signed) as u128);
+    }
+    if value.decl().kind() == DeclKind::ANUM {
+        return value.to_string().parse().ok();
+    }
+    None
+}
+
+fn unsigned_bitvector<'z3>(value: &Int<'z3>) -> Option<BV<'z3>> {
+    if value.decl().kind() != DeclKind::BV2INT {
+        return None;
+    }
+    value.nth_child(0)?.as_bv()
+}
+
+/// A syntactic bound for terms that are already nonnegative by construction.
+/// This keeps redundant Int inequalities out of queries over bitwise terms.
+pub(crate) fn natural_upper_bound(value: &Int<'_>, depth: usize) -> Option<u128> {
+    if depth == 0 {
+        return None;
+    }
+    let child = |index| value.nth_child(index)?.as_int();
+    match value.decl().kind() {
+        DeclKind::ANUM => value
+            .as_u64()
+            .map(u128::from)
+            .or_else(|| value.to_string().parse().ok()),
+        DeclKind::BV2INT => {
+            let width = unsigned_bitvector(value)?.get_size();
+            (1..=128).contains(&width).then(|| u128::MAX >> (128 - width))
+        }
+        DeclKind::MOD => {
+            let divisor = child(1)?;
+            let divisor = divisor.simplify();
+            if divisor.decl().kind() != DeclKind::ANUM {
+                return None;
+            }
+            divisor
+                .as_u64()
+                .map(u128::from)
+                .or_else(|| divisor.to_string().parse().ok())?
+                .checked_sub(1)
+        }
+        DeclKind::ADD | DeclKind::MUL => {
+            let product = value.decl().kind() == DeclKind::MUL;
+            (0..value.num_children()).try_fold(u128::from(product), |acc, index| {
+                let bound = natural_upper_bound(&child(index)?, depth - 1)?;
+                if product {
+                    acc.checked_mul(bound)
+                } else {
+                    acc.checked_add(bound)
+                }
+            })
+        }
+        DeclKind::ITE => {
+            let yes = natural_upper_bound(&child(1)?, depth - 1)?;
+            let no = natural_upper_bound(&child(2)?, depth - 1)?;
+            Some(yes.max(no))
+        }
+        _ => None,
+    }
+}
+
+/// A zero test on an unsigned BV-to-Int conversion is a BV equality. Keeping
+/// it in BV avoids introducing integer arithmetic for a bitwise result.
+pub(crate) fn integer_eq<'z3>(lhs: &Int<'z3>, rhs: &Int<'z3>) -> Bool<'z3> {
+    let bv = if rhs.as_u64() == Some(0) {
+        unsigned_bitvector(lhs)
+    } else if lhs.as_u64() == Some(0) {
+        unsigned_bitvector(rhs)
+    } else {
+        None
+    };
+    match bv {
+        Some(bits) => bits._eq(&BV::from_u64(bits.get_ctx(), 0, bits.get_size())),
+        None => lhs._eq(rhs),
+    }
+}
+
+/// Select a numeric conditional arm when the VM already asserted its guard.
+/// Checked arithmetic flags can appear in constraints as Boolean values or
+/// as an equality on the corresponding MIR 0/1 representation.
+pub(crate) fn known_ite_arm<'z3>(term: &Int<'z3>, assertions: &[Bool<'z3>]) -> Option<Int<'z3>> {
+    if term.decl().kind() != DeclKind::ITE {
+        return None;
+    }
+    let guard = term.nth_child(0)?.as_bool()?;
+    let not_guard = guard.not();
+    let zero = Int::from_u64(term.get_ctx(), 0);
+    let flag_is_zero = guard.ite(&Int::from_u64(term.get_ctx(), 1), &zero)._eq(&zero);
+    let flag_is_one = flag_is_zero.not();
+    for assertion in assertions.iter().rev() {
+        if *assertion == guard || *assertion == flag_is_one {
+            return term.nth_child(1)?.as_int();
+        }
+        if *assertion == not_guard || *assertion == flag_is_zero {
+            return term.nth_child(2)?.as_int();
+        }
+    }
+    None
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -137,10 +319,15 @@ pub(crate) fn overflowing_binary<'z3>(
         AddSubMul::Sub => Int::sub(ctx, &[lhs, rhs]),
         AddSubMul::Mul => Int::mul(ctx, &[lhs, rhs]),
     };
-    OverflowResult {
-        value: layout.normalize(ctx, &raw),
-        overflow: layout.in_domain(ctx, &raw).not(),
-    }
+    let overflow = layout.in_domain(ctx, &raw).not().simplify();
+    // Expose the unwrapped result on the no-overflow arm. A MIR overflow
+    // assertion can then eliminate the expensive word-size remainder.
+    let value = match overflow.as_bool() {
+        Some(false) => raw,
+        Some(true) => layout.normalize(ctx, &raw).simplify(),
+        None => overflow.ite(&layout.normalize(ctx, &raw), &raw),
+    };
+    OverflowResult { value, overflow }
 }
 
 /// Rust signed division rounds toward zero; the remainder follows the dividend.
@@ -424,6 +611,78 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn checked_result_specializes_only_with_an_asserted_flag() {
+        let ctx = Context::new(&Config::new());
+        let layout = IntLayout::new(8, false).unwrap();
+        let x = Int::new_const(&ctx, "x");
+        let one = Int::from_u64(&ctx, 1);
+        let zero = Int::from_u64(&ctx, 0);
+        let raw = Int::add(&ctx, &[&x, &one]);
+        let result = overflowing_binary(&ctx, layout, AddSubMul::Add, &x, &one);
+        assert!(known_ite_arm(&result.value, &[]).is_none());
+
+        let flag_is_zero = result.overflow.ite(&one, &zero)._eq(&zero);
+        assert_eq!(
+            known_ite_arm(&result.value, &[flag_is_zero.clone()]),
+            Some(raw.clone())
+        );
+        assert_eq!(
+            known_ite_arm(&result.value, &[flag_is_zero.not()]),
+            Some(layout.normalize(&ctx, &raw))
+        );
+    }
+
+    #[test]
+    fn constant_masks_match_bv_at_word_boundaries() {
+        let ctx = Context::new(&Config::new());
+        for width in [8, 64, 128] {
+            for signed in [false, true] {
+                let layout = IntLayout::new(width, signed).unwrap();
+                let sign_bit = 1_u128 << (width - 1);
+                for mask in [0, 1, 8, 0b10110, !7, sign_bit, sign_bit | 7, u128::MAX] {
+                    let mask_term = layout.from_bits(&ctx, mask);
+                    for value in [
+                        Int::from_i64(&ctx, -257),
+                        Int::from_u64(&ctx, 0),
+                        u128_term(&ctx, sign_bit + 1),
+                        u128_term(&ctx, u128::MAX),
+                    ] {
+                        let bits = BV::from_int(&value, u32::from(width));
+                        let mask_bits = BV::from_int(&mask_term, u32::from(width));
+                        let actual = layout.bitwise(&ctx, BitwiseOp::And, &value, &mask_term);
+                        assert_eq!(
+                            actual.simplify(),
+                            bits.bvand(&mask_bits).to_int(signed).simplify()
+                        );
+                        assert_eq!(
+                            layout.bitnot(&ctx, &value).simplify(),
+                            bits.bvnot().to_int(signed).simplify()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bitvector_zero_test_preserves_integer_equality() {
+        let ctx = Context::new(&Config::new());
+        let bits = BV::new_const(&ctx, "bits", 4);
+        let zero = Int::from_u64(&ctx, 0);
+        let solver = Solver::new(&ctx);
+        for signed in [false, true] {
+            let number = bits.to_int(signed);
+            solver.push();
+            solver.assert(&integer_eq(&number, &zero).xor(&number._eq(&zero)));
+            assert_eq!(solver.check(), SatResult::Unsat);
+            solver.pop(1);
+        }
+        assert_eq!(natural_upper_bound(&bits.to_int(false), 5), Some(15));
+        assert!(natural_upper_bound(&bits.to_int(true), 5).is_none());
+        assert!(natural_upper_bound(&bits.to_int(false).modulo(&zero), 5).is_none());
     }
 
     #[test]

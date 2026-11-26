@@ -12,7 +12,7 @@ use rustc_middle::{
     ty::{Region, Ty, TyKind, TypingEnv},
 };
 use z3::{
-    DeclKind, SatResult, Solver,
+    SatResult, Solver,
     ast::{Array, Ast, Bool, Dynamic, Int},
 };
 
@@ -1351,10 +1351,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 | rustc_middle::ty::TyKind::Bool
                 | rustc_middle::ty::TyKind::Char
         ) {
-            // An unsigned BV-to-Int term is nonnegative by construction.
-            // Reasserting the bound imports its bit-vector subterms into
-            // otherwise arithmetic-only queries.
-            if value.z3_term.decl().kind() != DeclKind::BV2INT {
+            if integer::natural_upper_bound(&value.z3_term, 5).is_none() {
                 solver.assert(&value.z3_term.ge(&zero).simplify());
             }
         }
@@ -1550,7 +1547,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             solver.assert(assertion);
         }
         solver.assert(&condition.not());
-        solver.check() == SatResult::Unsat
+        super::integer_solver::check(&solver) == SatResult::Unsat
     }
 
     fn stored_indexed_element(&self, place: &Place<'tcx>) -> Option<VmValue<'z3, 'tcx>> {
@@ -1607,9 +1604,21 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     /// Extract a VmValue from a MIR operand.
     pub(crate) fn value_of_operand(&self, operand: &Operand<'tcx>) -> VmValue<'z3, 'tcx> {
         match operand {
-            Operand::Copy(place) | Operand::Move(place) => self
-                .value_of_place(place)
-                .unwrap_or_else(|| self.unknown_value_for_place(place)),
+            Operand::Copy(place) | Operand::Move(place) => {
+                let mut value = self
+                    .value_of_place(place)
+                    .unwrap_or_else(|| self.unknown_value_for_place(place));
+                if matches!(place.projection.last(), Some(ProjectionElem::Field(field, _)) if field.as_usize() == 0)
+                    && matches!(value.ty.kind(), TyKind::Int(_) | TyKind::Uint(_))
+                    && let Some(arm) = integer::known_ite_arm(
+                        &value.z3_term,
+                        &self.path_state.constraints.assertions,
+                    )
+                {
+                    value.z3_term = arm;
+                }
+                value
+            }
             Operand::Constant(constant) => {
                 let text = format!("{:?}", constant.const_);
                 // `size_of::<T>()` / `align_of::<T>()` lower to the
