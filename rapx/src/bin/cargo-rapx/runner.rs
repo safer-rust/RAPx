@@ -6,9 +6,11 @@ pub fn run_cmd(mut cmd: Command) {
     match cmd.status() {
         Ok(status) => {
             if !status.success() {
-                // 254 is an arbitrary non-zero magic number that
-                // indicates the program is terminated by signals
-                process::exit(status.code().unwrap_or(254));
+                if let Some(code) = status.code() {
+                    process::exit(code);
+                }
+                eprintln!("RAPx: child command {cmd:?} terminated: {status}");
+                process::exit(255);
             }
         }
         Err(err) => panic!("Error in running {:?} {}.", cmd, err),
