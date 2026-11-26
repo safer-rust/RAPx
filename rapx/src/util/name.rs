@@ -211,8 +211,8 @@ fn parse_outside_signature<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> (Vec<Strin
 }
 
 /// Extract parameter names from a HIR trait method declaration and pair them
-/// with types from the function signature.  Handles `TraitFn::Required` (names
-/// directly in the declaration) and `TraitFn::Provided` (names in the body).
+/// with types from the function signature.  Read required names through the
+/// compiler query and provided names from the body.
 fn parse_trait_fn_sig<'tcx>(
     tcx: TyCtxt<'tcx>,
     def_id: DefId,
@@ -232,9 +232,11 @@ fn parse_trait_fn_sig<'tcx>(
         _ => return None,
     };
     let names: Vec<String> = match trait_fn {
-        rustc_hir::TraitFn::Required(param_names) => param_names
+        rustc_hir::TraitFn::Required(..) => tcx
+            .fn_arg_idents(def_id)
             .iter()
-            .filter_map(|opt| opt.map(|ident| ident.name.to_string()))
+            .flatten()
+            .map(|ident| ident.name.to_string())
             .collect(),
         rustc_hir::TraitFn::Provided(body_id) => {
             let body = tcx.hir_body(*body_id);
