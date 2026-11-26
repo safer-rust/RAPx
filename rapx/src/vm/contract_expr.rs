@@ -104,7 +104,9 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 let args = args.iter().map(|arg| self.eval_contract_fact_tree(arg)).collect::<Option<Vec<_>>>()?;
                 self.eval_contract_method(*method, value, local, args)
             }
-            ContractExpr::ConstParam { index, .. } => self.const_param_term(*index),
+            ContractExpr::ConstParam { index, .. } => {
+                self.const_param_input(*index).map(|(term, _)| term)
+            }
             _ => None,
         }
     }

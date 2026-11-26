@@ -551,6 +551,15 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let arg_count = self.body().arg_count;
         let local_count = self.body().local_decls.len();
 
+        // Const parameters are Rust inputs too, even though MIR has no
+        // argument local to carry their integer range.
+        let generics = self.tcx.generics_of(self.current_def_id());
+        for index in 0..generics.count() {
+            if let Some((term, ty)) = self.const_param_input(index as u32) {
+                self.constrain_integer_input(&term, ty);
+            }
+        }
+
         for local_idx in 1..local_count {
             let local = Local::from_usize(local_idx);
             if self.path_state.current_frame.local_alloc.contains_key(&local) {

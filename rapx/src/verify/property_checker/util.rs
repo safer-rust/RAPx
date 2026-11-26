@@ -165,7 +165,14 @@ impl PropertyChecker {
         vm_state.assert_all(&solver);
         solver.assert(&elem_size.ge(&one));
         solver.assert(goal_negated);
-        let r_non_zst = crate::vm::integer_solver::check(&solver);
+        let r_non_zst = if crate::vm::integer_solver::prove_symbolic_division_bound(
+            &solver,
+            goal_negated,
+        ) {
+            SatResult::Unsat
+        } else {
+            crate::vm::integer_solver::check(&solver)
+        };
         let non_zst_reason =
             (r_non_zst == SatResult::Unknown).then(|| UnknownReason::from_solver(&solver));
         solver.pop(1);

@@ -1580,7 +1580,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         Int::new_const(self.z3_ctx, name.as_str())
     }
 
-    pub(crate) fn const_param_term(&self, index: u32) -> Option<Int<'z3>> {
+    pub(crate) fn const_param_input(&self, index: u32) -> Option<(Int<'z3>, Ty<'tcx>)> {
         let generics = self.tcx.generics_of(self.path_state.current_frame.current_def_id);
         if index as usize >= generics.count() {
             return None;
@@ -1598,7 +1598,8 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             self.tcx,
             rustc_middle::ty::ParamConst::new(index, param.name),
         );
-        Some(self.symbolic_const_term(&rustc_middle::mir::Const::Ty(ty, value)))
+        let term = self.symbolic_const_term(&rustc_middle::mir::Const::Ty(ty, value));
+        Some((term, ty))
     }
 
     /// Extract a VmValue from a MIR operand.

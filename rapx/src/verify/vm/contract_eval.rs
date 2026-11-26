@@ -273,7 +273,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             }
             ContractExpr::ConstParam { index, .. } => match checkpoint {
                 Some(checkpoint) => self.instantiate_callsite_const(checkpoint, *index),
-                None => self.const_param_term(*index),
+                None => self.const_param_input(*index).map(|(term, _)| term),
             },
             _ => None,
         }

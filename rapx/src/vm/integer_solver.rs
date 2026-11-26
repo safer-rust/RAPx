@@ -2,8 +2,8 @@
 
 use crate::compat::FxHashSet;
 use z3::{
-    AstKind, DeclKind, Params, SatResult, Solver,
-    ast::{Ast, Dynamic},
+    AstKind, Config, Context, DeclKind, Params, SatResult, Solver, Tactic,
+    ast::{Ast, Bool, Dynamic},
 };
 
 /// First try a weaker formula for a proof and a stronger, specialized
@@ -96,6 +96,41 @@ pub(crate) fn check<'z3>(solver: &Solver<'z3>) -> SatResult {
         }
     }
     solver.check()
+}
+
+/// Try another arithmetic strategy on a byte bound with a symbolic divisor.
+/// Only a proof discharges the bound. The original assertions are unchanged.
+pub(crate) fn prove_symbolic_division_bound<'z3>(
+    solver: &Solver<'z3>,
+    negated_bound: &Bool<'z3>,
+) -> bool {
+    let mut pending = vec![Dynamic::from_ast(negated_bound)];
+    let mut visited = FxHashSet::default();
+    while let Some(term) = pending.pop() {
+        if term.kind() != AstKind::App || !visited.insert(term.clone()) {
+            continue;
+        }
+        if term.decl().kind() == DeclKind::IDIV
+            && term
+                .nth_child(1)
+                .is_some_and(|divisor| divisor.kind() != AstKind::Numeral)
+        {
+            // Keep the alternate strategy's search independent of earlier
+            // queries in the VM context.
+            let ctx = Context::new(&Config::new());
+            let arithmetic = Tactic::new(&ctx, "smt").solver();
+            let mut params = Params::new(&ctx);
+            params.set_u32("arith.solver", 2);
+            params.set_u32("rlimit", 3_000_000);
+            arithmetic.set_params(&params);
+            for assertion in solver.get_assertions() {
+                arithmetic.assert(&assertion.translate(&ctx));
+            }
+            return arithmetic.check() == SatResult::Unsat;
+        }
+        pending.extend(term.children());
+    }
+    false
 }
 
 #[cfg(test)]
