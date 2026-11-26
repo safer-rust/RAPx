@@ -15,7 +15,7 @@ use crate::def_ids::type_ids;
 use crate::compat::Spanned;
 use crate::util::mir_utils;
 use crate::analysis::dataflow::call_summary::{
-    BoundedArithmeticOp, CallEffect, OverflowOp, SimdArithOp, SimdCmpOp,
+    BoundedArithmeticOp, CallEffect, OverflowOp, SimdArithOp, SimdCmpOp, SimdReduceOp,
 };
 
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
@@ -167,6 +167,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             }
             effect @ (CallEffect::SimdCompare { .. }
             | CallEffect::SimdArithmetic { .. }
+            | CallEffect::SimdReduce { .. }
             | CallEffect::SimdOpaque
             | CallEffect::SimdSplat { .. }
             | CallEffect::SimdExtract { .. }
@@ -490,7 +491,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         }
     }
 
-    fn simd_lane_type(&self, ty: Ty<'tcx>) -> Option<(Ty<'tcx>, usize)> {
+    pub(crate) fn simd_lane_type(&self, ty: Ty<'tcx>) -> Option<(Ty<'tcx>, usize)> {
         let TyKind::Adt(def, args) = ty.kind() else {
             return None;
         };
@@ -545,6 +546,13 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let ty = self.body().local_decls[dest].ty;
         let term = self.fresh_int("intrinsic_result");
         self.path_state.inline.opaque_intrinsic_terms.insert(term.clone());
+        self.set_local(dest, VmValue::new(term, ty));
+    }
+
+    fn set_unresolved_memory_result(&mut self, dest: Local) {
+        let ty = self.body().local_decls[dest].ty;
+        let term = self.fresh_int("unresolved_memory_result");
+        self.path_state.inline.unresolved_memory_terms.insert(term.clone());
         self.set_local(dest, VmValue::new(term, ty));
     }
 

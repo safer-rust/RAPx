@@ -11,6 +11,7 @@ use serde::Deserialize;
 
 use super::{
     BoundedArithmeticOp, CallEffect, CallEffectSummary, OverflowOp, SimdArithOp, SimdCmpOp,
+    SimdReduceOp,
 };
 use crate::def_ids::type_ids;
 use crate::{
@@ -125,6 +126,17 @@ fn effect_builder(name: &str) -> Option<EffectBuilder> {
         "eff_simd_mul" => Some(eff_simd_mul),
         "eff_simd_ne" => Some(eff_simd_ne),
         "eff_simd_opaque" => Some(eff_simd_opaque),
+        "eff_simd_reduce_add_ordered" => Some(eff_simd_reduce_add_ordered),
+        "eff_simd_reduce_add_unordered" => Some(eff_simd_reduce_add_unordered),
+        "eff_simd_reduce_mul_ordered" => Some(eff_simd_reduce_mul_ordered),
+        "eff_simd_reduce_mul_unordered" => Some(eff_simd_reduce_mul_unordered),
+        "eff_simd_reduce_and" => Some(eff_simd_reduce_and),
+        "eff_simd_reduce_or" => Some(eff_simd_reduce_or),
+        "eff_simd_reduce_xor" => Some(eff_simd_reduce_xor),
+        "eff_simd_reduce_max" => Some(eff_simd_reduce_max),
+        "eff_simd_reduce_min" => Some(eff_simd_reduce_min),
+        "eff_simd_reduce_all" => Some(eff_simd_reduce_all),
+        "eff_simd_reduce_any" => Some(eff_simd_reduce_any),
         "eff_simd_saturating_add" => Some(eff_simd_saturating_add),
         "eff_simd_saturating_sub" => Some(eff_simd_saturating_sub),
         "eff_simd_scatter" => Some(eff_simd_scatter),
@@ -315,6 +327,30 @@ fn eff_simd_bitmask(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
 fn eff_simd_opaque(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::SimdOpaque]
 }
+
+macro_rules! simd_reduce_effect {
+    ($name:ident, $op:ident, $initial:expr) => {
+        fn $name(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+            vec![CallEffect::SimdReduce {
+                vector_arg: 0,
+                initial_arg: $initial,
+                op: SimdReduceOp::$op,
+            }]
+        }
+    };
+}
+
+simd_reduce_effect!(eff_simd_reduce_add_ordered, Add, Some(1));
+simd_reduce_effect!(eff_simd_reduce_add_unordered, Add, None);
+simd_reduce_effect!(eff_simd_reduce_mul_ordered, Mul, Some(1));
+simd_reduce_effect!(eff_simd_reduce_mul_unordered, Mul, None);
+simd_reduce_effect!(eff_simd_reduce_and, And, None);
+simd_reduce_effect!(eff_simd_reduce_or, Or, None);
+simd_reduce_effect!(eff_simd_reduce_xor, Xor, None);
+simd_reduce_effect!(eff_simd_reduce_max, Max, None);
+simd_reduce_effect!(eff_simd_reduce_min, Min, None);
+simd_reduce_effect!(eff_simd_reduce_all, All, None);
+simd_reduce_effect!(eff_simd_reduce_any, Any, None);
 
 fn eff_simd_splat(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
     vec![CallEffect::SimdSplat { arg: 0 }]

@@ -88,10 +88,9 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             .and_then(Self::non_trivial_align)
     }
 
-    /// Assert the Euclidean division identity and its bounds for `Div`/`Rem`:
-    ///   `lhs == (lhs/rhs)*rhs + lhs%rhs  ∧  lhs%rhs >= 0`
-    /// plus `(lhs/rhs)*rhs <= lhs` directly for robustness.  This lets later
-    /// checks prove `(x/N)*N <= x` and `x%N >= 0`.
+    /// Conditional facts for the legacy nonnegative mathematical division path.
+    /// Typed machine division uses the integer kernel instead: signed Rust
+    /// division cannot inherit Euclidean or nonnegative remainder assumptions.
     ///
     /// `term` must be the *same* Z3 term returned by `eval_binary_op` (the
     /// quotient), not a separate `lhs.div(rhs)` call, so the axiom constrains
@@ -111,25 +110,40 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let rem = lhs.rem(rhs);
         let mul_term = Int::mul(self.z3_ctx, &[quot, rhs]);
         let sum_term = Int::add(self.z3_ctx, &[&mul_term, &rem]);
-        self.path_state.constraints.assertions.push(lhs._eq(&sum_term));
         let zero = Int::from_u64(self.z3_ctx, 0);
-        self.path_state.constraints.assertions.push(rem.ge(&zero));
-        if rhs.as_u64().is_none_or(|r| r >= 1) {
-            self.path_state.constraints.assertions.push(rem.lt(rhs));
-        }
-        self.path_state.constraints.assertions.push(rem.le(lhs));
-        self.path_state.constraints.assertions.push(quot.ge(&zero));
+        let positive_divisor = rhs.gt(&zero);
+        let nonnegative_division = Bool::and(self.z3_ctx, &[&lhs.ge(&zero), &positive_divisor]);
+        self.path_state.constraints
+            .assertions
+            .push(positive_divisor.implies(&lhs._eq(&sum_term)));
+        self.path_state.constraints
+            .assertions
+            .push(positive_divisor.implies(&rem.ge(&zero)));
+        self.path_state.constraints
+            .assertions
+            .push(positive_divisor.implies(&rem.lt(rhs)));
+        self.path_state.constraints
+            .assertions
+            .push(nonnegative_division.implies(&rem.le(lhs)));
+        self.path_state.constraints
+            .assertions
+            .push(nonnegative_division.implies(&quot.ge(&zero)));
         // Direct inequality: (lhs/rhs)*rhs <= lhs
-        self.path_state.constraints.assertions.push(mul_term.le(lhs));
+        self.path_state.constraints
+            .assertions
+            .push(positive_divisor.implies(&mul_term.le(lhs)));
         if rhs.as_u64().is_some_and(|r| r >= 2) {
             let one = Int::from_u64(self.z3_ctx, 1);
             let qp1 = Int::add(self.z3_ctx, &[quot, &one]);
-            self.path_state.constraints
-                .assertions
-                .push(lhs.ge(&one).implies(&qp1.le(lhs)));
+            self.path_state.constraints.assertions.push(
+                Bool::and(self.z3_ctx, &[&nonnegative_division, &lhs.ge(&one)])
+                    .implies(&qp1.le(lhs)),
+            );
         } else {
             if rhs.as_u64().is_some_and(|r| r >= 1) {
-                self.path_state.constraints.assertions.push(quot.le(lhs));
+                self.path_state.constraints
+                    .assertions
+                    .push(nonnegative_division.implies(&quot.le(lhs)));
             }
         }
     }
@@ -332,66 +346,25 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         &self,
         ty: Ty<'tcx>,
     ) -> Option<(Int<'z3>, Int<'z3>, Int<'z3>, bool)> {
-        let signed = match ty.kind() {
-            TyKind::Int(_) => true,
-            TyKind::Uint(_) => false,
-            _ => return None,
-        };
-        let (_, bytes) = mir_utils::type_layout(self.tcx, self.path_state.current_frame.current_def_id, ty)?;
-        let bits = bytes.checked_mul(8)?;
-        if bits == 0 || bits > 128 {
-            return None;
-        }
-        let unsigned_max = if bits == 128 {
-            u128::MAX
-        } else {
-            (1u128 << bits) - 1
-        };
-        let modulus = Int::add(
-            self.z3_ctx,
-            &[
-                &Int::from_str(self.z3_ctx, &unsigned_max.to_string())?,
-                &Int::from_u64(self.z3_ctx, 1),
-            ],
-        );
-        let (min, max) = if signed {
-            let signed_max = if bits == 128 {
-                i128::MAX
-            } else {
-                (1i128 << (bits - 1)) - 1
-            };
-            let signed_min = if bits == 128 {
-                i128::MIN
-            } else {
-                -(1i128 << (bits - 1))
-            };
-            (signed_min.to_string(), signed_max.to_string())
-        } else {
-            ("0".to_string(), unsigned_max.to_string())
-        };
+        let layout = self.integer_layout(ty)?;
         Some((
-            Int::from_str(self.z3_ctx, &min)?,
-            Int::from_str(self.z3_ctx, &max)?,
-            modulus,
-            signed,
+            layout.min(self.z3_ctx),
+            layout.max(self.z3_ctx),
+            layout.modulus(self.z3_ctx),
+            layout.signed,
         ))
     }
 
     pub(crate) fn wrap_integer_term(&self, ty: Ty<'tcx>, raw: &Int<'z3>) -> Int<'z3> {
-        let Some((min, max, modulus, signed)) = self.integer_limits(ty) else {
+        let Some(layout) = self.integer_layout(ty) else {
             return raw.clone();
         };
+        let min = layout.min(self.z3_ctx);
+        let max = layout.max(self.z3_ctx);
         if self.path_implies(&raw.ge(&min)) && self.path_implies(&raw.le(&max)) {
             return raw.clone();
         }
-        let wrapped = raw.modulo(&modulus);
-        if signed {
-            wrapped
-                .gt(&max)
-                .ite(&Int::sub(self.z3_ctx, &[&wrapped, &modulus]), &wrapped)
-        } else {
-            wrapped
-        }
+        layout.normalize(self.z3_ctx, raw)
     }
 
     /// Compute the preserved alignment when doing `base + offset * stride`.
@@ -402,6 +375,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     fn compute_pointer_add_align(
         &self,
         base: &VmValue<'z3, 'tcx>,
+        offset: &VmValue<'z3, 'tcx>,
         stride_bytes: u64,
     ) -> Option<Int<'z3>> {
         let base_align = base.facts.align_n.as_ref()?;
@@ -412,6 +386,12 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         // `sizeof_T % align_T == 0` layout constraint).
         let n = base_align.simplify().as_u64()?;
         if stride_bytes > 0 && stride_bytes.is_multiple_of(n) {
+            return Some(base_align.clone());
+        }
+        if let Some(offset_align) = offset.facts.align_n.as_ref()
+            && let Some(m) = offset_align.simplify().as_u64()
+            && m.checked_mul(stride_bytes).is_some_and(|multiple| multiple.is_multiple_of(n))
+        {
             return Some(base_align.clone());
         }
         None
@@ -534,7 +514,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             offset_kind,
         });
         let align_n = match stride {
-            Some(s) => self.compute_pointer_add_align(base, s),
+            Some(s) => self.compute_pointer_add_align(base, offset, s),
             None => base.facts.align_n.clone(),
         };
         let val = VmValue {

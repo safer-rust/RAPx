@@ -5,7 +5,9 @@ use rustc_middle::{
     mir::{AggregateKind, BinOp, CastKind, Operand, Place, ProjectionElem, UnOp},
     ty::{Ty, TyKind},
 };
-use z3::ast::{Ast, Int};
+use z3::ast::{Ast, Bool, Int};
+
+use super::super::integer::{AddSubMul, BitwiseOp, overflowing_binary, signed_div_rem};
 
 use super::super::state::{
     AllocId, Provenance, ARRAY_INDEX_MAX, ValueFacts, ValueSource, VmExecutor, VmValue,
@@ -69,8 +71,7 @@ pub(crate) fn eval_ref<'z3, 'tcx>(
             .iter()
             .any(|p| matches!(p.kind(), rustc_middle::mir::ProjectionElem::Deref));
         let src_ty = state.body().local_decls[place.local].ty;
-        let is_raw_ptr_source =
-            matches!(src_ty.kind(), rustc_middle::ty::TyKind::RawPtr(_, _));
+        let is_raw_ptr_source = matches!(src_ty.kind(), rustc_middle::ty::TyKind::RawPtr(_, _));
         let is_slice_ref = if let rustc_middle::ty::TyKind::Ref(_, inner, _) = dest_ty.kind() {
             matches!(inner.kind(), rustc_middle::ty::TyKind::Slice(_))
         } else {
@@ -265,6 +266,109 @@ pub(crate) fn eval_binary_op<'z3, 'tcx>(
             .cloned()
             .expect("pointer arithmetic must assign its destination");
     }
+    if matches!(
+        op,
+        BinOp::AddWithOverflow | BinOp::SubWithOverflow | BinOp::MulWithOverflow
+    ) {
+        // Checked MIR arithmetic returns a machine result and a separate flag.
+        // Neither field carries the operands' pointer or comparison metadata.
+        if let TyKind::Tuple(fields) = dest_ty.kind()
+            && fields.len() == 2
+            && fields[0] == lhs.ty
+            && fields[0] == rhs.ty
+            && fields[1] == state.tcx.types.bool
+            && dest_place.projection.is_empty()
+            && let Some(layout) = state.integer_layout(fields[0])
+        {
+            let arithmetic = match op {
+                BinOp::AddWithOverflow => AddSubMul::Add,
+                BinOp::SubWithOverflow => AddSubMul::Sub,
+                _ => AddSubMul::Mul,
+            };
+            let result =
+                overflowing_binary(state.z3_ctx, layout, arithmetic, &lhs.z3_term, &rhs.z3_term);
+            let mut value = VmValue::new(result.value, fields[0]);
+            value.facts.init = true;
+            if matches!(op, BinOp::AddWithOverflow | BinOp::SubWithOverflow)
+                && !matches!(&rhs.source, ValueSource::ExposedAddress { .. })
+                && matches!(&lhs.source, ValueSource::ExposedAddress { .. })
+            {
+                value.source = lhs.source.clone();
+            }
+            state.set_field_value(dest_place.local, vec![0], value);
+            let mut overflow = VmValue::new(
+                result.overflow.ite(
+                    &Int::from_u64(state.z3_ctx, 1),
+                    &Int::from_u64(state.z3_ctx, 0),
+                ),
+                fields[1],
+            );
+            overflow.facts.init = true;
+            state.set_field_value(dest_place.local, vec![1], overflow);
+            // Like ordinary tuples, the aggregate has a placeholder term;
+            // only its scalar fields participate in numeric reasoning.
+            return VmValue::new(state.fresh_int("overflow_tuple"), dest_ty);
+        }
+        state.record_unsupported("checked arithmetic destination");
+        return VmValue::new(state.fresh_int("checked_arithmetic"), dest_ty);
+    }
+    if let Some(layout) = state.integer_layout(lhs.ty) {
+        let term = match op {
+            BinOp::Div | BinOp::Rem => {
+                let zero = Int::from_u64(state.z3_ctx, 0);
+                let nonzero = rhs.z3_term._eq(&zero).not();
+                let defined = if layout.signed {
+                    let overflow = Bool::and(
+                        state.z3_ctx,
+                        &[
+                            &lhs.z3_term._eq(&layout.min(state.z3_ctx)),
+                            &rhs.z3_term._eq(&Int::from_i64(state.z3_ctx, -1)),
+                        ],
+                    );
+                    Bool::and(state.z3_ctx, &[&nonzero, &overflow.not()])
+                } else {
+                    nonzero
+                };
+                let (quotient, remainder) = if layout.signed {
+                    signed_div_rem(state.z3_ctx, &lhs.z3_term, &rhs.z3_term)
+                } else {
+                    (
+                        lhs.z3_term.div(&rhs.z3_term),
+                        lhs.z3_term.modulo(&rhs.z3_term),
+                    )
+                };
+                let normal = if op == BinOp::Div {
+                    quotient
+                } else {
+                    remainder
+                };
+                // MIR Assert constrains the normal successor. Do not silently
+                // assume definedness here if that control-flow fact is absent.
+                Some(defined.ite(&normal, &state.fresh_int("undefined_div_rem")))
+            }
+            BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor => {
+                let operation = match op {
+                    BinOp::BitAnd => BitwiseOp::And,
+                    BinOp::BitOr => BitwiseOp::Or,
+                    _ => BitwiseOp::Xor,
+                };
+                Some(layout.bitwise(state.z3_ctx, operation, &lhs.z3_term, &rhs.z3_term))
+            }
+            _ => None,
+        };
+        if let Some(term) = term {
+            let mut value = VmValue::new(term.simplify(), dest_ty);
+            if op == BinOp::BitAnd {
+                value.facts.align_n = layout.bitand_multiple(state.z3_ctx, &rhs.z3_term);
+            }
+            value.source = ValueSource::BinaryOp {
+                lhs: mir_utils::operand_place(lhs_op),
+                rhs: mir_utils::operand_place(rhs_op),
+                op,
+            };
+            return value;
+        }
+    }
     let lhs_concrete =
         matches!(op, BinOp::Shl | BinOp::ShlUnchecked).then(|| lhs.z3_term.simplify());
     let raw_term = if let Some(value) = lhs_concrete.as_ref().and_then(|term| {
@@ -319,43 +423,6 @@ pub(crate) fn eval_binary_op<'z3, 'tcx>(
     if matches!(op, BinOp::Div | BinOp::Rem) {
         state.emit_div_rem_axioms(op, &term, &lhs.z3_term, &rhs.z3_term);
     }
-    // For tuple-returning binary ops (AddWithOverflow, MulWithOverflow),
-    // populate the field values so that .0 (result) and .1 (overflow flag)
-    // are properly tracked. Without this, field access falls through to
-    // cloning the base term, mixing the arithmetic result with the boolean
-    // overflow flag and corrupting path conditions.
-    if let rustc_middle::ty::TyKind::Tuple(fields) = dest_ty.kind()
-        && fields.len() == 2
-    {
-        let result_val = VmValue {
-            z3_term: term.clone(),
-            ty: fields[0],
-            provenance: provenance.clone(),
-            facts: invariants.clone(),
-            source: ValueSource::None,
-        };
-        state.set_field_value(dest_place.local, vec![0], result_val);
-        let overflow_term = if matches!(op, BinOp::MulWithOverflow)
-            && (lhs.z3_term.simplify().as_u64().is_some_and(|n| n <= 1)
-                || rhs.z3_term.simplify().as_u64().is_some_and(|n| n <= 1))
-        {
-            Int::from_u64(state.z3_ctx, 0)
-        } else if matches!(
-            op,
-            BinOp::AddWithOverflow | BinOp::SubWithOverflow | BinOp::MulWithOverflow
-        ) && let Some((min, max, _, _)) = state.integer_limits(lhs.ty)
-        {
-            let overflow = z3::ast::Bool::or(state.z3_ctx, &[&term.lt(&min), &term.gt(&max)]);
-            overflow.ite(
-                &Int::from_u64(state.z3_ctx, 1),
-                &Int::from_u64(state.z3_ctx, 0),
-            )
-        } else {
-            state.fresh_int("overflow_flag")
-        };
-        let overflow_val = VmValue::new(overflow_term, fields[1]);
-        state.set_field_value(dest_place.local, vec![1], overflow_val);
-    }
     VmValue {
         z3_term: term,
         ty: dest_ty,
@@ -385,6 +452,16 @@ pub(crate) fn eval_unary_op<'z3, 'tcx>(
 ) -> VmValue<'z3, 'tcx> {
     let dest_ty = dest_place.ty(state.body(), state.tcx).ty;
     let val = state.value_of_operand(operand);
+    if let Some(layout) = state.integer_layout(val.ty) {
+        let term = match op {
+            UnOp::Not => Some(layout.bitnot(state.z3_ctx, &val.z3_term)),
+            UnOp::Neg => Some(layout.normalize(state.z3_ctx, &(-val.z3_term.clone()))),
+            _ => None,
+        };
+        if let Some(term) = term {
+            return VmValue::new(term.simplify(), dest_ty);
+        }
+    }
     let is_bool = matches!(val.ty.kind(), rustc_middle::ty::TyKind::Bool);
     let mut result_ty = dest_ty;
     let term = if matches!(op, UnOp::PtrMetadata) {
@@ -433,7 +510,11 @@ fn pointer_free_bits<'z3, 'tcx>(state: &VmExecutor<'z3, 'tcx>, ty: Ty<'tcx>, dep
     match ty.kind() {
         TyKind::Int(_) | TyKind::Uint(_) | TyKind::Bool | TyKind::Char => true,
         TyKind::Adt(adt, args) => adt.all_fields().all(|field| {
-            pointer_free_bits(state, mir_utils::field_ty(state.tcx, field, args), depth + 1)
+            pointer_free_bits(
+                state,
+                mir_utils::field_ty(state.tcx, field, args),
+                depth + 1,
+            )
         }),
         TyKind::Tuple(fields) => fields
             .iter()
@@ -459,6 +540,27 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
         src_val
     };
     let src_ty = src_val.ty;
+    if matches!(kind, CastKind::IntToInt)
+        && matches!(src_ty.kind(), TyKind::Int(_) | TyKind::Uint(_))
+        && let Some(layout) = state.integer_layout(cast_ty)
+    {
+        // An identity cast must not introduce a fresh modular expression.
+        // Widening also preserves the value when its source representation is
+        // known to be in range. Other casts keep the destination-width bits.
+        let preserves_value = src_ty == cast_ty
+            || state.integer_layout(src_ty).is_some_and(|source| {
+                let widening = (source.signed == layout.signed && source.bits <= layout.bits)
+                    || (!source.signed && layout.signed && source.bits < layout.bits);
+                widening && state.path_implies(&source.in_domain(state.z3_ctx, &src_val.z3_term))
+            });
+        let term = if preserves_value {
+            src_val.z3_term
+        } else {
+            layout.normalize(state.z3_ctx, &src_val.z3_term).simplify()
+        };
+        // An integer cast does not establish pointer validity or provenance.
+        return VmValue::new(term, cast_ty);
+    }
     let nonnull_to_raw = matches!(kind, CastKind::Transmute)
         && matches!(cast_ty.kind(), TyKind::RawPtr(..))
         && matches!(src_ty.kind(), TyKind::Adt(adt, _) if type_ids::is_std_nonnull(adt.did()));
@@ -487,7 +589,7 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
     // own term.
     let term = mir_utils::extract_local(operand)
         .and_then(|l| state.field_value(l, &[0]).map(|v| v.z3_term.clone()))
-        .unwrap_or(src_val.z3_term);
+        .unwrap_or_else(|| src_val.z3_term.clone());
     // A pointer→integer cast (`ptr as usize`) yields the (always non-negative)
     // address. Record this as a *path condition* so downstream pointer
     // arithmetic (e.g. `align_up` in a free-list allocator) can discharge
@@ -512,7 +614,7 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
     VmValue {
         z3_term: term,
         ty: cast_ty,
-        provenance: src_val.provenance,
+        provenance: src_val.provenance.clone(),
         facts: ValueFacts {
             non_null: src_val.facts.non_null || nonnull_to_raw,
             dangling: src_val.facts.dangling || numeric_transmute,
@@ -527,6 +629,20 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
             },
         },
         source: match &src_val.source {
+            _ if src_is_ptr && dest_is_int => src_val
+                .provenance
+                .as_ref()
+                .map(|provenance| ValueSource::ExposedAddress {
+                    address: src_val.z3_term.clone(),
+                    provenance: provenance.clone(),
+                })
+                .unwrap_or(ValueSource::None),
+            ValueSource::ExposedAddress { .. }
+                if matches!(src_ty.kind(), TyKind::Uint(_) | TyKind::Int(_))
+                    && matches!(cast_ty.kind(), TyKind::RawPtr(..)) =>
+            {
+                src_val.source.clone()
+            }
             ValueSource::SliceLen(len)
                 if src_is_ptr
                     && mir_utils::pointee_ty(cast_ty)
@@ -862,7 +978,6 @@ pub(crate) fn eval_discriminant<'z3, 'tcx>(
     value
 }
 
-
 pub(crate) fn eval_copy_for_deref<'z3, 'tcx>(
     state: &mut VmExecutor<'z3, 'tcx>,
     dest_place: &Place<'tcx>,
@@ -1141,7 +1256,6 @@ pub(crate) fn eval_wrap_unsafe_binder<'z3, 'tcx>(
     value.ty = dest_ty;
     value
 }
-
 
 pub(crate) fn eval_reborrow<'z3, 'tcx>(
     state: &mut VmExecutor<'z3, 'tcx>,

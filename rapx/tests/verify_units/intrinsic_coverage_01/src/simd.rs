@@ -78,6 +78,26 @@ pub fn more_simd_intrinsics(value: i8) {
 }
 
 #[rapx::verify]
+pub fn simd_reduce_invalid_mask_unsound() {
+    let invalid = I8x16([1; 16]);
+    let _ = unsafe { intrinsics::simd::simd_reduce_all(invalid) };
+}
+
+#[rapx::verify]
+pub fn simd_reduce_add_flow() {
+    let zero = I8x16([0; 16]);
+    let one = unsafe { intrinsics::simd::simd_reduce_add_ordered(zero, 1_i8) };
+    unsafe { need_nonzero(one as u32) };
+}
+
+#[rapx::verify]
+pub fn simd_reduce_add_zero_unsound() {
+    let zero = I8x16([0; 16]);
+    let result = unsafe { intrinsics::simd::simd_reduce_add_ordered(zero, 0_i8) };
+    unsafe { need_nonzero(result as u32) };
+}
+
+#[rapx::verify]
 pub fn simd_reduction_intrinsics(value: i8) {
     let lanes = I8x16([value; 16]);
     let leading = unsafe { intrinsics::simd::simd_ctlz(lanes) };

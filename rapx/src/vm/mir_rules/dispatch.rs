@@ -1,6 +1,6 @@
 use rustc_middle::mir::{
-    BasicBlock, Local, NonDivergingIntrinsic, Place, Rvalue, Statement, StatementKind, Terminator,
-    TerminatorKind,
+    AssertKind, BasicBlock, Local, NonDivergingIntrinsic, Place, Rvalue, Statement, StatementKind,
+    Terminator, TerminatorKind,
 };
 
 use super::super::state::{VmExecutor, VmValue};
@@ -215,8 +215,17 @@ terminator_registry!(state, term, successor;
         call::exec_call(state, func, args, Local::from_usize(0), caller_id)
     },
     rule_switch_int: SwitchInt { discr, targets } => terminator::exec_switch_int(state, discr, targets, successor),
-    rule_assert: Assert { cond, expected, .. } => {
-        terminator::exec_assert(state, cond, *expected);
+    rule_assert: Assert { cond, expected, msg, .. } => {
+        // These compiler-inserted checks express obligations of the pointer
+        // operation being verified. Keep them out of its path premises.
+        if !matches!(
+            &**msg,
+            AssertKind::MisalignedPointerDereference { .. }
+                | AssertKind::NullPointerDereference
+                | AssertKind::NullReferenceConstructed
+        ) {
+            terminator::exec_assert(state, cond, *expected);
+        }
         RuleFlow::Continue
     },
     rule_drop: Drop { place, .. } => {

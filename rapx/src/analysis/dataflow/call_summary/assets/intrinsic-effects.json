@@ -405,37 +405,37 @@
     "effect": "eff_simd_opaque"
   },
   "simd_reduce_add_ordered": {
-    "effect": "eff_opaque_return"
+    "effect": "eff_simd_reduce_add_ordered"
   },
   "simd_reduce_add_unordered": {
-    "effect": "eff_opaque_return"
+    "effect": "eff_simd_reduce_add_unordered"
   },
   "simd_reduce_mul_ordered": {
-    "effect": "eff_opaque_return"
+    "effect": "eff_simd_reduce_mul_ordered"
   },
   "simd_reduce_mul_unordered": {
-    "effect": "eff_opaque_return"
+    "effect": "eff_simd_reduce_mul_unordered"
   },
   "simd_reduce_max": {
-    "effect": "eff_opaque_return"
+    "effect": "eff_simd_reduce_max"
   },
   "simd_reduce_min": {
-    "effect": "eff_opaque_return"
+    "effect": "eff_simd_reduce_min"
   },
   "simd_reduce_and": {
-    "effect": "eff_opaque_return"
+    "effect": "eff_simd_reduce_and"
   },
   "simd_reduce_or": {
-    "effect": "eff_opaque_return"
+    "effect": "eff_simd_reduce_or"
   },
   "simd_reduce_xor": {
-    "effect": "eff_opaque_return"
+    "effect": "eff_simd_reduce_xor"
   },
   "simd_reduce_all": {
-    "effect": "eff_opaque_return"
+    "effect": "eff_simd_reduce_all"
   },
   "simd_reduce_any": {
-    "effect": "eff_opaque_return"
+    "effect": "eff_simd_reduce_any"
   },
   "simd_arith_offset": {
     "effect": "eff_simd_opaque"

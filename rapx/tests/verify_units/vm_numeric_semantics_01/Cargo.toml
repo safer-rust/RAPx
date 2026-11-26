@@ -1,0 +1,6 @@
+[package]
+name = "vm_numeric_semantics_01"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]

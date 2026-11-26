@@ -38,6 +38,77 @@ fn vm_state_precision_01() {
 }
 
 #[test]
+fn vm_numeric_semantics_01() {
+    let modes: [&[&str]; 2] = [
+        CMD_VERIFY_TARGETED,
+        &["verify", "--mode", "targeted", "--", "--release"],
+    ];
+    for mode in modes {
+        let output = run_with_args("verify_units/vm_numeric_semantics_01", mode);
+        assert_result_counts(&output, [23, 23, 0]);
+        for case in [
+            "add_overflow_tuple",
+            "sub_overflow_tuple",
+            "mul_overflow_tuple",
+            "add_no_overflow",
+            "signed_add_overflow",
+            "signed_sub_overflow",
+            "signed_mul_overflow",
+            "narrow_cast",
+            "sign_extend",
+            "zero_extend",
+            "signed_to_unsigned",
+            "unsigned_to_signed",
+            "signed_div_rem",
+            "negative_divisor",
+            "positive_dividend",
+            "unsigned_not",
+            "signed_not",
+            "boolean_not",
+            "arbitrary_mask",
+            "bitwise_or_xor",
+            "signed_ctlz",
+            "signed_cttz",
+            "address_subtraction",
+        ] {
+            let function = format!("sound_{case}");
+            assert_function_result(&output, &function, "SOUND");
+            let block = extract_block_after(&output, &format!("function: {function}"));
+            assert_contain(block, "ValidNum | Proved");
+            let function = format!("unsound_{case}");
+            assert_function_result(&output, &function, "UNSOUND");
+            let block = extract_block_after(&output, &format!("function: {function}"));
+            assert_contain(block, "ValidNum | Failed");
+        }
+    }
+}
+
+#[test]
+fn vm_integer_domain_01() {
+    let modes: [&[&str]; 2] = [
+        CMD_VERIFY_TARGETED,
+        &["verify", "--mode", "targeted", "--", "--release"],
+    ];
+    for mode in modes {
+        let output = run_with_args("verify_units/vm_integer_domain_01", mode);
+        assert_result_counts(&output, [5, 2, 0]);
+        for case in [
+            "sound_unsigned_parameter",
+            "sound_signed_parameter",
+            "sound_struct_field",
+            "sound_reference_parameter",
+            "sound_overwritten_parameter",
+        ] {
+            assert_function_result(&output, case, "SOUND");
+        }
+        for case in ["unsound_unsigned_maximum", "unsound_signed_negative"] {
+            assert_function_result(&output, case, "UNSOUND");
+            assert_unproved(&output, case, "ValidNum");
+        }
+    }
+}
+
+#[test]
 fn pointer_slot_origin_cases() {
     let output = run_with_args("verify_units/pointer_slot_origin_01", CMD_VERIFY_TARGETED);
     assert_result_counts(&output, [27, 19, 6]);
@@ -267,7 +338,6 @@ sound_tests! {
 }
 
 #[test]
-#[ignore = "TODO: unsigned bitwise not rejects the safe u8 branch"]
 fn validptr_sound_07() {
     let output = run_with_args("verify_units/validptr_sound_07", CMD_VERIFY_TARGETED);
     assert_function_result(&output, "sound_unsigned_not_selects_in_bounds_read", "SOUND");
@@ -304,14 +374,12 @@ unsound_weak_tests! {
 }
 
 #[test]
-#[ignore = "TODO: signed division prunes a feasible out-of-bounds read"]
 fn validptr_unsound_08() {
     let output = run_with_args("verify_units/validptr_unsound_08", CMD_VERIFY_TARGETED);
     assert_unproved(&output, "unsound_signed_division_selects_out_of_bounds_read", "ValidPtr");
 }
 
 #[test]
-#[ignore = "TODO: unsigned bitwise not prunes a feasible out-of-bounds read"]
 fn validptr_unsound_09() {
     let output = run_with_args("verify_units/validptr_unsound_09", CMD_VERIFY_TARGETED);
     assert_unproved(&output, "unsound_unsigned_not_selects_out_of_bounds_read", "ValidPtr");
@@ -982,6 +1050,9 @@ fn intrinsic_coverage_01() {
         "simd::simd_intrinsics",
         "simd::simd_pointer_intrinsics",
         "simd::simd_reduction_intrinsics",
+        "simd::simd_reduce_invalid_mask_unsound",
+        "simd::simd_reduce_add_flow",
+        "simd::simd_reduce_add_zero_unsound",
     ] {
         assert_contain(&output, &format!("function: {name}"));
     }
@@ -1001,6 +1072,14 @@ fn intrinsic_coverage_01() {
     assert_contain(simd, "simd_bitmask");
     let more_simd = extract_block_after(&output, "function: simd::more_simd_intrinsics");
     assert_contain(more_simd, "simd_reduce_add_unordered");
+    let invalid_mask = extract_block_after(&output, "function: simd::simd_reduce_invalid_mask_unsound");
+    assert_contain(invalid_mask, "ValidNum | Failed");
+    assert_contain(invalid_mask, "result: UNSOUND");
+    let reduction_flow = extract_block_after(&output, "function: simd::simd_reduce_add_flow");
+    assert_contain(reduction_flow, "result: SOUND");
+    let reduction_zero = extract_block_after(&output, "function: simd::simd_reduce_add_zero_unsound");
+    assert_contain(reduction_zero, "ValidNum | Failed");
+    assert_contain(reduction_zero, "result: UNSOUND");
     let float_simd = extract_block_after(&output, "function: simd::simd_float_intrinsics");
     assert_contain(float_simd, "simd_flog");
     let pointer_simd = extract_block_after(&output, "function: simd::simd_pointer_intrinsics");

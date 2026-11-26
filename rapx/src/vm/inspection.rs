@@ -46,6 +46,10 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         &self.path_state.inline.opaque_intrinsic_terms
     }
 
+    pub(crate) fn unresolved_memory_terms(&self) -> &FxHashSet<Int<'z3>> {
+        &self.path_state.inline.unresolved_memory_terms
+    }
+
     pub(crate) fn has_matching_index_access_fact(&self, slice_val: &VmValue<'z3, 'tcx>, index_val: &VmValue<'z3, 'tcx>) -> bool {
         let Some(slice_len) = self.slice_len_from_value(slice_val) else { return false };
         index_val.facts.index_bounds.as_deref().is_some_and(|facts| facts.iter().any(|fact| {

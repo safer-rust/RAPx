@@ -11,7 +11,7 @@ use crate::util::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
 use crate::contract::{ContractExpr, PlaceBase, Property, PropertyArg, PropertyKind, is_static_lifetime_ident, type_invariants::has_owner_ptr_invariant};
 use crate::verify::report::{CheckResult, UnknownReason};
-use crate::vm::state::{AllocId, OffsetKind, VmExecutor, VmValue};
+use crate::vm::state::{AllocId, OffsetKind, ValueSource, VmExecutor, VmValue};
 use rustc_hash::FxHashSet;
 use rustc_middle::{mir::{Local, Operand, Rvalue, StatementKind}, ty::TyKind};
 use z3::{
@@ -46,6 +46,75 @@ fn multiple_of(term: &Int<'_>, divisor: u64, depth: usize) -> bool {
                 && child(2).is_some_and(|c| multiple_of(&c, divisor, depth - 1))
         }
         _ => false,
+    }
+}
+
+/// Remove operations that cannot change the residue modulo a concrete
+/// alignment. In particular, a machine wrap modulo 2^N can introduce a
+/// large and unnecessary coefficient into a much smaller alignment query.
+fn alignment_operand<'z3>(term: &Int<'z3>, align: u64, depth: usize) -> Int<'z3> {
+    if depth == 0 {
+        return term.clone();
+    }
+
+    let ctx = term.get_ctx();
+    if multiple_of(term, align, depth) {
+        return Int::from_u64(ctx, 0);
+    }
+    let child = |i| term.nth_child(i).and_then(|ast| ast.as_int());
+    match term.decl().kind() {
+        DeclKind::MOD => {
+            if let (Some(value), Some(modulus)) = (child(0), child(1)) {
+                let modulus = modulus.simplify();
+                let divisor = Int::from_u64(ctx, align);
+                if modulus.gt(&Int::from_u64(ctx, 0)).simplify().as_bool() == Some(true)
+                    && modulus.modulo(&divisor).simplify().as_u64() == Some(0)
+                {
+                    return alignment_operand(&value, align, depth - 1);
+                }
+            }
+        }
+        DeclKind::ADD | DeclKind::SUB | DeclKind::UMINUS => {
+            let terms: Option<Vec<_>> = (0..term.num_children())
+                .map(|i| child(i).map(|value| alignment_operand(&value, align, depth - 1)))
+                .collect();
+            if let Some(terms) = terms {
+                let terms: Vec<_> = terms.iter().collect();
+                return match term.decl().kind() {
+                    DeclKind::ADD => Int::add(ctx, &terms),
+                    DeclKind::SUB => Int::sub(ctx, &terms),
+                    _ => -terms[0].clone(),
+                };
+            }
+        }
+        _ => {}
+    }
+    term.clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use z3::{Config, Context};
+
+    #[test]
+    fn alignment_rewrite_only_removes_compatible_moduli() {
+        let ctx = Context::new(&Config::new());
+        let x = Int::new_const(&ctx, "x");
+        let four = Int::from_u64(&ctx, 4);
+        let offset = Int::mul(&ctx, &[&four, &Int::new_const(&ctx, "n")]);
+        let sum = Int::add(&ctx, &[&x, &offset]);
+        let word_modulus = Int::from_str(&ctx, "18446744073709551616").unwrap();
+        let wrapped = sum.modulo(&word_modulus);
+        assert_eq!(alignment_operand(&wrapped, 4, 16).simplify(), x);
+
+        let remainder = sum.modulo(&Int::from_u64(&ctx, 6));
+        assert_eq!(alignment_operand(&remainder, 4, 16), remainder);
+        let undefined_remainder = sum.modulo(&Int::from_u64(&ctx, 0));
+        assert_eq!(
+            alignment_operand(&undefined_remainder, 4, 16),
+            undefined_remainder
+        );
     }
 }
 
@@ -231,16 +300,32 @@ impl PropertyChecker {
                 local.assert(&alloc.base.rem(&alloc.align)._eq(&zero));
             }
         }
+        if let ValueSource::ExposedAddress { address, provenance } = &value.source {
+            let alloc = vm_state.alloc(provenance.alloc_id);
+            local.assert(&address._eq(&Int::add(vm_state.z3_ctx, &[&alloc.base, &provenance.offset])));
+            local.assert(&alloc.base.ge(&zero));
+            local.assert(&alloc.base._eq(&zero).not());
+            if alloc.align.simplify().as_u64() != Some(1) {
+                local.assert(&alloc.base.rem(&alloc.align)._eq(&zero));
+            }
+        }
         if let Some(known_align) = value.facts.align_n.as_ref() {
             local.assert(&value.z3_term.rem(known_align)._eq(&zero));
         }
         vm_state.assert_path_constraints(&local);
-        let negated = value.z3_term.rem(&align_term)._eq(&zero).not();
+        let operand = match align_term.simplify().as_u64() {
+            Some(required) if required.is_power_of_two() => {
+                alignment_operand(&value.z3_term.simplify(), required, 16).simplify()
+            }
+            _ => value.z3_term.clone(),
+        };
+        let negated = operand.rem(&align_term)._eq(&zero).not();
         local.assert(&negated);
         let r = match local.check() {
             z3::SatResult::Sat
                 if value.provenance.is_none()
                     && value.facts.align_n.is_none()
+                    && !matches!(&value.source, ValueSource::ExposedAddress { .. })
                     && value.z3_term.simplify().as_u64().is_none() =>
             {
                 CheckResult::Unknown(UnknownReason::Unimplemented)

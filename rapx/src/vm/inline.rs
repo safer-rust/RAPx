@@ -7,7 +7,7 @@ use rustc_middle::{
     ty::{EarlyBinder, Instance, Ty, TyKind},
 };
 use z3::ast::{Bool, Int};
-use z3::{SatResult, Solver};
+use z3::{Params, SatResult, Solver, Tactic};
 
 use super::state::{AllocId, MemoryContent, VmExecutor, VmValue};
 use crate::compat::{FxHashMap, FxHashSet, Spanned};
@@ -20,6 +20,28 @@ enum InlineStep<'z3, 'tcx> {
     Complete(bool),
     Fork(Vec<InlineWorkItem<'z3, 'tcx>>),
     Incomplete,
+}
+
+fn check_inline_return(solver: &Solver<'_>) -> SatResult {
+    let ctx = solver.get_context();
+    // Eliminate constant-modulus terms before linear arithmetic solving. The
+    // default solver still handles goals outside this strategy's work budget.
+    let arithmetic = Tactic::new(ctx, "simplify")
+        .and_then(&Tactic::new(ctx, "propagate-values"))
+        .and_then(&Tactic::new(ctx, "solve-eqs"))
+        .and_then(&Tactic::new(ctx, "purify-arith"))
+        .and_then(&Tactic::new(ctx, "qflia"))
+        .solver();
+    let mut params = Params::new(ctx);
+    params.set_u32("rlimit", 150_000);
+    arithmetic.set_params(&params);
+    for assertion in solver.get_assertions() {
+        arithmetic.assert(&assertion);
+    }
+    match arithmetic.check() {
+        SatResult::Unknown => solver.check(),
+        result => result,
+    }
 }
 
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
@@ -659,7 +681,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     } else {
                         state.assert_all(&solver);
                     }
-                    match solver.check() {
+                    match check_inline_return(&solver) {
                         SatResult::Sat => returns.push(state),
                         SatResult::Unknown => return None,
                         SatResult::Unsat => {}

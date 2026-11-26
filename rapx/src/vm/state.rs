@@ -19,6 +19,7 @@ use z3::{
 use crate::compat::{FxHashMap, FxHashSet};
 pub(crate) use super::VmExecutor;
 use super::diagnostics::ActiveMirLocation;
+use super::integer::{self, IntLayout};
 use crate::util::def_use::PlaceKey;
 
 /// Reserved field-path index for array repeats, not a valid element bound.
@@ -434,6 +435,9 @@ pub(crate) struct InlineCtx<'z3, 'tcx> {
     pub pending_states: Vec<Box<VmExecutor<'z3, 'tcx>>>,
     /// Terms returned by intrinsic effects the VM could not model.
     pub opaque_intrinsic_terms: FxHashSet<Int<'z3>>,
+    /// Results of a modeled intrinsic whose input aggregate was not resolved
+    /// from memory (for example, a symbolic array element of a SIMD vector).
+    pub unresolved_memory_terms: FxHashSet<Int<'z3>>,
     /// Caller referent local for each inlined callee argument.
     pub arg_referents: Vec<Option<Local>>,
     /// `(caller local, field path, value)` writes replayed after frame restoration.
@@ -459,6 +463,13 @@ pub(crate) enum ValueSource<'z3> {
     SliceLen(Int<'z3>),
     /// A compile-time `offset_of!` field offset.
     FieldOffset,
+    /// Numeric address derived from an exposed pointer. This records the
+    /// original pointer relation for address-only checks; it does not grant
+    /// provenance to a pointer reconstructed from integer arithmetic.
+    ExposedAddress {
+        address: Int<'z3>,
+        provenance: Provenance<'z3>,
+    },
     /// Borrow of a field path rooted at a caller local.
     FieldBorrow {
         base: Local,
@@ -718,56 +729,38 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         }
     }
 
+    /// Resolve integer width from the analysis target, including `isize`/`usize`.
+    pub(crate) fn integer_layout(&self, ty: Ty<'tcx>) -> Option<IntLayout> {
+        let signed = match ty.kind() {
+            TyKind::Int(_) => true,
+            TyKind::Uint(_) => false,
+            _ => return None,
+        };
+        let (_, bytes) = mir_utils::type_layout(self.tcx, self.path_state.current_frame.current_def_id, ty)?;
+        let bits = u16::try_from(bytes.checked_mul(8)?).ok()?;
+        IntLayout::new(bits, signed)
+    }
+
     pub(crate) fn scalar_bits_term(&self, ty: Ty<'tcx>, bits: u128) -> Option<Int<'z3>> {
+        if matches!(ty.kind(), TyKind::Int(_) | TyKind::Uint(_)) {
+            return self
+                .integer_layout(ty)
+                .map(|layout| layout.from_bits(self.z3_ctx, bits));
+        }
         let bytes = self.size_of_ty(ty);
         if bytes == 0 || bytes > 16 {
             return None;
         }
         if bytes == 16 {
-            let two_64 = Int::add(
-                self.z3_ctx,
-                &[
-                    &Int::from_u64(self.z3_ctx, u64::MAX),
-                    &Int::from_u64(self.z3_ctx, 1),
-                ],
-            );
-            let unsigned = self.u128_term(bits);
-            return if matches!(ty.kind(), TyKind::Int(_)) && bits >> 127 != 0 {
-                let two_128 = Int::mul(self.z3_ctx, &[&two_64, &two_64]);
-                Some(Int::sub(self.z3_ctx, &[&unsigned, &two_128]))
-            } else {
-                Some(unsigned)
-            };
+            return Some(self.u128_term(bits));
         }
-        let width = bytes * 8;
-        if matches!(ty.kind(), TyKind::Int(_)) {
-            let shift = 64 - width;
-            let signed = ((bits as u64) << shift) as i64 >> shift;
-            Some(Int::from_i64(self.z3_ctx, signed))
-        } else {
-            u64::try_from(bits)
-                .ok()
-                .map(|unsigned| Int::from_u64(self.z3_ctx, unsigned))
-        }
+        u64::try_from(bits)
+            .ok()
+            .map(|unsigned| Int::from_u64(self.z3_ctx, unsigned))
     }
 
     pub(crate) fn u128_term(&self, value: u128) -> Int<'z3> {
-        let low = Int::from_u64(self.z3_ctx, value as u64);
-        if value <= u64::MAX as u128 {
-            return low;
-        }
-        let high = Int::from_u64(self.z3_ctx, (value >> 64) as u64);
-        let two_64 = Int::add(
-            self.z3_ctx,
-            &[
-                &Int::from_u64(self.z3_ctx, u64::MAX),
-                &Int::from_u64(self.z3_ctx, 1),
-            ],
-        );
-        Int::add(
-            self.z3_ctx,
-            &[&Int::mul(self.z3_ctx, &[&high, &two_64]), &low],
-        )
+        integer::u128_term(self.z3_ctx, value)
     }
 
     pub(crate) fn enum_discriminant_term(
@@ -1056,6 +1049,22 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         Int::fresh_const(self.z3_ctx, prefix)
     }
 
+    /// Constrain an incoming machine integer at its introduction. The original
+    /// symbol keeps this domain after its parameter local is overwritten.
+    pub(crate) fn fresh_integer_input(&mut self, prefix: &str, ty: Ty<'tcx>) -> Int<'z3> {
+        let term = self.fresh_int(prefix);
+        self.constrain_integer_input(&term, ty);
+        term
+    }
+
+    pub(crate) fn constrain_integer_input(&mut self, term: &Int<'z3>, ty: Ty<'tcx>) {
+        if let Some(layout) = self.integer_layout(ty) {
+            self.path_state.constraints
+                .assertions
+                .push(layout.in_domain(self.z3_ctx, term));
+        }
+    }
+
     /// Get the value of a specific field within an aggregate local.
     ///
     /// Field values live in the allocation backing the local (the
@@ -1342,11 +1351,13 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 | rustc_middle::ty::TyKind::Bool
                 | rustc_middle::ty::TyKind::Char
         ) {
-            solver.assert(&value.z3_term.ge(&zero));
+            if integer::natural_upper_bound(&value.z3_term, 5).is_none() {
+                solver.assert(&value.z3_term.ge(&zero).simplify());
+            }
         }
         if matches!(value.ty.kind(), rustc_middle::ty::TyKind::Bool) {
             let one = Int::from_u64(self.z3_ctx, 1);
-            solver.assert(&value.z3_term.le(&one));
+            solver.assert(&value.z3_term.le(&one).simplify());
         }
         if matches!(value.ty.kind(), rustc_middle::ty::TyKind::Char) {
             let max = Int::from_u64(self.z3_ctx, 0x10FFFF);
@@ -1536,7 +1547,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             solver.assert(assertion);
         }
         solver.assert(&condition.not());
-        solver.check() == SatResult::Unsat
+        super::integer_solver::check(&solver) == SatResult::Unsat
     }
 
     fn stored_indexed_element(&self, place: &Place<'tcx>) -> Option<VmValue<'z3, 'tcx>> {
@@ -1569,7 +1580,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         Int::new_const(self.z3_ctx, name.as_str())
     }
 
-    pub(crate) fn const_param_term(&self, index: u32) -> Option<Int<'z3>> {
+    pub(crate) fn const_param_input(&self, index: u32) -> Option<(Int<'z3>, Ty<'tcx>)> {
         let generics = self.tcx.generics_of(self.path_state.current_frame.current_def_id);
         if index as usize >= generics.count() {
             return None;
@@ -1587,15 +1598,28 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             self.tcx,
             rustc_middle::ty::ParamConst::new(index, param.name),
         );
-        Some(self.symbolic_const_term(&rustc_middle::mir::Const::Ty(ty, value)))
+        let term = self.symbolic_const_term(&rustc_middle::mir::Const::Ty(ty, value));
+        Some((term, ty))
     }
 
     /// Extract a VmValue from a MIR operand.
     pub(crate) fn value_of_operand(&self, operand: &Operand<'tcx>) -> VmValue<'z3, 'tcx> {
         match operand {
-            Operand::Copy(place) | Operand::Move(place) => self
-                .value_of_place(place)
-                .unwrap_or_else(|| self.unknown_value_for_place(place)),
+            Operand::Copy(place) | Operand::Move(place) => {
+                let mut value = self
+                    .value_of_place(place)
+                    .unwrap_or_else(|| self.unknown_value_for_place(place));
+                if matches!(place.projection.last(), Some(ProjectionElem::Field(field, _)) if field.as_usize() == 0)
+                    && matches!(value.ty.kind(), TyKind::Int(_) | TyKind::Uint(_))
+                    && let Some(arm) = integer::known_ite_arm(
+                        &value.z3_term,
+                        &self.path_state.constraints.assertions,
+                    )
+                {
+                    value.z3_term = arm;
+                }
+                value
+            }
             Operand::Constant(constant) => {
                 let text = format!("{:?}", constant.const_);
                 // `size_of::<T>()` / `align_of::<T>()` lower to the
