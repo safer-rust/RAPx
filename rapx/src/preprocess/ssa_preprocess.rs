@@ -96,7 +96,7 @@ pub(crate) fn create_struct(
         kind: item_kind,
         vis: Visibility {
             span: DUMMY_SP,
-            kind: VisibilityKind::Public,
+            kind: VisibilityKind::Inherited,
         },
         span: DUMMY_SP,
         tokens: None,
