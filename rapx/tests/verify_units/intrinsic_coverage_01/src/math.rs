@@ -12,7 +12,6 @@ use intrinsics::{
     minimum_number_nsz_f32, minimumf32 as minimum_f32,
 };
 
-#[cfg(rapx_generic_float_intrinsics)]
 #[rapx::verify]
 pub fn scalar_float_intrinsics(value: f32) {
     let input = intrinsics::fabs(value) + 1.0;
@@ -44,32 +43,11 @@ pub fn scalar_float_intrinsics(value: f32) {
     unsafe { need_nonzero(bits) };
 }
 
-#[cfg(not(rapx_generic_float_intrinsics))]
-#[rapx::verify]
-pub fn scalar_float_intrinsics(value: f32) {
-    let input = intrinsics::fabs(value) + 1.0;
-    let values = [
-        intrinsics::sqrtf32(input),
-        intrinsics::powif32(input, 2),
-        minimum_f32(input, 2.0),
-        maximum_f32(input, 2.0),
-        copysign_f32(input, -1.0),
-    ];
-    let mut bits = 0_u32;
-    for value in values {
-        bits ^= value.to_bits();
-    }
-    unsafe { need_nonzero(bits) };
-}
-
 #[rapx::verify]
 pub fn scalar_float_unchecked_intrinsics() {
     let value = 1.5_f32;
     let converted: i32 = unsafe { intrinsics::float_to_int_unchecked(value) };
-    #[cfg(rapx_generic_float_intrinsics)]
     let unfused = intrinsics::fmuladd(value, 2.0, 1.0);
-    #[cfg(not(rapx_generic_float_intrinsics))]
-    let unfused = intrinsics::fmuladdf32(value, 2.0, 1.0);
     unsafe { need_nonzero((converted as u32) ^ unfused.to_bits()) };
 }
 

@@ -1,5 +1,4 @@
 #![feature(register_tool, core_intrinsics, repr_simd, uint_carryless_mul)]
-#![cfg_attr(not(rapx_ge_100), feature(funnel_shifts))]
 #![register_tool(rapx)]
 #![allow(dead_code, internal_features, unnecessary_transmutes, unused_variables)]
 

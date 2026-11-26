@@ -19,11 +19,12 @@ use crate::vm::constructor_policy::ConstructorMirMode;
 use crate::compat::Spanned;
 use crate::def_ids::{diagnostic_api, lang_api};
 use crate::util::fn_info::{self, FnKind};
-use crate::util::mir_utils;
+use crate::util::{mir_utils, resolve};
 use crate::analysis::dataflow::call_summary::{self, CallEffect};
 use crate::def_ids;
 use crate::contract::type_invariants::constructor_result_has_invariant;
 use crate::vm::constructor_policy::effective_constructor_mir_mode;
+
 
 #[derive(Clone, Copy)]
 struct CallSite<'a, 'z3, 'tcx> {
@@ -96,7 +97,7 @@ pub(super) fn exec_call<'z3, 'tcx>(
         .iter()
         .map(|a| a.node.place().map(|p| p.local))
         .collect();
-    let callee = mir_utils::resolve_callee_def_id(state.tcx, caller_def_id, func);
+    let callee = resolve::resolve_callee_def_id(state.tcx, caller_def_id, func);
     if let Some((source, owner)) = callee
         .and_then(|id| crate::analysis::alias::hazard::reconstructed_owner(state.tcx, id))
         && let Some(value) = arg_values.get(source)
@@ -216,13 +217,6 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             {
                 return CallModel::PostconditionsOnly;
             }
-            if args
-                .first()
-                .is_some_and(|value| !self.vec_reallocation_targets(value).is_empty())
-                && call_summary::pointer_semantics::callsite_replaces_pointer_field(self.tcx, func)
-            {
-                return CallModel::Summary(vec![CallEffect::ReallocateVec { arg: 0 }]);
-            }
             if let Some(effects) = call_summary::effects::lookup_effect(
                 self.tcx, caller_def_id, callee, func,
             ) {
@@ -231,6 +225,15 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             if let Some(effects) = call_summary::effects::effect_summary(self.tcx, func) {
                 return CallModel::Summary(effects);
             }
+        }
+        // A trait declaration may have default MIR, but that is not the
+        // runtime target until rustc resolves this call to an item instance.
+        if callee.is_some_and(|id| self.tcx.opt_associated_item(id)
+            .and_then(|item| item.trait_container(self.tcx)).is_some())
+            && !resolve::resolve_callee_instance(self.tcx, caller_def_id, func)
+                .is_some_and(|instance| matches!(instance.def, InstanceKind::Item(_)))
+        {
+            return CallModel::Unknown;
         }
         if let Some(callee) = callee
             && matches!(ctor_mode, Some(ConstructorMirMode::False))
@@ -329,7 +332,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 RuleFlow::Continue
             }
             CallModel::Inline(callee) => {
-                let instance = mir_utils::resolve_callee_instance(self.tcx, caller_def_id, func)
+                let instance = resolve::resolve_callee_instance(self.tcx, caller_def_id, func)
                     .or_else(|| {
                         let Operand::Constant(constant) = func else {
                             return None;
@@ -369,10 +372,10 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             }
             CallModel::Unknown => {
                 if let Some(callee) = callee {
-                    if self.tcx.trait_of_assoc(callee).is_some_and(|trait_id| {
-                        crate::def_ids::lang_api::is_fn_trait(self.tcx, trait_id)
-                    }) {
+                    if crate::analysis::dataflow::closure::is_fn_trait_method(self.tcx, callee) {
                         self.apply_function_var_effect(arg_values, arg_locals, destination, callee);
+                    } else if self.tcx.trait_of_assoc(callee).is_some() {
+                        self.record_unsupported_effect(&format!("unresolved trait dispatch: {}", self.tcx.def_path_str(callee)));
                     } else if !crate::def_ids::lang_api::is_panic_exit(self.tcx, callee) {
                         self.record_missing_mir(callee);
                     }

@@ -37,11 +37,6 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         func: &Operand<'tcx>,
     ) {
         match effect {
-            CallEffect::ReallocateVec { arg } => {
-                if let Some(value) = args.get(*arg) {
-                    self.reallocate_vec_backing(value);
-                }
-            }
             CallEffect::ReturnLayoutSymbolic { is_size } => {
                 let ty = mir_utils::fn_def_first_type_arg(func).expect("layout effect built from a FnDef");
                 let term = if *is_size {
@@ -391,6 +386,36 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                             source: ValueSource::None,
                         },
                     );
+                }
+            }
+            CallEffect::ReturnNullableReallocation { pointer_arg, size_arg, align_arg, .. } => {
+                if let (Some(pointer), Some(size), Some(align)) =
+                    (args.get(*pointer_arg), args.get(*size_arg), args.get(*align_arg))
+                {
+                    let ty = self.body().local_decls[dest].ty;
+                    let zero = Int::from_u64(self.z3_ctx, 0);
+                    // Failed realloc returns null and leaves the original allocation live.
+                    let mut failure = self.clone();
+                    failure.path_state.inline.pending_states.clear();
+                    failure.set_local(dest, VmValue::new(zero.clone(), ty));
+                    self.path_state.inline.pending_states.push(Box::new(failure));
+
+                    let old = pointer.provenance_alloc_id();
+                    let (alloc_id, base) = self.allocate_external(size.z3_term.clone(), align.z3_term.clone(), Some(self.tcx.types.u8));
+                    self.path_state.constraints.assertions.push(base._eq(&zero).not());
+                    if let Some(old) = old {
+                        self.path_state.mem_units[alloc_id.0].content = self.path_state.mem_units[old.0].content.clone();
+                        self.alloc_mut(old).facts.dead = true;
+                    }
+                    self.alloc_mut(alloc_id).facts.owning = Some(base.clone());
+                    self.alloc_mut(alloc_id).facts.locally_allocated = true;
+                    self.set_local(dest, VmValue {
+                        z3_term: base,
+                        ty,
+                        provenance: Some(Provenance { alloc_id, offset: Int::from_u64(self.z3_ctx, 0), offset_kind: None }),
+                        facts: ValueFacts::default(),
+                        source: ValueSource::None,
+                    });
                 }
             }
             CallEffect::ReturnVecFromSlice => {

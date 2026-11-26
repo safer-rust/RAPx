@@ -4,20 +4,17 @@ use crate::verify::config::ConstructorMirMode;
 use crate::compat::{FxHashMap, FxHashSet};
 use crate::def_ids::lang_api::{self, LangItem};
 use crate::util::fn_info::{self, FnKind};
-use crate::util::{mir_utils, name::get_adt_self_ty};
+use crate::util::{mir_utils, name::get_adt_self_ty, resolve};
 use crate::limit::{HINTED_CALLEE_BLOCK_LIMIT, LOCAL_CALLEE_BLOCK_LIMIT};
 use crate::contract::ensures::has_slice_offset_ensures;
 use crate::verify::config::VerifyConfig;
 use crate::vm::constructor_policy::effective_constructor_mir_mode;
 use std::rc::Rc;
-#[cfg(rapx_has_attr_ir)]
 use rustc_attr_ir::InlineAttr;
-#[cfg(not(rapx_has_attr_ir))]
-use rustc_hir::attrs::InlineAttr;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{BasicBlock, Body, Operand, Terminator, TerminatorKind},
-    ty::{EarlyBinder, Instance, InstanceKind, TyCtxt, TyKind, TypingEnv},
+    ty::{EarlyBinder, Instance, InstanceKind, TyCtxt, TyKind},
 };
 
 pub(crate) type EntryBodies<'tcx> = FxHashMap<usize, &'tcx Body<'tcx>>;
@@ -163,8 +160,20 @@ impl<'tcx> CallSiteIndex<'tcx> {
         Some(block - local + target.as_usize())
     }
 
+    fn call_chain_contains(&self, block: usize, callee: DefId, parent_of_entry: &FxHashMap<usize, usize>) -> bool {
+        let mut entry = block - self.blocks[block].1;
+        loop {
+            if self.blocks[entry].0 == callee {
+                return true;
+            }
+            let Some(&parent) = parent_of_entry.get(&entry) else { return false };
+            entry = parent - self.blocks[parent].1;
+        }
+    }
+
     pub(crate) fn collect(&mut self) {
         let mut expanded = FxHashSet::default();
+        let mut parent_of_entry: FxHashMap<usize, usize> = FxHashMap::default();
         expanded.insert(self.blocks[0].0);
         let mut next_block = 0;
         loop {
@@ -208,7 +217,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                     continue;
                 }
                 let callee = if resolve_to_impl {
-                    mir_utils::resolve_callee_def_id(self.tcx, caller, func)
+                    resolve::resolve_callee_def_id(self.tcx, caller, func)
                         .unwrap_or(base_callee)
                 } else {
                     base_callee
@@ -225,7 +234,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                 // Leave the call in the path so the VM executes that exact MIR.
                 if self.bodies.contains_key(&0)
                     && crate::def_ids::lang_api::is_clone(self.tcx, base_callee)
-                    && mir_utils::resolve_callee_instance(self.tcx, caller, func).is_some_and(
+                    && resolve::resolve_callee_instance(self.tcx, caller, func).is_some_and(
                         |instance| {
                             matches!(instance.def, InstanceKind::Item(_))
                                 && instance.def_id() == callee
@@ -240,22 +249,24 @@ impl<'tcx> CallSiteIndex<'tcx> {
                     continue;
                 }
                 if is_trait_method {
-                    let is_virtual = mir_utils::resolve_callee_instance(self.tcx, caller, func)
-                        .is_some_and(|instance| mir_utils::instance_def_id(self.tcx, instance).1);
-                    if is_virtual {
-                        if !effect_modeled {
-                            let candidates = mir_utils::trait_impl_candidates(self.tcx, base_callee);
-                            if candidates.len() > self.config.trait_impl_limit() {
-                                self.trait_impl_limited = true;
-                            }
-                            for candidate in candidates
-                                .into_iter()
-                                .take(self.config.trait_impl_limit())
-                            {
-                                if self.tcx.is_mir_available(candidate)
-                                    && !expanded.contains(&candidate)
-                                {
-                                    pending.push((block, candidate, None));
+                    let resolved_instance = resolve::resolve_callee_instance(self.tcx, caller, func);
+                    let is_virtual = resolved_instance
+                        .is_some_and(|instance| resolve::instance_def_id(self.tcx, instance).1);
+                    // A trait default body is not selected by an unresolved call.
+                    let unresolved = callee == base_callee
+                        && !resolved_instance.is_some_and(|instance| matches!(instance.def, InstanceKind::Item(_)));
+                    if is_virtual || unresolved {
+                        if !effect_modeled && !resolve::is_compiler_callable_trait_method(self.tcx, base_callee) {
+                            if let Some(candidates) = resolve::possible_trait_impl_methods(self.tcx, caller, base_callee, func, is_virtual) {
+                                // Enumerated impls are bounded even when all currently known
+                                // candidates fit: downstream crates may add more implementations.
+                                if !candidates.is_empty() {
+                                    self.trait_impl_limited = true;
+                                }
+                                for candidate in candidates.into_iter().take(self.config.trait_impl_limit()) {
+                                    if !self.call_chain_contains(block, candidate.def_id, &parent_of_entry) {
+                                        pending.push((block, candidate.def_id, candidate.instance));
+                                    }
                                 }
                             }
                         }
@@ -300,7 +311,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                         || generic_trait_call
                         || self.tcx.optimized_mir(callee).basic_blocks.len() == 1);
                 let instance = instantiate
-                    .then(|| mir_utils::resolve_callee_instance(self.tcx, caller, func))
+                    .then(|| resolve::resolve_callee_instance(self.tcx, caller, func))
                     .flatten()
                     .filter(|instance| {
                         let has_concrete_arg = instance
@@ -387,7 +398,11 @@ impl<'tcx> CallSiteIndex<'tcx> {
                 expanded.insert(*callee);
             }
             for (block, callee, instance) in pending {
+                let entry = self.blocks.len();
                 self.insert(block, callee, instance);
+                if self.blocks.len() > entry {
+                    parent_of_entry.insert(entry, block);
+                }
             }
         }
         for entries in self.entries.values_mut() {
@@ -438,13 +453,13 @@ impl<'tcx> CallSiteIndex<'tcx> {
             actual_parent
         };
         let instantiated = instance
-            .filter(|instance| !mir_utils::has_unresolved_const_args(self.tcx, parent, instance.args))
+            .filter(|instance| !resolve::has_unresolved_const_args(self.tcx, parent, instance.args))
             .and_then(|instance| {
                 let mir = self.tcx.optimized_mir(instance.def_id());
                 instance
                     .try_instantiate_mir_and_normalize_erasing_regions(
                         self.tcx,
-                        TypingEnv::post_analysis(self.tcx, parent),
+                        crate::compat::typing_env_post_analysis(self.tcx, parent),
                         EarlyBinder::bind(self.tcx, mir.clone()),
                     )
                     .ok()

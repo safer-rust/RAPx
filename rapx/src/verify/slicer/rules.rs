@@ -2,7 +2,7 @@
 
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{BasicBlock, Body, Statement, Terminator};
-use rustc_middle::ty::{Ty, TyCtxt, TypeFlags, TypeVisitableExt, TypingEnv};
+use rustc_middle::ty::{Ty, TyCtxt, TypeFlags, TypeVisitableExt};
 
 use super::RelevantItem;
 use super::BackwardSlicer;
@@ -19,7 +19,7 @@ fn may_need_drop<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, ty: Ty<'tcx>) -> bool {
     ty.has_type_flags(TypeFlags::HAS_CT_PARAM)
         || ty.has_non_region_placeholders()
         || ty.has_escaping_bound_vars()
-        || ty.needs_drop(tcx, TypingEnv::post_analysis(tcx, def_id))
+        || ty.needs_drop(tcx, crate::compat::typing_env_post_analysis(tcx, def_id))
 }
 
 impl<'tcx> BackwardSlicer<'tcx> {

@@ -24,14 +24,8 @@ pub fn integer_intrinsics(value: u32, shift: u32) {
     let r = intrinsics::add_with_overflow(value, nonzero).0;
     let s = intrinsics::sub_with_overflow(value, nonzero).0;
     let t = intrinsics::mul_with_overflow(value, nonzero).0;
-    #[cfg(rapx_ge_100)]
     let u = intrinsics::integer_min(value, nonzero);
-    #[cfg(not(rapx_ge_100))]
-    let u = value.min(nonzero);
-    #[cfg(rapx_ge_100)]
     let v = intrinsics::integer_max(value, nonzero);
-    #[cfg(not(rapx_ge_100))]
-    let v = value.max(nonzero);
     let w = intrinsics::select_unpredictable(value != 0, u, v);
     let x = intrinsics::likely(value != 0) as u32;
     let y = intrinsics::unlikely(value == 0) as u32;

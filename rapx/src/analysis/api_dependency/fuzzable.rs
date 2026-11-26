@@ -1,16 +1,8 @@
 use crate::def_ids::lang_api::{self, LangItem};
 use crate::util::mir_utils;
 use crate::limit::FUZZABLE_MAX_DEPTH;
-#[cfg(rapx_has_attr_ir)]
 use rustc_attr_ir::AttributeKind;
-#[cfg(rapx_has_attr_ir)]
 use rustc_attr_ir::find_attr;
-#[cfg(not(rapx_has_attr_ir))]
-use rustc_hir::attrs::AttributeKind;
-#[cfg(not(rapx_has_attr_ir))]
-use rustc_hir::find_attr;
-#[cfg(rapx_const_ext)]
-use rustc_middle::ty::consts::ConstExt;
 use rustc_middle::ty::{self, Ty, TyCtxt, TyKind};
 use rustc_span::sym;
 use rustc_type_ir::TypeVisitable;

@@ -36,16 +36,14 @@
 use crate::analysis::path::graph::PathGraph;
 use crate::compat::{FxHashMap, FxHashSet};
 use crate::contract::{ContractExpr, NumericPredicate, Property, PropertyArg, PropertyKind, RelOp};
-use crate::util::mir_utils;
+use crate::util::{mir_utils, resolve};
 use rustc_hir::def_id::DefId;
-#[cfg(rapx_const_ext)]
-use rustc_middle::ty::consts::ConstExt;
 use rustc_middle::{
     mir::{
         AggregateKind, BasicBlock, BinOp, Body, Local, Operand, Place, ProjectionElem, Rvalue,
         StatementKind, TerminatorKind,
     },
-    ty::{TyCtxt, TyKind, TypingEnv},
+    ty::{TyCtxt, TyKind},
 };
 
 use super::{
@@ -153,10 +151,10 @@ impl<'tcx> LoopSensitivityAnalyzer<'tcx> {
             return 0;
         }
 
-        let mut graph = PathGraph::new(self.tcx, target.def_id);
+        let body = target.body.unwrap_or_else(|| self.tcx.optimized_mir(target.def_id));
+        let mut graph = PathGraph::new_with_body(self.tcx, target.def_id, body);
         graph.find_scc();
-        let body = self.tcx.optimized_mir(target.def_id);
-        let dependencies = LocalDependencyIndex::new(self.tcx, target.def_id);
+        let dependencies = LocalDependencyIndex::new(body);
         let component_summaries: Vec<_> = loop_components(&graph)
             .into_iter()
             .map(|component| {
@@ -697,7 +695,7 @@ fn exact_range_repeat<'tcx>(
                 },
             )
             .unwrap_or(false);
-        let is_next = mir_utils::resolve_callee_def_id(tcx, def_id, func)
+        let is_next = resolve::resolve_callee_def_id(tcx, def_id, func)
             .and_then(|callee| tcx.opt_item_name(callee))
             .is_some_and(|name| name.as_str() == "next");
         if !receiver_is_range || !is_next {
@@ -1299,7 +1297,7 @@ fn operand_const_i128<'tcx>(
     let Operand::Constant(constant) = operand else {
         return None;
     };
-    let typing_env = TypingEnv::post_analysis(tcx, def_id);
+    let typing_env = crate::compat::typing_env_post_analysis(tcx, def_id);
     match constant.const_.ty().kind() {
         TyKind::Bool => constant
             .const_
@@ -1346,8 +1344,7 @@ impl LocalDependencyIndex {
     /// locals.  That is coarse but useful for wrappers such as
     /// `ptr.wrapping_add(offset)`: the resulting pointer local depends on both
     /// the base pointer and the offset local.
-    fn new(tcx: TyCtxt<'_>, def_id: DefId) -> Self {
-        let body = tcx.optimized_mir(def_id);
+    fn new(body: &Body<'_>) -> Self {
         let mut sources_by_dest: FxHashMap<Local, FxHashSet<Local>> = FxHashMap::default();
 
         for data in body.basic_blocks.iter() {

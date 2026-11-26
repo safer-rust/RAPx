@@ -927,7 +927,7 @@ fn invariant_unknown_01() {
 #[test]
 fn unsupported_mir_01() {
     let output = run_with_args("verify_units/unsupported_mir_01", CMD_VERIFY_TARGETED);
-    assert_result_counts(&output, [0, 3, 3]);
+    assert_result_counts(&output, [0, 4, 2]);
     assert_unproved(&output, "unsound_direct_intrinsic_copy", "NonOverlap");
     assert_unproved(&output, "unsound_direct_assume", "ValidNum");
     assert_contain(&output, "Unknown (unsupported MIR)");
@@ -943,8 +943,48 @@ fn unsupported_mir_01() {
     assert_contain(block, "MIR unavailable: external_clobber");
     assert_contain(block, "missing_mir:");
     let block = extract_block_after(&output, "function: unknown_fnmut_writes_argument");
-    assert_contain(block, "Unknown (MIR unavailable)");
-    assert_contain(block, "FnMut::call_mut");
+    assert_contain(block, "result: UNSOUND");
+    assert_contain(block, "ValidNum | Failed");
+}
+
+#[test]
+fn closure_calls_01() {
+    let output = run_with_args("verify_units/closure_calls_01", CMD_VERIFY_TARGETED);
+    assert_result_counts(&output, [10, 7, 0]);
+    for function in ["direct_closure", "direct_once_closure", "array_map_closure", "generic_bool_callback", "generic_callback_checked", "generic_readonly_callback", "generic_numeric_checked", "generic_field_callback_keeps_other"] {
+        assert_function_result(&output, function, "SOUND");
+    }
+    assert_function_result(&output, "array_map_generic", "SOUND");
+    assert_contain(extract_block_after(&output, "function: array_map_generic"), "with array length limit");
+    assert_function_result(&output, "array_simple_generic", "SOUND");
+    assert_contain(extract_block_after(&output, "function: array_simple_generic"), "with array length limit");
+    assert_function_result(&output, "array_map_generic_bad", "UNSOUND");
+    assert_function_result(&output, "array_map_generic_first_bad", "UNSOUND");
+    assert_function_result(&output, "array_simple_generic_bad", "UNSOUND");
+    assert_function_result(&output, "generic_field_callback", "UNSOUND");
+    assert_function_result(&output, "generic_callback", "UNSOUND");
+    let callback = extract_block_after(&output, "function: generic_callback");
+    assert_contain(callback, "ValidNum | Failed");
+    for function in ["generic_numeric_callback", "generic_once_callback"] {
+        assert_function_result(&output, function, "UNSOUND");
+    }
+}
+
+#[test]
+fn array_length_limit_zero() {
+    let output = run_with_args("verify_units/closure_calls_01", &["verify", "--mode", "targeted", "--array-length-limit", "0"]);
+    assert_function_result(&output, "array_map_generic_bad", "SOUND");
+    assert_function_result(&output, "array_map_generic_first_bad", "SOUND");
+    assert_function_result(&output, "array_simple_generic_bad", "SOUND");
+    assert_contain(extract_block_after(&output, "function: array_simple_generic_bad"), "with array length limit");
+}
+
+#[test]
+fn array_length_limit_two() {
+    let output = run_with_args("verify_units/closure_calls_01", &["verify", "--mode", "targeted", "--array-length-limit", "2"]);
+    assert_function_result(&output, "array_map_generic", "SOUND");
+    assert_function_result(&output, "array_map_generic_bad", "UNSOUND");
+    assert_function_result(&output, "array_map_generic_first_bad", "UNSOUND");
 }
 
 #[test]
@@ -1489,6 +1529,12 @@ fn trait_obj_inline_limit_four() {
     );
     // All four impls inlined: `Dd`'s null pointer now fails NonNull.
     assert_function_result(&output, "multi_impl_truncated", "UNSOUND");
+    let typed = extract_block_after(&output, "function: typed_trait_argument");
+    assert_contain(typed, "result: SOUND (with mono limit)");
+    let default_method = extract_block_after(&output, "function: default_method_dispatch");
+    assert_contain(default_method, "result: SOUND (with mono limit)");
+    let unresolved_default = extract_block_after(&output, "function: unresolved_default_dispatch");
+    assert_contain(unresolved_default, "result: SOUND (with mono limit)");
 }
 
 // Generic Monomorphization

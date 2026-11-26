@@ -1,11 +1,9 @@
 //! VM rules for pointer-preserving calls and owner lifetimes.
 
-use std::collections::HashMap;
-
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
-    mir::{Body, Operand, ProjectionElem, StatementKind, TerminatorKind},
-    ty::{Ty, TyCtxt, TyKind},
+    mir::{Body, StatementKind, TerminatorKind},
+    ty::TyCtxt,
 };
 
 use crate::analysis::dataflow::pointer_flow::{is_nonnull_view, return_source_arg};
@@ -61,70 +59,4 @@ pub(crate) fn single_block_without_effects(body: &Body<'_>) -> bool {
             }
             _ => false,
         })
-}
-
-/// Whether a callee can replace a pointer stored in one of its objects.
-/// This follows MIR calls rather than identifying container methods by name.
-pub(crate) fn callsite_replaces_pointer_field(tcx: TyCtxt<'_>, func: &Operand<'_>) -> bool {
-    let Some(callee) = mir_utils::dep_callee_def_id(func) else {
-        return false;
-    };
-    replaces_pointer_field_rec(tcx, callee, 0, &mut HashMap::new())
-}
-
-fn replaces_pointer_field_rec(
-    tcx: TyCtxt<'_>,
-    callee: DefId,
-    depth: usize,
-    visited: &mut HashMap<DefId, usize>,
-) -> bool {
-    if depth > 10
-        || !tcx.is_mir_available(callee)
-        || visited
-            .get(&callee)
-            .is_some_and(|&previous| previous <= depth)
-    {
-        return false;
-    }
-    visited.insert(callee, depth);
-    let body = tcx.optimized_mir(callee);
-    for block in body.basic_blocks.iter() {
-        for statement in &block.statements {
-            let StatementKind::Assign(assign) = &statement.kind else {
-                continue;
-            };
-            let place = assign.0;
-            if place.projection.first() == Some(&ProjectionElem::Deref)
-                && place
-                    .projection
-                    .iter()
-                    .any(|elem| matches!(elem, ProjectionElem::Field(..)))
-                && is_pointer_storage_ty(tcx, place.ty(body, tcx).ty, 0)
-            {
-                return true;
-            }
-        }
-        if let Some(terminator) = &block.terminator
-            && let TerminatorKind::Call { func, .. } | TerminatorKind::TailCall { func, .. } =
-                &terminator.kind
-            && let Some(nested) = mir_utils::dep_callee_def_id(func)
-            && replaces_pointer_field_rec(tcx, nested, depth + 1, visited)
-        {
-            return true;
-        }
-    }
-    false
-}
-
-fn is_pointer_storage_ty<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>, depth: usize) -> bool {
-    match ty.kind() {
-        TyKind::RawPtr(..) => true,
-        TyKind::Pat(inner, _) => is_pointer_storage_ty(tcx, *inner, depth + 1),
-        TyKind::Adt(adt, args) if depth < 2 && adt.repr().transparent() && !adt.is_enum() => {
-            adt.non_enum_variant().fields.iter().any(|field| {
-                is_pointer_storage_ty(tcx, mir_utils::field_ty(tcx, field, args), depth + 1)
-            })
-        }
-        _ => false,
-    }
 }

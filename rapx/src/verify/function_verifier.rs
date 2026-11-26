@@ -57,6 +57,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
         VerificationLimits {
             path_limited: self.path_tree.is_truncated(),
             mono_limited: self.path_tree.is_trait_impl_limited(),
+            array_length_limited: self.target.array_length_limited,
         }
     }
 

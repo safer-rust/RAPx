@@ -8,13 +8,12 @@
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 
-use super::is_std_api;
+use super::canonical_std_def_path;
 
 fn matches_path(tcx: TyCtxt<'_>, did: DefId, paths: &[&str]) -> bool {
-    if !is_std_api(tcx, did) {
+    let Some(name) = canonical_std_def_path(tcx, did) else {
         return false;
-    }
-    let name = tcx.def_path_str(did);
+    };
     paths.iter().any(|path| {
         name == *path
             || path
@@ -49,6 +48,14 @@ pub fn is_global_alloc_shim(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
                 did,
                 &["alloc::alloc::__rust_alloc", "std::alloc::__rust_alloc"],
             )
+    })
+}
+
+/// Identify the allocator reallocation shim, whose MIR is unavailable.
+pub fn is_global_realloc_shim(tcx: TyCtxt<'_>, callee: Option<DefId>) -> bool {
+    callee.is_some_and(|did| {
+        has_no_mir(tcx, did)
+            && matches_path(tcx, did, &["alloc::alloc::__rust_realloc", "std::alloc::__rust_realloc"])
     })
 }
 

@@ -7,8 +7,6 @@ use crate::def_ids::type_ids;
 use crate::util::mir_utils;
 use rustc_abi::VariantIdx;
 use rustc_hir::def_id::DefId;
-#[cfg(rapx_const_ext)]
-use rustc_middle::ty::consts::ConstExt;
 use rustc_middle::{
     mir::{Body, ConstValue, Local, Operand, Place, ProjectionElem},
     ty::{Region, Ty, TyKind, TypingEnv},
@@ -24,7 +22,8 @@ use super::diagnostics::ActiveMirLocation;
 use super::integer::{self, IntLayout};
 use crate::util::def_use::PlaceKey;
 
-pub(crate) const REPEATED_ARRAY_ELEMENT: usize = usize::MAX;
+/// Reserved field-path index for array repeats, not a valid element bound.
+pub(crate) const ARRAY_INDEX_MAX: usize = usize::MAX;
 
 /// Unique identifier for a VM allocation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -77,7 +76,7 @@ pub(crate) struct Provenance<'z3> {
     pub alloc_id: AllocId,
     /// Byte offset from the allocation base; zero for a base pointer.
     pub offset: Int<'z3>,
-    /// Known structure of the offset; `None` denotes an unclassified base offset.
+    /// Offset structure; `None` means a base or an unclassified address calculation.
     pub offset_kind: Option<OffsetKind<'z3>>,
 }
 
@@ -201,17 +200,13 @@ pub(crate) enum AllocKind<'z3> {
     /// A single object: a `Box<T>` heap object, a struct, a scalar, or an
     /// untyped raw buffer.
     Object,
-    /// A slice/array buffer with a known element count.
-    Slice {
-        len: Int<'z3>,
-    },
     /// External storage with a symbolic extent; pointer nullability is tracked
     /// by path conditions rather than by this allocation kind.
     External,
+    /// A slice/array buffer with a known element count.
+    Slice { len: Int<'z3> },
     /// External allocation with a known, possibly symbolic element count.
-    ExternalSlice {
-        len: Int<'z3>,
-    },
+    ExternalSlice { len: Int<'z3> },
 }
 
 /// The element type of an allocation's contents, either a concrete [`Ty`] or
@@ -1082,12 +1077,12 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         self.load_value(alloc_id, view_ty, path).or_else(|| {
             let mut candidates = vec![path.to_vec()];
             for position in (0..path.len()).rev() {
-                if path[position] == REPEATED_ARRAY_ELEMENT {
+                if path[position] == ARRAY_INDEX_MAX {
                     continue;
                 }
                 let alternatives = candidates.clone();
                 for mut candidate in alternatives {
-                    candidate[position] = REPEATED_ARRAY_ELEMENT;
+                    candidate[position] = ARRAY_INDEX_MAX;
                     if let Some(value) = self.load_value(alloc_id, view_ty, &candidate) {
                         return Some(value);
                     }
@@ -1652,7 +1647,18 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                         return VmValue::new(term, constant.const_.ty());
                     }
                 }
-                let int_val = mir_utils::eval_const_scalar_int(self.tcx, &constant.const_, &text);
+                let int_val = mir_utils::eval_const_scalar_int(self.tcx, &constant.const_, &text)
+                    .or_else(|| {
+                        (self.path_state.current_frame.current_def_id == self.target_def_id
+                            && self.instantiated_target_body.is_some())
+                            .then(|| match constant.const_ {
+                                rustc_middle::mir::Const::Ty(_, value) => value.try_to_target_usize(self.tcx),
+                                _ => None,
+                            })
+                            .flatten()
+                            .filter(|value| *value <= u32::MAX as u64)
+                            .map(|value| value as i128)
+                    });
                 let field_offset = int_val.is_none()
                     && mir_utils::offset_of_container(self.tcx, &constant.const_).is_some();
                 let enum_variant = mir_utils::const_destructure(self.tcx, &constant.const_)
@@ -1728,12 +1734,45 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             }
             return;
         }
+        self.materialize_const_fields(local, Vec::new(), constant);
+    }
+
+    /// Materialize scalar fields nested inside a constant aggregate.
+    pub(crate) fn materialize_const_fields(
+        &mut self,
+        local: Local,
+        prefix: Vec<usize>,
+        constant: &rustc_middle::mir::Const<'tcx>,
+    ) {
+        self.materialize_const_fields_rec(local, prefix, constant, 0);
+    }
+
+    fn materialize_const_fields_rec(
+        &mut self,
+        local: Local,
+        prefix: Vec<usize>,
+        constant: &rustc_middle::mir::Const<'tcx>,
+        depth: usize,
+    ) {
+        if depth >= 8 {
+            return;
+        }
         let Some((_variant, fields)) = mir_utils::const_destructure(self.tcx, constant) else {
             return;
         };
         for (idx, (field_val, field_ty)) in fields.iter().enumerate() {
             let term = self.const_field_term(field_val, *field_ty);
-            self.set_field_value(local, vec![idx], VmValue::new(term, *field_ty));
+            let mut path = prefix.clone();
+            path.push(idx);
+            self.set_field_value(local, path.clone(), VmValue::new(term, *field_ty));
+            let nested_aggregate = match field_ty.kind() {
+                TyKind::Tuple(..) => true,
+                TyKind::Adt(adt, _) => !adt.is_enum() && !adt.is_union(),
+                _ => false,
+            };
+            if nested_aggregate {
+                self.materialize_const_fields_rec(local, path, &rustc_middle::mir::Const::Val(*field_val, *field_ty), depth + 1);
+            }
         }
     }
 
@@ -1853,7 +1892,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                                 .local_value(local)
                                 .and_then(|value| value.z3_term.simplify().as_u64())
                                 .and_then(|index| usize::try_from(index).ok())
-                                .unwrap_or(REPEATED_ARRAY_ELEMENT);
+                                .unwrap_or(ARRAY_INDEX_MAX);
                             path.push(index);
                         }
                         ProjectionElem::ConstantIndex {
@@ -2118,7 +2157,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 && let Some(length) = length.try_to_target_usize(self.tcx)
             {
                 let repeated = self
-                    .field_value(place.local, &[REPEATED_ARRAY_ELEMENT])
+                    .field_value(place.local, &[ARRAY_INDEX_MAX])
                     .cloned();
                 let elements = if repeated.is_some() {
                     self.field_paths(place.local)
@@ -2126,7 +2165,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                         .filter_map(|path| {
                             (path.len() == 1
                                 && path[0] < length as usize
-                                && path[0] != REPEATED_ARRAY_ELEMENT)
+                                && path[0] != ARRAY_INDEX_MAX)
                                 .then(|| {
                                     self.field_value(place.local, &path)
                                         .cloned()

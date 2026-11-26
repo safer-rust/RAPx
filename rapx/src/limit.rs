@@ -50,15 +50,20 @@ pub(crate) const SCC_MAX_PATH_LEN: usize = 200;
 pub(crate) const LOCAL_CALLEE_BLOCK_LIMIT: usize = 32;
 pub(crate) const HINTED_CALLEE_BLOCK_LIMIT: usize = 128;
 
-/// Recursion depth bound for runtime inlining
-/// ([`crate::verify::vm::call::exec_inline_call`]). Recursive inlining unwinds
-/// through the Rust call stack, so this caps nesting.
-pub(crate) const MAX_INLINE_DEPTH: usize = 5;
+/// Recursion depth bound for runtime MIR inlining; this caps Rust stack nesting.
+pub(crate) const MAX_INLINE_DEPTH: usize = 8;
+
+/// Fallback block visits when an instantiated array's length cannot be recovered.
+pub(crate) const MAX_INLINE_BLOCK_VISITS: usize = 8;
 
 /// Maximum number of trait impls or generic type combinations analyzed.
 /// Overridable via the `--trait-impl-limit` CLI flag. A call whose trait has
 /// more impls than this is truncated to the first `n` (an under-approximation).
 pub(crate) const TRAIT_IMPL_LIMIT: usize = 1;
+
+/// Largest concrete array length checked for one `usize` const generic.
+/// Every length from zero through this value is checked before a bounded verdict.
+pub(crate) const ARRAY_LENGTH_LIMIT: usize = 1;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Loop sensitivity / postfix repeat

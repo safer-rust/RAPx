@@ -1,134 +1,8 @@
-use std::process::Command;
-
 fn main() {
-    let (_major, minor, _patch) = detect_rustc_version();
-
-    emit_check_cfg("rapx_ge_100");
-    emit_check_cfg("rapx_generic_args_value");
-    emit_check_cfg("rapx_const_ext");
-    emit_check_cfg("rapx_box_deref_transmute");
-    emit_check_cfg("rapx_has_fielddef_extras");
-    emit_check_cfg("rapx_has_phantom_deref");
-    emit_check_cfg("rapx_scalar_to_pointer_interp_result");
-    emit_check_cfg("rapx_has_fnptr_asptr");
-    emit_check_cfg("rapx_has_fnaddr_asptr");
-    emit_check_cfg("rapx_has_attr_ir");
-    emit_check_cfg("rapx_alias_const_inherent_self");
-    emit_check_cfg("rapx_has_deeply_resolve_ignoring_regions");
-    emit_check_cfg("rapx_has_compiler_entrypoint");
-    emit_check_cfg("rapx_defkind_const_struct");
-    emit_check_cfg("rapx_has_boxraw");
-    emit_check_cfg("rapx_layout_align_abi");
-    emit_check_cfg("rapx_caller_bounds_accessor");
     emit_check_cfg("rapx_intrinsic_enum");
     emit_check_cfg("rapx_error_output_in_output");
+    emit_check_cfg("rapx_post_analysis_no_rigid_aliases");
 
-    emit_cfg("rapx_ge_100", minor >= 100);
-    emit_cfg(
-        "rapx_generic_args_value",
-        rustc_src_contains_path(
-            "compiler/rustc_middle/src/ty/generic_args.rs",
-            "pub struct GenericArgs<'tcx>",
-        ),
-    );
-    // `DefKind::Const`/`AssocConst` were struct variants (with `is_type_const`)
-    // between 1.96 and 1.99 inclusive; unit variants before and after.
-    emit_cfg(
-        "rapx_defkind_const_struct",
-        rustc_src_contains_path("compiler/rustc_hir/src/def.rs", "is_type_const"),
-    );
-    emit_cfg(
-        "rapx_has_fielddef_extras",
-        rustc_src_contains("pub struct FieldDefExtras"),
-    );
-    // `CastKind::BoxDerefTransmute` is the compiler's dedicated marker for the
-    // safe `*box` deref; present only on recent nightlies.
-    emit_cfg(
-        "rapx_box_deref_transmute",
-        rustc_src_contains_path("compiler/rustc_middle/src/mir/syntax.rs", "BoxDerefTransmute"),
-    );
-    emit_cfg(
-        "rapx_has_phantom_deref",
-        rustc_src_contains_path("compiler/rustc_middle/src/mir/syntax.rs", "PhantomDeref,"),
-    );
-    emit_cfg(
-        "rapx_scalar_to_pointer_interp_result",
-        rustc_src_contains_path(
-            "compiler/rustc_middle/src/mir/interpret/value.rs",
-            "to_pointer(self, cx: &impl HasDataLayout) -> InterpResult",
-        ),
-    );
-    emit_cfg(
-        "rapx_has_fnptr_asptr",
-        rustc_src_contains_path("compiler/rustc_middle/src/ty/instance.rs", "FnPtrAsPtr"),
-    );
-    emit_cfg(
-        "rapx_has_fnaddr_asptr",
-        rustc_commit_date().is_some_and(|date| date.as_str() >= "2026-11-12")
-            || rustc_src_contains_path("compiler/rustc_middle/src/ty/instance.rs", "FnAddrAsPtr"),
-    );
-    // `LangItem` / `Attribute` / `AttributeKind` / `find_attr!` moved from
-    // `rustc_hir` into the new `rustc_attr_ir` crate around 2026-09 (nightly
-    // 1.101).  Detect the move by the presence of `LangItem` in
-    // `rustc_attr_ir`.
-    emit_cfg(
-        "rapx_has_attr_ir",
-        rustc_src_contains_path("compiler/rustc_attr_ir/src/lang_items.rs", "pub enum LangItem"),
-    );
-    // `AliasConstKind::Inherent` split into `InherentSelf` + `InherentImpl` and
-    // `opt_def_id` was dropped (extract the def_id by matching) around 2026-09.
-    emit_cfg(
-        "rapx_alias_const_inherent_self",
-        rustc_src_contains_path("compiler/rustc_type_ir/src/const_kind.rs", "InherentSelf"),
-    );
-    // `InferCtxt::resolve_vars_if_possible` was renamed to
-    // `deeply_resolve_ignoring_regions` in nightly 2026-09-11.
-    emit_cfg(
-        "rapx_has_deeply_resolve_ignoring_regions",
-        rustc_src_contains_path(
-            "compiler/rustc_infer/src/infer/mod.rs",
-            "deeply_resolve_ignoring_regions",
-        ),
-    );
-    // `Const::{try_to_value,try_to_target_usize}` moved from an inherent impl
-    // onto the `ConstExt` trait (which must be in scope) in a recent nightly.
-    emit_cfg(
-        "rapx_const_ext",
-        rustc_src_contains_path(
-            "compiler/rustc_middle/src/ty/consts.rs",
-            "pub trait ConstExt",
-        ),
-    );
-    // `rustc_driver::run_compiler` was renamed to `compiler_entrypoint` (with a
-    // `&mut (dyn Callbacks + Send)` callback) in nightly 1.101.
-    emit_cfg(
-        "rapx_has_compiler_entrypoint",
-        rustc_src_contains_path(
-            "compiler/rustc_driver_impl/src/lib.rs",
-            "pub fn compiler_entrypoint",
-        ),
-    );
-    // `Box<T>`'s inner pointer was renamed `Unique<T>` -> `BoxRaw<T>` in
-    // nightly 1.101 (around 2026-10-08).  The heap-ownership analysis keys off
-    // the concrete inner type name, so detect the rename in the std source.
-    emit_cfg(
-        "rapx_has_boxraw",
-        std_src_contains_path("library/alloc/src/boxed.rs", "struct BoxRaw"),
-    );
-    emit_cfg(
-        "rapx_layout_align_abi",
-        rustc_src_contains_path(
-            "compiler/rustc_abi/src/lib.rs",
-            "pub align: AbiAlign,\n    pub size: Size,",
-        ),
-    );
-    emit_cfg(
-        "rapx_caller_bounds_accessor",
-        rustc_src_contains_path(
-            "compiler/rustc_type_ir/src/param_env.rs",
-            "pub struct CallerBoundsAccessor",
-        ),
-    );
     emit_cfg(
         "rapx_intrinsic_enum",
         rustc_src_contains_path(
@@ -143,6 +17,13 @@ fn main() {
             "pub enum ErrorOutputType",
         ),
     );
+    emit_cfg(
+        "rapx_post_analysis_no_rigid_aliases",
+        rustc_src_contains_path(
+            "compiler/rustc_middle/src/ty/mod.rs",
+            "pub fn post_analysis_no_rigid_aliases(",
+        ),
+    );
 }
 
 fn emit_check_cfg(name: &str) {
@@ -155,46 +36,6 @@ fn emit_cfg(name: &str, condition: bool) {
     }
 }
 
-fn detect_rustc_version() -> (u32, u32, u32) {
-    let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
-    let output = Command::new(&rustc)
-        .arg("--version")
-        .output()
-        .unwrap_or_else(|_| panic!("failed to run `{} --version`", rustc));
-
-    let version = String::from_utf8_lossy(&output.stdout);
-    let parts: Vec<&str> = version
-        .split(|c: char| !c.is_ascii_digit())
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    let major = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
-    let minor = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-    let patch = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
-    (major, minor, patch)
-}
-
-fn rustc_commit_date() -> Option<String> {
-    let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
-    let output = Command::new(rustc).arg("-vV").output().ok()?;
-    let version = String::from_utf8_lossy(&output.stdout);
-    version.lines().find_map(|line| line.strip_prefix("commit-date: ").map(str::to_string))
-}
-
-/// Check whether the rustc source tree contains a specific string (requires
-/// the `rust-src` component to be installed).
-fn rustc_src_contains(needle: &str) -> bool {
-    let sysroot = get_sysroot();
-    let ast = format!(
-        "{}/lib/rustlib/rustc-src/rust/compiler/rustc_ast/src/ast.rs",
-        sysroot
-    );
-    println!("cargo::rerun-if-changed={ast}");
-    std::fs::read_to_string(ast)
-        .map(|s| s.contains(needle))
-        .unwrap_or(false)
-}
-
 /// Check whether a specific file in the rustc source tree contains a string.
 fn rustc_src_contains_path(relative_path: &str, needle: &str) -> bool {
     let sysroot = get_sysroot();
@@ -205,18 +46,8 @@ fn rustc_src_contains_path(relative_path: &str, needle: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Check whether a specific file in the standard-library source tree (the
-/// `rust-src` component) contains a string.
-fn std_src_contains_path(relative_path: &str, needle: &str) -> bool {
-    let sysroot = get_sysroot();
-    let path = format!("{}/lib/rustlib/src/rust/{}", sysroot, relative_path);
-    println!("cargo::rerun-if-changed={path}");
-    std::fs::read_to_string(path)
-        .map(|s| s.contains(needle))
-        .unwrap_or(false)
-}
-
 fn get_sysroot() -> String {
+    use std::process::Command;
     let rustc = std::env::var("RUSTC").unwrap_or_else(|_| "rustc".to_string());
     Command::new(&rustc)
         .arg("--print")

@@ -1,4 +1,5 @@
-use crate::analysis::dataflow::call_summary::{effects::has_registered_effect, function_var::supports_result};
+use crate::analysis::dataflow::closure;
+use crate::analysis::dataflow::call_summary::effects::has_registered_effect;
 use crate::compat::{FxHashMap, GenericArgsRef};
 use crate::def_ids::{
     diagnostic_api, intrinsic_api,
@@ -10,10 +11,6 @@ use rustc_hir::{
     def::DefKind,
     def_id::{DefId, LocalDefId},
 };
-use rustc_middle::ty::ShimKind;
-#[cfg(rapx_const_ext)]
-use rustc_middle::ty::consts::ConstExt;
-#[cfg(rapx_alias_const_inherent_self)]
 use rustc_middle::ty::AliasConstKind;
 use rustc_middle::{
     mir::interpret::{AllocId, GlobalAlloc},
@@ -22,16 +19,16 @@ use rustc_middle::{
         TerminatorKind,
     },
     ty::{
-        Const, ConstKind, FieldDef, GenericArgKind, GenericArgs, GenericParamDefKind,
-        Instance, InstanceKind, PseudoCanonicalInput, ScalarInt, Ty, TyCtxt, TyKind, TypeFlags,
-        TypeSuperVisitable, TypeVisitable, TypeVisitableExt, TypeVisitor, TypingEnv,
+        ConstKind, FieldDef, GenericArgKind, GenericArgs, GenericParamDefKind,
+        Instance, PseudoCanonicalInput, ScalarInt, Ty, TyCtxt, TyKind, TypeFlags, TypeVisitableExt, TypingEnv,
     },
 };
 use rustc_span::{DUMMY_SP, Symbol};
 
-use std::{collections::HashSet, ops::ControlFlow};
+use std::collections::HashSet;
 
 use super::def_use::PlaceKey;
+use super::resolve;
 
 pub(crate) fn pointee_ty<'tcx>(ty: Ty<'tcx>) -> Option<Ty<'tcx>> {
     match ty.kind() {
@@ -145,123 +142,6 @@ pub(crate) fn range_kind(tcx: TyCtxt<'_>, def_id: DefId) -> RangeKind {
     }
 }
 
-/// Resolve a `FnDef(def_id, args)` (already `skip_binder`d by the caller) to
-/// its monomorphized [`Instance`] in `caller`'s post-analysis typing env.
-pub(crate) fn resolve_instance<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    caller: DefId,
-    def_id: DefId,
-    args: GenericArgsRef<'tcx>,
-) -> Option<Instance<'tcx>> {
-    if has_unresolved_const_args(tcx, caller, args) {
-        return None;
-    }
-    let typing_env = TypingEnv::post_analysis(tcx, caller);
-    Instance::try_resolve(tcx, typing_env, def_id, args)
-        .ok()
-        .flatten()
-}
-
-pub(crate) fn has_unresolved_const_args<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    caller: DefId,
-    args: GenericArgsRef<'tcx>,
-) -> bool {
-    if !args.has_type_flags(TypeFlags::HAS_CT_PARAM) {
-        return false;
-    }
-    struct UnboundConstParam<'tcx> {
-        tcx: TyCtxt<'tcx>,
-        caller: DefId,
-    }
-    impl<'tcx> TypeVisitor<TyCtxt<'tcx>> for UnboundConstParam<'tcx> {
-        type Result = ControlFlow<()>;
-
-        fn visit_const(&mut self, ct: Const<'tcx>) -> Self::Result {
-            if let ConstKind::Param(param) = ct.kind() {
-                let generics = self.tcx.generics_of(self.caller);
-                let index = param.index as usize;
-                if index >= generics.count() {
-                    return ControlFlow::Break(());
-                }
-                let definition = generics.param_at(index, self.tcx);
-                if !matches!(definition.kind, GenericParamDefKind::Const { .. })
-                    || definition.name != param.name
-                {
-                    return ControlFlow::Break(());
-                }
-            }
-            ct.super_visit_with(self)
-        }
-    }
-    args.visit_with(&mut UnboundConstParam { tcx, caller })
-        .is_break()
-}
-
-/// Map a resolved [`Instance`] to its concrete target `DefId` and whether the
-/// dispatch is virtual. `None` for kinds with no single target (e.g. a closure's
-/// `Clone` shim).
-pub(crate) fn instance_def_id<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    instance: Instance<'tcx>,
-) -> (Option<DefId>, bool) {
-    let mut is_virtual = false;
-    let def_id = match instance.def {
-        InstanceKind::Item(def_id) => Some(def_id),
-        InstanceKind::Intrinsic(def_id) => Some(def_id),
-        InstanceKind::Virtual(def_id, _) => {
-            is_virtual = true;
-            Some(def_id)
-        }
-        InstanceKind::Shim(shim_kind) => match shim_kind {
-            ShimKind::VTable(def_id) => Some(def_id),
-            ShimKind::Reify(def_id, _) => Some(def_id),
-            ShimKind::FnPtr(def_id, _) => Some(def_id),
-            ShimKind::ClosureOnce { call_once, .. } => Some(call_once),
-            ShimKind::ConstructCoroutineInClosure {
-                coroutine_closure_def_id,
-                ..
-            } => Some(coroutine_closure_def_id),
-            ShimKind::ThreadLocal(def_id) => Some(def_id),
-            ShimKind::DropGlue(def_id, _) => Some(def_id),
-            #[cfg(rapx_has_fnaddr_asptr)]
-            ShimKind::FnAddrAsPtr(def_id, _) => Some(def_id),
-            #[cfg(all(not(rapx_has_fnaddr_asptr), rapx_has_fnptr_asptr))]
-            ShimKind::FnPtrAsPtr(def_id, _) => Some(def_id),
-            #[cfg(all(not(rapx_has_fnaddr_asptr), not(rapx_has_fnptr_asptr)))]
-            ShimKind::FnPtrAddr(def_id, _) => Some(def_id),
-            ShimKind::AsyncDropGlueCtor(def_id, _) => Some(def_id),
-            ShimKind::Clone(def_id, _) => {
-                if !tcx.is_closure_like(def_id) {
-                    Some(def_id)
-                } else {
-                    None
-                }
-            }
-            _ => todo!(),
-        },
-        #[allow(unreachable_patterns)]
-        _ => None,
-    };
-    (def_id, is_virtual)
-}
-
-/// Enumerate the concrete impl methods that could be dispatched for a trait
-/// method (the set of targets behind a trait-object / virtual call). Each
-/// returned `DefId` is an impl's override of `method_def_id`.
-pub(crate) fn trait_impl_candidates(tcx: TyCtxt<'_>, method_def_id: DefId) -> Vec<DefId> {
-    let mut candidates = Vec::new();
-    if let Some(trait_def_id) = tcx.trait_of_assoc(method_def_id) {
-        for impl_id in tcx.all_impls(trait_def_id) {
-            let impl_map = tcx.impl_item_implementor_ids(impl_id);
-            if let Some(candidate_def_id) = impl_map.get(&method_def_id) {
-                candidates.push(*candidate_def_id);
-            }
-        }
-    }
-    candidates
-}
-
 /// Build a partially-monomorphized [`Instance`] for `def_id`, replacing one
 /// type parameter and leaving the others as parameters.
 pub(crate) fn monomorphize_instance<'tcx>(
@@ -293,14 +173,9 @@ pub(crate) fn type_param_impl_tys<'tcx>(
     if !matches!(param_ty.kind(), TyKind::Param(_)) {
         return Vec::new();
     }
-    #[cfg(not(rapx_caller_bounds_accessor))]
-    let param_env = tcx.param_env(def_id);
     let mut bounds = Vec::new();
-    #[cfg(rapx_caller_bounds_accessor)]
     let clauses = std::iter::successors(Some(def_id), |&did| tcx.clauses_of(did).parent)
         .flat_map(|did| tcx.clauses_of(did).clauses.iter().map(|(clause, _)| clause));
-    #[cfg(not(rapx_caller_bounds_accessor))]
-    let clauses = param_env.caller_bounds();
     for clause in clauses {
         let Some(trait_clause) = clause.as_trait_clause() else {
             continue;
@@ -422,9 +297,9 @@ pub(crate) fn has_direct_unmodeled_generic_call<'tcx>(tcx: TyCtxt<'tcx>, def_id:
         tcx.opt_associated_item(callee)
             .and_then(|item| item.trait_container(tcx))
             .is_some()
-            && resolve_callee_def_id(tcx, def_id, func)
+            && resolve::resolve_callee_def_id(tcx, def_id, func)
                 .is_none_or(|target| !tcx.is_mir_available(target))
-            && !has_function_var_effect(tcx, callee, body.local_decls[destination.local].ty)
+            && !closure::can_abstract_call(tcx, callee, body.local_decls[destination.local].ty)
             && !has_registered_effect(tcx, Some(callee))
     })
 }
@@ -459,9 +334,9 @@ fn has_unmodeled_generic_call_rec<'tcx>(
             // A resolved `Instance` may still be virtual or name the trait
             // method itself. What matters is whether the actual target has
             // executable MIR after resolving this call.
-            let target = resolve_callee_def_id(tcx, def_id, func);
+            let target = resolve::resolve_callee_def_id(tcx, def_id, func);
             if target.is_none_or(|target| !tcx.is_mir_available(target))
-                && !has_function_var_effect(tcx, callee, body.local_decls[destination.local].ty)
+                && !closure::can_abstract_call(tcx, callee, body.local_decls[destination.local].ty)
                 && !has_registered_effect(tcx, Some(callee))
             {
                 return true;
@@ -478,54 +353,6 @@ fn has_unmodeled_generic_call_rec<'tcx>(
         }
     }
     false
-}
-
-fn has_function_var_effect(tcx: TyCtxt<'_>, callee: DefId, result_ty: Ty<'_>) -> bool {
-    tcx.trait_of_assoc(callee)
-        .is_some_and(|trait_id| lang_api::is_fn_trait(tcx, trait_id))
-        && supports_result(result_ty)
-}
-
-/// Resolve a call `func` operand to its monomorphized [`Instance`].
-pub(crate) fn resolve_callee_instance<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    caller: DefId,
-    func: &Operand<'tcx>,
-) -> Option<Instance<'tcx>> {
-    let Operand::Constant(c) = func else {
-        return None;
-    };
-    let TyKind::FnDef(def_id, callee_args) = c.const_.ty().kind() else {
-        return None;
-    };
-    let callee_args = callee_args.skip_binder();
-    resolve_instance(tcx, caller, *def_id, callee_args)
-}
-
-/// Return the call's `DefId`, using the selected impl method's `DefId` when
-/// available. Otherwise return the `DefId` from the operand.
-pub(crate) fn resolve_callee_def_id<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    caller: DefId,
-    func: &Operand<'tcx>,
-) -> Option<DefId> {
-    let Operand::Constant(c) = func else {
-        return None;
-    };
-    let TyKind::FnDef(def_id, callee_args) = c.const_.ty().kind() else {
-        return None;
-    };
-    let callee_def_id = *def_id;
-    let callee_args = callee_args.skip_binder();
-    let resolved = tcx
-        .opt_associated_item(callee_def_id)
-        .and_then(|item| item.trait_container(tcx))
-        .and_then(|_| resolve_instance(tcx, caller, callee_def_id, callee_args))
-        .and_then(|instance| match instance.def {
-            InstanceKind::Item(def_id) => Some(def_id),
-            _ => None,
-        });
-    Some(resolved.unwrap_or(callee_def_id))
 }
 
 /// Collect all return basic block indices for a function body.
@@ -779,11 +606,6 @@ pub(crate) fn resolve_const_item_value<'tcx>(tcx: TyCtxt<'tcx>, name: &str) -> O
         if item_name.as_str() != name {
             continue;
         }
-        #[cfg(rapx_defkind_const_struct)]
-        if !matches!(tcx.def_kind(def_id), rustc_hir::def::DefKind::Const { .. }) {
-            continue;
-        }
-        #[cfg(not(rapx_defkind_const_struct))]
         if !matches!(tcx.def_kind(def_id), rustc_hir::def::DefKind::Const) {
             continue;
         }
@@ -812,9 +634,6 @@ fn const_value_bytes<'tcx>(tcx: TyCtxt<'tcx>, value: ConstValue, depth: usize) -
     match value {
         ConstValue::Slice { alloc_id, .. } => alloc_id_bytes(tcx, alloc_id, depth),
         ConstValue::Scalar(scalar) => {
-            #[cfg(rapx_scalar_to_pointer_interp_result)]
-            let ptr = scalar.to_pointer(&tcx).discard_err()?;
-            #[cfg(not(rapx_scalar_to_pointer_interp_result))]
             let ptr = scalar.to_pointer(&tcx);
             let alloc_id = ptr.provenance?.alloc_id();
             alloc_id_bytes(tcx, alloc_id, depth)
@@ -896,15 +715,6 @@ pub(crate) fn ctfe_mir_available(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
 }
 
 fn is_const_def_kind(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
-    #[cfg(rapx_defkind_const_struct)]
-    let base = matches!(
-        tcx.def_kind(def_id),
-        DefKind::Const { .. }
-            | DefKind::Static { .. }
-            | DefKind::AssocConst { .. }
-            | DefKind::AnonConst
-    );
-    #[cfg(not(rapx_defkind_const_struct))]
     let base = matches!(
         tcx.def_kind(def_id),
         DefKind::Const | DefKind::Static { .. } | DefKind::AssocConst | DefKind::AnonConst
@@ -964,7 +774,7 @@ pub fn layout_of_ty<'tcx>(
     caller: DefId,
     ty: Ty<'tcx>,
 ) -> Option<rustc_abi::TyAndLayout<'tcx, Ty<'tcx>>> {
-    let env = TypingEnv::post_analysis(tcx, caller);
+    let env = crate::compat::typing_env_post_analysis(tcx, caller);
     catch_panic(|| {
         tcx.layout_of(PseudoCanonicalInput {
             typing_env: env,
@@ -975,16 +785,9 @@ pub fn layout_of_ty<'tcx>(
     .and_then(|r| r.ok())
 }
 
-/// ABI alignment in bytes across rustc layout API versions.
+/// ABI alignment in bytes.
 pub fn layout_align_bytes(layout: &rustc_abi::TyAndLayout<'_, Ty<'_>>) -> u64 {
-    #[cfg(rapx_layout_align_abi)]
-    {
-        layout.align.abi.bytes()
-    }
-    #[cfg(not(rapx_layout_align_abi))]
-    {
-        layout.align.bytes()
-    }
+    layout.align.bytes()
 }
 
 /// Byte offset of a struct field within its container type (0 on failure).
@@ -1133,9 +936,6 @@ pub(crate) fn eval_array_len<'tcx>(
         let ConstKind::Alias(_, alias_const) = c.kind() else {
             return None;
         };
-        #[cfg(not(rapx_alias_const_inherent_self))]
-        let def_id = alias_const.kind.opt_def_id()?;
-        #[cfg(rapx_alias_const_inherent_self)]
         let def_id = {
             match alias_const.kind {
                 AliasConstKind::Projection { def_id } => def_id,
@@ -1158,6 +958,16 @@ pub(crate) fn eval_array_len<'tcx>(
         return Some(scalar.to_target_usize(tcx));
     }
     None
+}
+
+/// Whether an array nested in this type has a const-generic length.
+pub(crate) fn has_symbolic_array_length(ty: Ty<'_>) -> bool {
+    match ty.kind() {
+        TyKind::Array(element, len) => len.has_type_flags(TypeFlags::HAS_CT_PARAM) || has_symbolic_array_length(*element),
+        TyKind::Slice(element) | TyKind::Ref(_, element, _) | TyKind::RawPtr(element, _) => has_symbolic_array_length(*element),
+        TyKind::Tuple(fields) => fields.iter().any(has_symbolic_array_length),
+        _ => false,
+    }
 }
 
 /// Try to extract raw bytes from a MIR constant operand that is a reference
@@ -1262,17 +1072,7 @@ pub fn type_contains_raw_ptr<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool {
     }
 }
 
-/// Resolve a struct field's type, normalizing where the rustc version requires it.
-///
-/// On newer rustc `field.ty(tcx, args)` returns an `Unnormalized<Ty>` that must
-/// be `.skip_norm_wip()`-ed; on older toolchains the `SkipNormWip` shim makes
-/// the same call a no-op, so this is version-independent.
-#[cfg(not(rapx_generic_args_value))]
-pub fn field_ty<'tcx>(tcx: TyCtxt<'tcx>, field: &FieldDef, args: GenericArgsRef<'tcx>) -> Ty<'tcx> {
-    field.ty(tcx, args).skip_norm_wip()
-}
-
-#[cfg(rapx_generic_args_value)]
+/// Resolve and normalize a struct field's type.
 pub fn field_ty<'tcx>(
     tcx: TyCtxt<'tcx>,
     field: &FieldDef,
@@ -1328,14 +1128,9 @@ fn generic_param_impl_layouts<'tcx>(
     if !matches!(ty.kind(), TyKind::Param(_)) {
         return Vec::new();
     }
-    #[cfg(not(rapx_caller_bounds_accessor))]
-    let param_env = tcx.param_env(caller);
-    let typing_env = TypingEnv::post_analysis(tcx, caller);
-    #[cfg(rapx_caller_bounds_accessor)]
+    let typing_env = crate::compat::typing_env_post_analysis(tcx, caller);
     let clauses = std::iter::successors(Some(caller), |&did| tcx.clauses_of(did).parent)
         .flat_map(|did| tcx.clauses_of(did).clauses.iter().map(|(clause, _)| clause));
-    #[cfg(not(rapx_caller_bounds_accessor))]
-    let clauses = param_env.caller_bounds();
     for clause in clauses {
         let Some(trait_clause) = clause.as_trait_clause() else {
             continue;

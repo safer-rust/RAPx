@@ -5,12 +5,7 @@
 //! Keep this module limited to identifying rustc lang items and their trait
 //! methods by `DefId`. Do not depend on other RAPx modules.
 
-#[cfg(rapx_has_attr_ir)]
 pub(crate) use rustc_attr_ir::LangItem;
-#[cfg(all(not(rapx_has_attr_ir), not(rapx_ge_100)))]
-pub(crate) use rustc_hir::LangItem;
-#[cfg(all(not(rapx_has_attr_ir), rapx_ge_100))]
-pub(crate) use rustc_hir::attrs::lang_items::LangItem;
 use rustc_hir::def_id::DefId;
 use rustc_middle::ty::TyCtxt;
 

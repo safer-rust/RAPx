@@ -10,7 +10,7 @@ use rustc_middle::{
         AggregateKind, BasicBlock, BinOp, Body, Local, Operand, ProjectionElem, Rvalue,
         StatementKind, SwitchTargets, Terminator, TerminatorKind, UnOp, UnwindAction,
     },
-    ty::{TyCtxt, TyKind, TypingEnv},
+    ty::{TyCtxt, TyKind},
 };
 use rustc_span::def_id::DefId;
 use std::collections::hash_map::DefaultHasher;
@@ -236,7 +236,7 @@ fn build_function_info<'tcx>(
                 }
                 match rvalue {
                     Rvalue::Use(Operand::Constant(c), ..) => {
-                        let typing_env = TypingEnv::post_analysis(tcx, def_id);
+                        let typing_env = crate::compat::typing_env_post_analysis(tcx, def_id);
                         let val = match c.const_.ty().kind() {
                             TyKind::Bool => c
                                 .const_
@@ -319,7 +319,7 @@ fn build_function_info<'tcx>(
                         } {
                             let rhs_kind = match rhs {
                                 Operand::Constant(c) => {
-                                    let typing_env = TypingEnv::post_analysis(tcx, def_id);
+                                    let typing_env = crate::compat::typing_env_post_analysis(tcx, def_id);
                                     c.const_
                                         .try_eval_bits(tcx, typing_env)
                                         .and_then(|v| usize::try_from(v).ok())
@@ -363,7 +363,7 @@ fn build_function_info<'tcx>(
                         if let Some(lhs_local) = lhs_local {
                             let rhs_kind = match rhs {
                                 Operand::Constant(c) => {
-                                    let typing_env = TypingEnv::post_analysis(tcx, def_id);
+                                    let typing_env = crate::compat::typing_env_post_analysis(tcx, def_id);
                                     c.const_
                                         .try_eval_bits(tcx, typing_env)
                                         .and_then(|v| usize::try_from(v).ok())
@@ -417,7 +417,7 @@ fn build_function_info<'tcx>(
                         } {
                             let divisor = match rhs {
                                 Operand::Constant(c) => {
-                                    let typing_env = TypingEnv::post_analysis(tcx, def_id);
+                                    let typing_env = crate::compat::typing_env_post_analysis(tcx, def_id);
                                     c.const_
                                         .try_eval_bits(tcx, typing_env)
                                         .and_then(|v| usize::try_from(v).ok())
@@ -835,7 +835,7 @@ impl<'tcx> PathGraph<'tcx> {
             Operand::Copy(p) | Operand::Move(p) => p.local.as_usize(),
             Operand::Constant(c) => {
                 let typing_env =
-                    rustc_middle::ty::TypingEnv::post_analysis(self.cfg.tcx, self.cfg.def_id);
+                    crate::compat::typing_env_post_analysis(self.cfg.tcx, self.cfg.def_id);
                 return c
                     .const_
                     .try_eval_bool(self.cfg.tcx, typing_env)
@@ -1094,7 +1094,7 @@ impl<'tcx> PathGraph<'tcx> {
                         .const_
                         .eval(
                             self.cfg.tcx,
-                            TypingEnv::post_analysis(self.cfg.tcx, self.cfg.def_id),
+                            crate::compat::typing_env_post_analysis(self.cfg.tcx, self.cfg.def_id),
                             rustc_span::DUMMY_SP,
                         )
                         .ok()

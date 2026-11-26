@@ -10,7 +10,7 @@ use z3::ast::{Ast, Bool, Int};
 use super::super::integer::{AddSubMul, BitwiseOp, overflowing_binary, signed_div_rem};
 
 use super::super::state::{
-    AllocId, Provenance, REPEATED_ARRAY_ELEMENT, ValueFacts, ValueSource, VmExecutor, VmValue,
+    AllocId, Provenance, ARRAY_INDEX_MAX, ValueFacts, ValueSource, VmExecutor, VmValue,
 };
 
 use crate::def_ids::type_ids;
@@ -401,8 +401,8 @@ pub(crate) fn eval_binary_op<'z3, 'tcx>(
     } else {
         raw_term
     };
-    let provenance = state.provenance_for_binary_op(op, &lhs, &rhs);
-    let invariants = state.facts_for_binary_op(op, &lhs, &rhs, &provenance);
+    let provenance = state.provenance_for_address_arithmetic(op, &lhs, &rhs, &term);
+    let invariants = state.facts_for_binary_op(op, &lhs, &rhs);
     let lhs_pk = mir_utils::operand_place(lhs_op);
     let rhs_pk = mir_utils::operand_place(rhs_op);
     // Carry the direct boolean condition alongside the ite-encoded result so
@@ -473,7 +473,7 @@ pub(crate) fn eval_unary_op<'z3, 'tcx>(
         let is_dst = mir_utils::pointee_ty(val.ty).is_some_and(|p| {
             !p.is_sized(
                 state.tcx,
-                rustc_middle::ty::TypingEnv::post_analysis(
+                crate::compat::typing_env_post_analysis(
                     state.tcx,
                     state.path_state.current_frame.current_def_id,
                 ),
@@ -532,7 +532,6 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
 ) -> VmValue<'z3, 'tcx> {
     let mut src_val = state.value_of_operand(operand);
     state.try_materialize_const_bytes(&mut src_val, operand);
-    #[cfg(rapx_box_deref_transmute)]
     let src_val = if matches!(kind, CastKind::BoxDerefTransmute) {
         mir_utils::extract_local(operand)
             .and_then(|local| state.field_value(local, &[0]).cloned())
@@ -675,7 +674,7 @@ pub(crate) fn eval_aggregate<'z3, 'tcx>(
         let sized = (!mir_utils::ty_has_type_param(*pointee_ty)
             && pointee_ty.is_sized(
                 state.tcx,
-                rustc_middle::ty::TypingEnv::post_analysis(
+                crate::compat::typing_env_post_analysis(
                     state.tcx,
                     state.path_state.current_frame.current_def_id,
                 ),
@@ -813,6 +812,9 @@ pub(crate) fn eval_aggregate<'z3, 'tcx>(
         let mut field_path = dest_prefix.clone();
         field_path.push(i);
         state.set_field_value(dest_local, field_path.clone(), field_val);
+        if let Operand::Constant(constant) = operand {
+            state.materialize_const_fields(dest_local, field_path.clone(), &constant.const_);
+        }
         // Flatten a nested aggregate: if the operand is a local whose own fields
         // are tracked (e.g. `_0 = Result::Ok(_24)` where `_24 = RawVecInner { ptr:
         // _25, .. }`), expose the nested fields under the destination's field
@@ -1182,7 +1184,7 @@ pub(crate) fn eval_repeat<'z3, 'tcx>(
             *ty != view_ty || path.len() <= field_path.len() || !path.starts_with(&field_path)
         });
     }
-    field_path.push(REPEATED_ARRAY_ELEMENT);
+    field_path.push(ARRAY_INDEX_MAX);
     state.set_field_value(dest_place.local, field_path.clone(), value);
     if let Some(source) = operand.place()
         && source.projection.is_empty()
@@ -1299,15 +1301,12 @@ pub(crate) fn eval_reborrow<'z3, 'tcx>(
         }
         _ => false,
     };
-    #[cfg(rapx_has_phantom_deref)]
     let has_phantom_deref = source_place.projection.iter().any(|projection| {
         matches!(
             projection.kind(),
             rustc_middle::mir::ProjectionElem::PhantomDeref
         )
     });
-    #[cfg(not(rapx_has_phantom_deref))]
-    let has_phantom_deref = false;
     if (!same_adt && !compatible_shared) || has_phantom_deref {
         state.path_state.diagnostics.mark_unsupported();
         return eval_fresh_value(state, dest_place, "reborrow");
@@ -1320,79 +1319,35 @@ pub(crate) fn eval_reborrow<'z3, 'tcx>(
 }
 
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
-    /// Compute provenance for a binary operation on pointer values.
-    /// Propagates provenance with adjusted offset for pointer arithmetic
-    /// (`ptr + offset`, `ptr - offset`, `Offset`).
-    fn provenance_for_binary_op(
+    /// Keep an exposed pointer's allocation origin through address addition or subtraction.
+    fn provenance_for_address_arithmetic(
         &self,
         op: BinOp,
         lhs: &VmValue<'z3, 'tcx>,
         rhs: &VmValue<'z3, 'tcx>,
+        result: &Int<'z3>,
     ) -> Option<Provenance<'z3>> {
-        if rhs.is_pointer() && !matches!(op, BinOp::Div | BinOp::Rem) {
+        if rhs.is_pointer() || !matches!(op, BinOp::Add | BinOp::AddWithOverflow | BinOp::AddUnchecked
+            | BinOp::Sub | BinOp::SubWithOverflow | BinOp::SubUnchecked) {
             return None;
         }
-        match op {
-            BinOp::Add | BinOp::AddWithOverflow | BinOp::AddUnchecked | BinOp::Offset => {
-                lhs.provenance.as_ref().map(|prov| Provenance {
-                    alloc_id: prov.alloc_id,
-                    offset: Int::add(self.z3_ctx, &[&prov.offset, &rhs.z3_term]),
-                    offset_kind: None,
-                })
-            }
-            BinOp::Sub | BinOp::SubWithOverflow | BinOp::SubUnchecked => {
-                lhs.provenance.as_ref().map(|prov| Provenance {
-                    alloc_id: prov.alloc_id,
-                    offset: Int::sub(self.z3_ctx, &[&prov.offset, &rhs.z3_term]),
-                    offset_kind: None,
-                })
-            }
-            BinOp::BitAnd => {
-                lhs.provenance.as_ref().map(|prov| Provenance {
-                    alloc_id: prov.alloc_id,
-                    // Alignment rounding changes the intra-allocation offset
-                    // unpredictably; use a fresh symbolic offset constrained
-                    // by the BitAnd path conditions emitted in eval_binary_op.
-                    offset: self.fresh_int("align_offset"),
-                    offset_kind: None,
-                })
-            }
-            BinOp::BitXor | BinOp::Shr | BinOp::ShrUnchecked => lhs.provenance.clone(),
-            BinOp::BitOr | BinOp::Shl | BinOp::ShlUnchecked => {
-                lhs.provenance.as_ref().map(|prov| Provenance {
-                    alloc_id: prov.alloc_id,
-                    offset: Int::add(self.z3_ctx, &[&prov.offset, &rhs.z3_term]),
-                    offset_kind: None,
-                })
-            }
-            BinOp::Mul | BinOp::MulWithOverflow | BinOp::MulUnchecked => {
-                lhs.provenance.as_ref().map(|prov| Provenance {
-                    alloc_id: prov.alloc_id,
-                    offset: Int::mul(self.z3_ctx, &[&prov.offset, &rhs.z3_term]),
-                    offset_kind: None,
-                })
-            }
-            BinOp::Div | BinOp::Rem => lhs.provenance.clone(),
-            _ => None,
-        }
+        let origin = lhs.provenance.as_ref()?;
+        let base = &self.alloc(origin.alloc_id).base;
+        // Derive the offset from the final term so integer wrapping stays consistent.
+        Some(Provenance {
+            alloc_id: origin.alloc_id,
+            offset: Int::sub(self.z3_ctx, &[result, base]),
+            offset_kind: None,
+        })
     }
 
-    /// Compute facts for a binary operation.
-    /// Propagates non_null from pointer arithmetic and align_n from compatible ops.
+    /// Compute alignment facts for an integer binary operation.
     fn facts_for_binary_op(
         &self,
         op: BinOp,
         lhs: &VmValue<'z3, 'tcx>,
         rhs: &VmValue<'z3, 'tcx>,
-        provenance: &Option<Provenance<'z3>>,
     ) -> ValueFacts<'z3> {
-        // A bitwise AND may clear the low bits entirely (`ptr & mask == 0` for a
-        // small/aligned-to-zero pointer), so the result is not guaranteed
-        // non-null even when the lhs pointer is.  Other pointer arithmetic
-        // (`add`/`sub`/`offset`) preserves non-nullness under the VM's
-        // no-wrap assumption.
-        let non_null = !matches!(op, BinOp::BitAnd) && provenance.is_some() && lhs.facts.non_null;
-
         let align_n = match op {
             BinOp::Add
             | BinOp::AddWithOverflow
@@ -1435,14 +1390,11 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     .and_then(pow2_factor)
                     .map(|p| Int::from_u64(self.z3_ctx, p)),
             },
-            _ => lhs.facts.align_n.clone(),
+            BinOp::BitAnd | BinOp::Shl | BinOp::ShlUnchecked => lhs.facts.align_n.clone(),
+            _ => None,
         };
 
-        ValueFacts {
-            non_null,
-            align_n,
-            ..Default::default()
-        }
+        ValueFacts { align_n, ..Default::default() }
     }
 
     /// Check if a value is known to be a multiple of `align` (e.g. the result

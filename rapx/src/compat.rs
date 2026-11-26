@@ -14,49 +14,33 @@
 pub use rustc_hash::FxHashMap;
 pub use rustc_hash::FxHashSet;
 
-#[cfg(not(rapx_generic_args_value))]
-pub use rustc_middle::ty::GenericArgsRef;
-#[cfg(rapx_generic_args_value)]
 pub type GenericArgsRef<'tcx> = rustc_middle::ty::GenericArgs<'tcx>;
 
 /// `Spanned` was moved from `rustc_span::source_map` to `rustc_span` root
 /// in rustc 1.97.
 pub use rustc_span::Spanned;
 
-// ── predicates_of / clauses_of (rustc ≥ 1.100) ────────────────────────
-
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::TyCtxt;
+use rustc_middle::ty::{TyCtxt, TypingEnv};
 
-/// Type alias for the return type of `predicates_of`.
-#[cfg(not(rapx_ge_100))]
-pub type GenericPredicatesC<'tcx> = rustc_middle::ty::GenericPredicates<'tcx>;
-#[cfg(rapx_ge_100)]
+/// Post-analysis typing environment across rustc nightly API versions.
+#[inline]
+pub fn typing_env_post_analysis<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> TypingEnv<'tcx> {
+    #[cfg(rapx_post_analysis_no_rigid_aliases)]
+    { TypingEnv::post_analysis_no_rigid_aliases(tcx, def_id) }
+    #[cfg(not(rapx_post_analysis_no_rigid_aliases))]
+    { TypingEnv::post_analysis(tcx, def_id) }
+}
+
+/// Type alias for the return type of `clauses_of`.
 pub type GenericPredicatesC<'tcx> = rustc_middle::ty::GenericClauses<'tcx>;
 
-/// Fetch generic predicates/clauses for a definition.
-#[cfg(not(rapx_ge_100))]
-#[inline]
-pub fn predicates_of<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> GenericPredicatesC<'tcx> {
-    tcx.predicates_of(def_id)
-}
-#[cfg(rapx_ge_100)]
+/// Fetch generic clauses for a definition.
 #[inline]
 pub fn predicates_of<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> GenericPredicatesC<'tcx> {
     tcx.clauses_of(def_id)
 }
 
-// ── GenericArgsRef::get (Binder wrapping in rustc ≥ 1.99) ─────────────
-
-#[cfg(not(rapx_generic_args_value))]
-pub fn args_get<'tcx>(
-    args: &rustc_middle::ty::Binder<'tcx, &'tcx rustc_middle::ty::GenericArgs<'tcx>>,
-    index: usize,
-) -> Option<rustc_middle::ty::GenericArg<'tcx>> {
-    args.skip_binder().get(index).copied()
-}
-
-#[cfg(rapx_generic_args_value)]
 pub fn args_get<'tcx>(
     args: &rustc_middle::ty::Binder<'tcx, rustc_middle::ty::GenericArgs<'tcx>>,
     index: usize,
@@ -66,10 +50,7 @@ pub fn args_get<'tcx>(
 
 // ── get_all_attrs (deprecated but still the only way) ───────────────────
 
-#[cfg(rapx_has_attr_ir)]
 use rustc_attr_ir::Attribute;
-#[cfg(not(rapx_has_attr_ir))]
-use rustc_hir::Attribute;
 
 #[allow(deprecated)]
 #[inline]

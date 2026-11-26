@@ -189,14 +189,7 @@ fn heapowner_collections() {
     ] {
         assert_contain(&output, pattern);
     }
-    #[cfg(rapx_has_boxraw)]
-    {
-        assert_contain(&output, "BoxRaw\": True, <0>");
-    }
-    #[cfg(not(rapx_has_boxraw))]
-    {
-        assert_contain(&output, "Unique\": True, <0>");
-    }
+    assert_contain(&output, "BoxRaw\": True, <0>");
     assert_contain(&output, "HashMap\": True, <0,0,1,1>");
     assert_contain(&output, "HashSet\": True, <0,1,1>");
     assert_contain(&output, "BTreeMap\": True, <0,0,1>");

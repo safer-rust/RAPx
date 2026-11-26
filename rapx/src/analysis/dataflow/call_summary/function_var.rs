@@ -11,15 +11,9 @@ use rustc_middle::{
     ty::{Mutability, Ty, TyCtxt, TyKind},
 };
 
-use crate::def_ids::type_ids;
+use crate::analysis::dataflow::closure;
 use crate::analysis::dataflow::call::CallDependencies;
 use crate::compat::Spanned;
-use crate::def_ids::lang_api;
-
-pub(crate) fn supports_result(ty: Ty<'_>) -> bool {
-    matches!(ty.kind(), TyKind::Bool)
-        || matches!(ty.kind(), TyKind::Adt(def, _) if type_ids::is_std_ordering(def.did()))
-}
 
 pub(super) fn estimate<'tcx>(
     tcx: TyCtxt<'tcx>,
@@ -27,11 +21,7 @@ pub(super) fn estimate<'tcx>(
     args: &[Spanned<Operand<'tcx>>],
     body: &Body<'tcx>,
 ) -> Option<CallDependencies> {
-    if tcx.is_mir_available(callee) {
-        return None;
-    }
-    let trait_id = tcx.trait_of_assoc(callee)?;
-    if !lang_api::is_fn_trait(tcx, trait_id) {
+    if !closure::is_opaque_fn_call(tcx, callee) {
         return None;
     }
 

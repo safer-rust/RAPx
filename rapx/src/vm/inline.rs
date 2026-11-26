@@ -1,20 +1,20 @@
 use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::{
     mir::{
-        BasicBlock, Local, Operand, ProjectionElem, Rvalue, StatementKind, Terminator,
+        BasicBlock, Body, Local, Operand, Place, ProjectionElem, Rvalue, StatementKind, Terminator,
         TerminatorKind,
     },
-    ty::{EarlyBinder, Instance, TyKind, TypingEnv},
+    ty::{EarlyBinder, Instance, Ty, TyKind},
 };
 use z3::ast::{Bool, Int};
 use z3::{SatResult, Solver};
 
 use super::state::{AllocId, MemoryContent, VmExecutor, VmValue};
-use crate::compat::{FxHashSet, Spanned};
-use crate::util::mir_utils;
-use crate::limit::MAX_INLINE_DEPTH;
+use crate::compat::{FxHashMap, FxHashSet, Spanned};
+use crate::limit::{MAX_INLINE_BLOCK_VISITS, MAX_INLINE_DEPTH};
+use crate::util::{mir_utils, resolve};
 
-type InlineWorkItem<'z3, 'tcx> = (VmExecutor<'z3, 'tcx>, BasicBlock, FxHashSet<BasicBlock>);
+type InlineWorkItem<'z3, 'tcx> = (VmExecutor<'z3, 'tcx>, BasicBlock, FxHashMap<BasicBlock, usize>);
 
 enum InlineStep<'z3, 'tcx> {
     Complete(bool),
@@ -23,6 +23,33 @@ enum InlineStep<'z3, 'tcx> {
 }
 
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
+    fn concrete_array_length(&self, ty: Ty<'tcx>) -> Option<usize> {
+        match ty.kind() {
+            TyKind::Array(element, len) => len.try_to_target_usize(self.tcx).and_then(|length| usize::try_from(length).ok())
+                .or_else(|| self.concrete_array_length(*element)),
+            TyKind::Slice(element) | TyKind::Ref(_, element, _) | TyKind::RawPtr(element, _) => self.concrete_array_length(*element),
+            TyKind::Tuple(fields) => fields.iter().filter_map(|field| self.concrete_array_length(field)).max(),
+            _ => None,
+        }
+    }
+
+    fn instantiated_array_length(&self, generic: &Body<'tcx>, instance: &Body<'tcx>) -> Option<usize> {
+        generic.local_decls.iter().zip(instance.local_decls.iter())
+            .filter(|(original, _)| mir_utils::has_symbolic_array_length(original.ty))
+            .filter_map(|(_, concrete)| self.concrete_array_length(concrete.ty))
+            .max()
+    }
+
+    fn array_inline_visit_budget(&self) -> Option<usize> {
+        let instance = self.instantiated_target_body?;
+        let generic = self.tcx.optimized_mir(self.target_def_id);
+        if !generic.local_decls.iter().any(|decl| mir_utils::has_symbolic_array_length(decl.ty)) {
+            return None;
+        }
+        // Array length only raises the fallback budget; other loops in a callee may run longer.
+        Some(self.instantiated_array_length(generic, instance)
+            .map_or(MAX_INLINE_BLOCK_VISITS, |length| length.saturating_add(1).max(MAX_INLINE_BLOCK_VISITS)))
+    }
     pub(crate) fn eval_contract_method(
         &self,
         method: DefId,
@@ -54,13 +81,29 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         receiver_local: Option<Local>,
     ) -> Option<Int<'z3>> {
         let mut state = self.clone();
+        let input_ty = state.tcx.fn_sig(method).skip_binder().inputs().skip_binder()[0];
+        let same_receiver = values[0].ty == input_ty
+            || matches!((values[0].ty.kind(), input_ty.kind()),
+                (TyKind::Ref(_, actual, _), TyKind::Ref(_, expected, _)) if actual == expected);
+        let receiver_ref = if same_receiver {
+            None
+        } else {
+            let TyKind::Ref(_, pointee, _) = input_ty.kind() else { return None };
+            if *pointee != values[0].ty { return None; }
+            let source = receiver_local?;
+            // Contract arguments can own the ADT while its getter expects `&self`.
+            let mut address = state.address_of_place(&Place::from(source))?;
+            address.ty = input_ty;
+            Some(address)
+        };
         let frame = state.enter_frame(method, None);
         for (index, value) in values.iter().enumerate() {
             let local = Local::from_usize(index + 1);
             state.ensure_local_allocation(local);
-            state.set_local(local, value.clone());
+            let bound = if index == 0 { receiver_ref.clone().unwrap_or_else(|| value.clone()) } else { value.clone() };
+            state.set_local(local, bound);
         }
-        if let Some(source) = receiver_local {
+        if let Some(source) = receiver_local.filter(|_| receiver_ref.is_none()) {
             for path in self.frame_field_paths(&frame, source) {
                 if let Some(value) = self.frame_field_value(&frame, source, &path) {
                     state.set_field_value(Local::from_usize(1), path, value.clone());
@@ -158,14 +201,14 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         }
         let instantiated_body = if let Some(instance) = instance {
             let caller_def_id = self.path_state.current_frame.current_def_id;
-            if mir_utils::has_unresolved_const_args(self.tcx, caller_def_id, instance.args) {
+            if resolve::has_unresolved_const_args(self.tcx, caller_def_id, instance.args) {
                 self.record_missing_mir(callee_def_id);
                 return true;
             }
             let body = self.tcx.optimized_mir(callee_def_id).clone();
             let Ok(body) = instance.try_instantiate_mir_and_normalize_erasing_regions(
                 self.tcx,
-                TypingEnv::post_analysis(self.tcx, caller_def_id),
+                crate::compat::typing_env_post_analysis(self.tcx, caller_def_id),
                 EarlyBinder::bind(self.tcx, body),
             ) else {
                 self.record_missing_mir(callee_def_id);
@@ -310,7 +353,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             let TerminatorKind::Call { func, .. } = &block.terminator().kind else {
                 return false;
             };
-            mir_utils::resolve_callee_def_id(self.tcx, callee_def_id, func)
+            resolve::resolve_callee_def_id(self.tcx, callee_def_id, func)
                 == Some(callee_def_id)
         });
         let mut returns = self.inline_execute_body(&pre_uninit);
@@ -474,11 +517,16 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     }
 
     fn inline_execute_single(&mut self) -> InlineStep<'z3, 'tcx> {
-        let mut visited = FxHashSet::default();
+        let array_limit = self.array_inline_visit_budget();
+        let visit_limit = array_limit.unwrap_or(1);
+        let mut visited = FxHashMap::default();
         let mut queue = vec![BasicBlock::from_usize(0)];
         let mut returned = false;
         while let Some(block) = queue.pop() {
-            if !visited.insert(block) {
+            let visits = visited.entry(block).or_insert(0);
+            *visits += 1;
+            if *visits > visit_limit {
+                if array_limit.is_some() { return InlineStep::Incomplete; }
                 continue;
             }
             let bb_data = &self.body().basic_blocks[block];
@@ -587,9 +635,14 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         pre_uninit: &[AllocId],
         mut pending: Vec<InlineWorkItem<'z3, 'tcx>>,
     ) -> Option<Vec<Self>> {
+        let array_limit = self.array_inline_visit_budget();
+        let visit_limit = array_limit.unwrap_or(1);
         let mut returns = Vec::new();
         while let Some((mut state, block, mut visited)) = pending.pop() {
-            if !visited.insert(block) {
+            let visits = visited.entry(block).or_insert(0);
+            *visits += 1;
+            if *visits > visit_limit {
+                if array_limit.is_some() { return None; }
                 continue;
             }
             let bb_data = &state.body().basic_blocks[block];
@@ -758,7 +811,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     target: Some(target),
                     ..
                 } => {
-                    let callee = mir_utils::resolve_callee_def_id(
+                    let callee = resolve::resolve_callee_def_id(
                         state.tcx,
                         state.path_state.current_frame.current_def_id,
                         func,
@@ -803,6 +856,28 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     )
                 });
             if let Some(referent) = outer_referent {
+                let mut path = path;
+                // Restore a field-borrow prefix only when the outer field type identifies it uniquely.
+                if let Some(outer_ty) = self.body().local_decls.get(referent).map(|decl| decl.ty)
+                    && mir_utils::projected_field_ty(self.tcx, outer_ty, &path) != Some(value.ty)
+                    && let TyKind::Adt(adt, _) = outer_ty.peel_refs().kind()
+                    && !adt.is_enum()
+                {
+                    let mut match_path = None;
+                    for index in 0..adt.non_enum_variant().fields.len() {
+                        let candidate: Vec<_> = std::iter::once(index).chain(path.iter().copied()).collect();
+                        if mir_utils::projected_field_ty(self.tcx, outer_ty, &candidate) == Some(value.ty) {
+                            if match_path.is_some() {
+                                match_path = None;
+                                break;
+                            }
+                            match_path = Some(candidate);
+                        }
+                    }
+                    if let Some(candidate) = match_path {
+                        path = candidate;
+                    }
+                }
                 self.path_state.inline
                     .deferred_field_writes
                     .push((referent, path, value));

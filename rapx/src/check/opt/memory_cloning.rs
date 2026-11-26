@@ -83,7 +83,7 @@ impl OptCheck for UsedAsImmutableCheck {
                 if let NodeOp::Call(callee_def_id) = use_node.ops[seq] {
                     let callee_fn_sig = tcx.fn_sig(callee_def_id).skip_binder();
                     let fn_sig = tcx.try_normalize_erasing_regions(
-                        rustc_middle::ty::TypingEnv::post_analysis(*tcx, def_id),
+                        crate::compat::typing_env_post_analysis(*tcx, def_id),
                         rustc_type_ir::Unnormalized::dummy(callee_fn_sig),
                     );
                     if let Ok(fn_sig) = fn_sig {

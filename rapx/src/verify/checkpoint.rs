@@ -6,8 +6,6 @@
 //! the verifier consumes the resulting records.
 
 use crate::def_ids::intrinsic_api;
-#[cfg(not(rapx_box_deref_transmute))]
-use crate::def_ids::lang_api::{self, LangItem};
 use crate::util::{
     mir_scan::{get_fn_safety, place_has_raw_deref},
     mir_utils::pointee_ty,
@@ -17,15 +15,11 @@ use crate::util::{
 use rustc_hir::{def_id::DefId, Safety};
 use rustc_middle::{
     mir::{
-        BasicBlock, Body, Local, NonDivergingIntrinsic, Operand, Place, ProjectionElem, Rvalue,
+        BasicBlock, Body, CastKind, Local, NonDivergingIntrinsic, Operand, Place, ProjectionElem, Rvalue,
         StatementKind, TerminatorKind,
     },
     ty::{self, List, Ty, TyCtxt},
 };
-#[cfg(rapx_box_deref_transmute)]
-use rustc_middle::mir::CastKind;
-#[cfg(not(rapx_box_deref_transmute))]
-use rustc_middle::ty::TyKind;
 use std::collections::HashSet;
 
 use crate::contract::{
@@ -226,7 +220,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
 /// to a raw-pointer deref of a pointer produced by casting the box's inner
 /// field to a raw pointer, and that deref is safe by the `Box` invariant, so it
 /// is not a raw-pointer-deref checkpoint.
-fn box_deref_transmute_locals<'tcx>(tcx: TyCtxt<'tcx>, body: &Body<'tcx>) -> HashSet<Local> {
+fn box_deref_transmute_locals(body: &Body<'_>) -> HashSet<Local> {
     let mut result = HashSet::new();
     let mut changed = true;
     while changed {
@@ -240,7 +234,7 @@ fn box_deref_transmute_locals<'tcx>(tcx: TyCtxt<'tcx>, body: &Body<'tcx>) -> Has
                 if !target.projection.is_empty() {
                     continue;
                 }
-                let from_box = if is_box_deref_cast(tcx, body, rhs) {
+                let from_box = if is_box_deref_cast(rhs) {
                     true
                 } else if let Rvalue::Use(Operand::Copy(p) | Operand::Move(p), ..)
                 | Rvalue::Cast(_, Operand::Copy(p) | Operand::Move(p), _) = rhs
@@ -260,34 +254,9 @@ fn box_deref_transmute_locals<'tcx>(tcx: TyCtxt<'tcx>, body: &Body<'tcx>) -> Has
 
 /// Whether `rvalue` is the compiler's lowering of the safe `*box` deref.
 ///
-/// On recent nightlies the compiler tags this cast `BoxDerefTransmute` — a
-/// precise, dedicated marker, so match it exactly and never treat other casts
-/// of a `Box`-typed local (e.g. `transmute::<Box<T>, *mut T>`) as safe. On older
-/// toolchains that lower `*box` to a plain `Transmute` of the `Unique`/`NonNull`
-/// field, fall back to checking the cast source base local's type.
-fn is_box_deref_cast(tcx: TyCtxt<'_>, body: &Body<'_>, rvalue: &Rvalue<'_>) -> bool {
-    #[cfg(rapx_box_deref_transmute)]
-    {
-        let _ = (tcx, body);
-        matches!(rvalue, Rvalue::Cast(CastKind::BoxDerefTransmute, _, _))
-    }
-    #[cfg(not(rapx_box_deref_transmute))]
-    {
-        let Rvalue::Cast(_, Operand::Copy(p) | Operand::Move(p), _) = rvalue else {
-            return false;
-        };
-        // The safe `*box` deref casts the box's `Unique`/`NonNull` *field* (a
-        // projection); casting the whole box value is `transmute::<Box<T>, *mut
-        // T>`, an explicit unsafe transmute that must not be skipped.
-        if p.projection.is_empty() {
-            return false;
-        }
-        let base_ty = body.local_decls[p.local].ty;
-        matches!(
-            base_ty.kind(),
-            TyKind::Adt(adt, _) if lang_api::matches(tcx, adt.did(), LangItem::OwnedBox)
-        )
-    }
+/// `BoxDerefTransmute` is the dedicated marker for this safe cast.
+fn is_box_deref_cast(rvalue: &Rvalue<'_>) -> bool {
+    matches!(rvalue, Rvalue::Cast(CastKind::BoxDerefTransmute, _, _))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -312,7 +281,7 @@ pub fn collect_raw_ptr_deref_checkpoints<'tcx>(
     // The compiler lowers `*box` to a raw-pointer deref of the pointer produced
     // by casting the box's inner field to a raw pointer; that deref is safe by
     // the `Box` invariant, so it is not a raw-pointer-deref checkpoint.
-    let box_derefs = box_deref_transmute_locals(tcx, body);
+    let box_derefs = box_deref_transmute_locals(body);
     // Filter out inlined library code, but keep macro expansions invoked from
     // this function's source file.
     let fn_span = tcx.def_span(def_id);

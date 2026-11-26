@@ -14,6 +14,7 @@ use crate::analysis::dataflow::{
 use crate::compat::Spanned;
 use crate::def_ids::{self, intrinsic_api, other_api};
 use crate::util::mir_utils as helpers;
+use crate::util::resolve;
 
 use super::{CallEffect, effects, function_var};
 
@@ -52,7 +53,7 @@ impl WriteSemantics for VerifierCallSemantics {
         let callee = helpers::dep_callee_def_id(func);
         pointer_flow::return_traces_first_arg(tcx, callee)
             || callee.is_some_and(|id| pointer_offset::pointer_offset_direction(tcx, id).is_some())
-            || helpers::resolve_callee_def_id(tcx, caller, func).and_then(|resolved| {
+            || resolve::resolve_callee_def_id(tcx, caller, func).and_then(|resolved| {
                 pointer_flow::interior_mutable_borrow_source_arg(tcx, resolved)
             }) == Some(0)
     }

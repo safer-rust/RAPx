@@ -15,10 +15,7 @@ fn make_dummy_fn_sig() -> FnSig {
             safety: Safety::Default,
             constness: Const::No,
             ext: Extern::None,
-            #[cfg(rapx_ge_100)]
             coroutine_marker: None,
-            #[cfg(not(rapx_ge_100))]
-            coroutine_kind: None,
         },
         span: DUMMY_SP,
     }
@@ -43,10 +40,7 @@ fn make_dummy_fn(ident_name: &str, build_std: bool) -> Box<Item> {
         sig: make_dummy_fn_sig(),
         contract: None,
         define_opaque: None,
-        #[cfg(rapx_ge_100)]
         eii_impl: Default::default(),
-        #[cfg(not(rapx_ge_100))]
-        eii_impls: Default::default(),
         body: Some(Box::new(make_dummy_block())),
     };
 

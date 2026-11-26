@@ -110,7 +110,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         if Some(pointee) != mir_utils::pointee_ty(rhs.ty)
             || !pointee.is_sized(
                 self.tcx,
-                rustc_middle::ty::TypingEnv::post_analysis(
+                crate::compat::typing_env_post_analysis(
                     self.tcx,
                     self.path_state.current_frame.current_def_id,
                 ),

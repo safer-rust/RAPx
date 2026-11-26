@@ -17,7 +17,7 @@ use crate::def_ids::type_ids;
 use crate::{
     analysis::dataflow::pointer_copy,
     def_ids::{
-        intrinsic_api,
+        canonical_std_def_path, intrinsic_api,
         lang_api::{self, LangItem},
         nomir_api, other_api,
     },
@@ -57,6 +57,7 @@ macro_rules! ED {
 static REGISTRY: &[Entry] = &[
     // ── APIs without MIR ────────────────────────────────────────────
     ED!(nomir_api::is_global_alloc_shim, eff_nullable_allocation),
+    ED!(nomir_api::is_global_realloc_shim, eff_nullable_reallocation),
     ED!(nomir_api::is_global_alloc_zeroed_shim, eff_nullable_zeroed_allocation),
     ED!(nomir_api::is_alloc_shim_marker, eff_no_effect),
     ED!(nomir_api::is_convert_vec_to_vec, eff_vec_from_slice),
@@ -180,8 +181,9 @@ fn lookup_builder(tcx: TyCtxt<'_>, callee: Option<DefId>) -> Option<EffectBuilde
     }
     if tcx.is_foreign_item(id) {
         validate_model_effects();
+        let path = canonical_std_def_path(tcx, id).unwrap_or_else(|| public_def_path(tcx, id));
         if let Some(builder) = ffi_effects()
-            .get(&public_def_path(tcx, id))
+            .get(&path)
             .map(model_builder)
         {
             return Some(builder);
@@ -553,6 +555,10 @@ fn eff_nullable_allocation(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
         align_arg: 1,
         zeroed: false,
     }]
+}
+
+fn eff_nullable_reallocation(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {
+    vec![CallEffect::ReturnNullableReallocation { pointer_arg: 0, old_size_arg: 1, size_arg: 3, align_arg: 2 }]
 }
 
 fn eff_nullable_zeroed_allocation(_: &EffCtx<'_, '_>) -> Vec<CallEffect> {

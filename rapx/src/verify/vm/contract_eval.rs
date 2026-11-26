@@ -4,8 +4,6 @@ use crate::util::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
 use crate::contract::{BinOp, ContractExpr, PlaceBase};
 use rustc_hir::def_id::DefId;
-#[cfg(rapx_const_ext)]
-use rustc_middle::ty::consts::ConstExt;
 use rustc_middle::{
     mir::{Local, Operand, Place, TerminatorKind},
     ty::{GenericArgKind, Ty, TyKind},

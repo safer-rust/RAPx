@@ -19,6 +19,7 @@ use crate::def_ids::{
     lang_api::{self, LangItem},
 };
 use crate::util::name::short_fn_name;
+use crate::util::resolve;
 use crate::verify::checkpoint::{
     collect_raw_ptr_deref_checkpoints, collect_static_mut_checkpoints,
 };
@@ -30,7 +31,7 @@ use rustc_hir::{
 use rustc_middle::{
     hir::nested_filter,
     mir::{Body, NonDivergingIntrinsic, StatementKind, TerminatorKind},
-    ty::{EarlyBinder, Instance, InstanceKind, TyCtxt, TypingEnv},
+    ty::{Const, EarlyBinder, GenericArgs, GenericParamDefKind, Instance, InstanceKind, TyCtxt},
 };
 use rustc_span::Span;
 use std::collections::{HashMap, HashSet};
@@ -46,7 +47,7 @@ use super::{
 };
 use crate::util::fn_info::get_adt_def_id_by_adt_method;
 use crate::util::mir_utils::{
-    collect_return_block_indices, has_rapx_verify_attr, is_std_crate_def_id, is_trait_unsafe,
+    collect_return_block_indices, has_rapx_verify_attr, has_symbolic_array_length, is_std_crate_def_id, is_trait_unsafe,
     resolve_impl_self_ty_def_id,
 };
 use crate::verify::checkpoint::{Checkpoint, CheckpointKind, collect_unsafe_callsites};
@@ -71,6 +72,9 @@ pub(crate) struct FunctionTarget<'tcx> {
 
     /// Instantiated MIR shared by path extraction, slicing, and symbolic replay.
     pub body: Option<&'tcx rustc_middle::mir::Body<'tcx>>,
+
+    /// This instance checks one length in a bounded array const generic sweep.
+    pub array_length_limited: bool,
 
     /// Unique direct generic callees instantiated in the root's parameter environment.
     pub callee_bodies: CalleeBodies<'tcx>,
@@ -601,12 +605,12 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         instance: Option<Instance<'tcx>>,
     ) -> FunctionTarget<'tcx> {
         let body: Option<&'tcx Body<'tcx>> = instance
-            .filter(|inst| !crate::util::mir_utils::has_unresolved_const_args(self.tcx, def_id, inst.args))
+            .filter(|inst| !resolve::has_unresolved_const_args(self.tcx, def_id, inst.args))
             .and_then(|inst| {
                 let mir = self.tcx.optimized_mir(def_id);
                 inst.try_instantiate_mir_and_normalize_erasing_regions(
                     self.tcx,
-                    rustc_middle::ty::TypingEnv::post_analysis(self.tcx, def_id),
+                    crate::compat::typing_env_post_analysis(self.tcx, def_id),
                     rustc_middle::ty::EarlyBinder::bind(self.tcx, mir.clone()),
                 )
                 .ok()
@@ -620,7 +624,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                 let TerminatorKind::Call { func, .. } = &block.terminator().kind else {
                     continue;
                 };
-                let Some(callee) = crate::util::mir_utils::resolve_callee_def_id(
+                let Some(callee) = resolve::resolve_callee_def_id(
                     self.tcx, def_id, func,
                 ) else {
                     continue;
@@ -630,7 +634,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                 {
                     continue;
                 }
-                let Some(inst) = crate::util::mir_utils::resolve_callee_instance(
+                let Some(inst) = resolve::resolve_callee_instance(
                     self.tcx, def_id, func,
                 ) else {
                     continue;
@@ -638,7 +642,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                 if !matches!(inst.def, InstanceKind::Item(_)) || inst.def_id() != callee {
                     continue;
                 }
-                if crate::util::mir_utils::has_unresolved_const_args(self.tcx, def_id, inst.args) {
+                if resolve::has_unresolved_const_args(self.tcx, def_id, inst.args) {
                     continue;
                 }
                 if let Some(previous) = instances.insert(callee, inst)
@@ -654,7 +658,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
                 let mir = self.tcx.optimized_mir(callee).clone();
                 let Ok(instantiated) = inst.try_instantiate_mir_and_normalize_erasing_regions(
                     self.tcx,
-                    TypingEnv::post_analysis(self.tcx, def_id),
+                    crate::compat::typing_env_post_analysis(self.tcx, def_id),
                     EarlyBinder::bind(self.tcx, mir),
                 ) else {
                     continue;
@@ -731,6 +735,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         let mut target = FunctionTarget {
             def_id,
             body,
+            array_length_limited: false,
             callee_bodies,
             owner_struct_def_id,
             checkpoints,
@@ -750,10 +755,44 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
         target
     }
 
-    /// Build one target per monomorphized instance when `def_id` has an
-    /// unmodeled generic trait call (monomorphization is the fallback for an
-    /// opaque call with no summary), or a single non-generic target.
+    /// Check small concrete array lengths, or monomorphize unmodeled trait calls.
     fn build_function_targets(&mut self, def_id: DefId) -> Vec<FunctionTarget<'tcx>> {
+        if self.tcx.is_mir_available(def_id) {
+            let params: Vec<_> = std::iter::successors(Some(def_id), |id| self.tcx.generics_of(*id).parent)
+                .flat_map(|id| self.tcx.generics_of(id).own_params.iter())
+                .collect();
+            let has_type_params = params.iter().any(|param| matches!(param.kind, GenericParamDefKind::Type { .. }));
+            let const_params: Vec<_> = params.iter().copied()
+                .filter(|param| matches!(param.kind, GenericParamDefKind::Const { .. })).collect();
+            if !has_type_params && let [param] = const_params.as_slice()
+                && self.tcx.type_of(param.def_id).instantiate_identity().skip_norm_wip() == self.tcx.types.usize
+                && self.tcx.optimized_mir(def_id).local_decls.iter().any(|decl| has_symbolic_array_length(decl.ty))
+            {
+                let mut targets = Vec::new();
+                let mut needs_generic = false;
+                for length in 0..=self.config.array_length_limit() {
+                    let args = GenericArgs::for_item(self.tcx, def_id, |candidate, _| {
+                        if candidate.def_id == param.def_id {
+                            Const::from_target_usize(self.tcx, length as u64).into()
+                        } else {
+                            self.tcx.mk_param_from_def(candidate)
+                        }
+                    });
+                    let instance = Instance::new_raw(def_id, args);
+                    let mut target = self.build_function_target(def_id, Some(instance));
+                    if target.body.is_some() {
+                        target.array_length_limited = true;
+                        targets.push(target);
+                    } else {
+                        needs_generic = true;
+                    }
+                }
+                if needs_generic {
+                    targets.push(self.build_function_target(def_id, None));
+                }
+                return targets;
+            }
+        }
         if !crate::util::mir_utils::has_unmodeled_generic_call(self.tcx, def_id) {
             return vec![self.build_function_target(def_id, None)];
         }

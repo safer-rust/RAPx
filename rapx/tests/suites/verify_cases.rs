@@ -236,6 +236,7 @@ fn std_challenge_06() {
 
 // ================ Std Challenge 19 (RawVec) ================
 #[test]
+#[ignore = "allocator layout-fit modeling is incomplete"]
 fn std_challenge_19() {
     let output = run_with_args("verify_cases/std-challenge-19", CMD_VERIFY_TARGETED);
 

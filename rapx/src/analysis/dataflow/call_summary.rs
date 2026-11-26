@@ -64,11 +64,12 @@ pub(crate) enum CallEffect {
     ReturnPtrOffsetFrom { ptr_arg: usize, base_arg: usize },
     /// The return value is a concrete layout/numeric constant.
     ReturnConst { value: u64 },
-    ReallocateVec { arg: usize },
     CopyMemory { source_arg: usize, destination_arg: usize, count_arg: usize },
     SwapMemory { left_arg: usize, right_arg: usize },
     FillBytes { pointer_arg: usize, byte_arg: usize, count_arg: usize },
     ReturnNullableAllocation { size_arg: usize, align_arg: usize, zeroed: bool },
+    /// Reallocation returns a new pointer and invalidates the old allocation on success.
+    ReturnNullableReallocation { pointer_arg: usize, old_size_arg: usize, size_arg: usize, align_arg: usize },
     /// The return value is `min(lhs_arg, rhs_arg)`, satisfying
     /// `return <= lhs_arg` and `return <= rhs_arg`.
     ReturnMin { lhs_arg: usize, rhs_arg: usize },
@@ -133,8 +134,8 @@ pub(crate) enum CallEffect {
 impl CallEffect {
     pub(super) fn written_args(&self) -> Vec<usize> {
         match self {
-            Self::ReallocateVec { arg } => vec![*arg],
             Self::StoreMemory { pointer_arg, .. }
+            | Self::ReturnNullableReallocation { pointer_arg, .. }
             | Self::AtomicRmw { pointer_arg }
             | Self::SimdHavocMemory { pointer_arg, .. }
             | Self::FillBytes { pointer_arg, .. } => vec![*pointer_arg],
@@ -146,6 +147,9 @@ impl CallEffect {
 
     pub(super) fn write_inputs(&self) -> Vec<usize> {
         match self {
+            Self::ReturnNullableReallocation { pointer_arg, old_size_arg, size_arg, align_arg } => {
+                vec![*pointer_arg, *old_size_arg, *align_arg, *size_arg]
+            }
             Self::FillBytes { pointer_arg, byte_arg, count_arg } => {
                 vec![*pointer_arg, *byte_arg, *count_arg]
             }

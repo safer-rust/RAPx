@@ -14,7 +14,7 @@ use crate::limit::{MAX_DEREF_DEPTH, MAX_FIELD_DEPTH};
 pub fn from_body<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> PtsGraph {
     let body = tcx.optimized_mir(def_id);
     let mut graph = PtsGraph::new();
-    let ty_env = TypingEnv::post_analysis(tcx, def_id);
+    let ty_env = crate::compat::typing_env_post_analysis(tcx, def_id);
 
     for (local, local_decl) in body.local_decls.iter_enumerated() {
         let ty = local_decl.ty;

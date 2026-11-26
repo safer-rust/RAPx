@@ -52,57 +52,29 @@ pub(crate) fn create_struct(
     let fields: ThinVec<FieldDef> = fields_def
         .into_iter()
         .map(|(fname, fty)| {
-            #[cfg(rapx_has_fielddef_extras)]
-            {
-                FieldDef {
-                    attrs: set_attrs(build_std),
-                    vis: Visibility {
-                        span: DUMMY_SP,
-                        kind: VisibilityKind::Public,
-                    },
-                    extras: Some(Box::new(FieldDefExtras {
-                        safety: Safety::Default,
-                        mut_restriction: MutRestriction {
-                            kind: RestrictionKind::Unrestricted,
-                            span: DUMMY_SP,
-                        },
-                        default: None,
-                    })),
-                    ident: Some(Ident::from_str(fname)),
-                    ty: Box::new(Ty {
-                        id: NodeId::from_u32(0),
-                        kind: TyKind::Path(None, Path::from_ident(Ident::with_dummy_span(fty))),
-                        span: DUMMY_SP,
-                    }),
-                    id: NodeId::from_u32(0),
+            FieldDef {
+                attrs: set_attrs(build_std),
+                vis: Visibility {
                     span: DUMMY_SP,
-                    is_placeholder: false,
-                }
-            }
-            #[cfg(not(rapx_has_fielddef_extras))]
-            {
-                FieldDef {
-                    attrs: set_attrs(build_std),
-                    vis: Visibility {
-                        span: DUMMY_SP,
-                        kind: VisibilityKind::Public,
-                    },
+                    kind: VisibilityKind::Public,
+                },
+                extras: Some(Box::new(FieldDefExtras {
+                    safety: Safety::Default,
                     mut_restriction: MutRestriction {
                         kind: RestrictionKind::Unrestricted,
                         span: DUMMY_SP,
                     },
-                    ident: Some(Ident::from_str(fname)),
-                    ty: Box::new(Ty {
-                        id: NodeId::from_u32(0),
-                        kind: TyKind::Path(None, Path::from_ident(Ident::with_dummy_span(fty))),
-                        span: DUMMY_SP,
-                    }),
-                    id: NodeId::from_u32(0),
-                    span: DUMMY_SP,
-                    is_placeholder: false,
-                    safety: Safety::Default,
                     default: None,
-                }
+                })),
+                ident: Some(Ident::from_str(fname)),
+                ty: Box::new(Ty {
+                    id: NodeId::from_u32(0),
+                    kind: TyKind::Path(None, Path::from_ident(Ident::with_dummy_span(fty))),
+                    span: DUMMY_SP,
+                }),
+                id: NodeId::from_u32(0),
+                span: DUMMY_SP,
+                is_placeholder: false,
             }
         })
         .collect();

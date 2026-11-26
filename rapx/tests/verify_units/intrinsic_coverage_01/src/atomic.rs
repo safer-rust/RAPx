@@ -1,33 +1,15 @@
 use super::need_nonzero;
 use core::intrinsics;
 
-#[cfg(rapx_ge_100)]
 macro_rules! atomic_load_seqcst {
     ($pointer:expr) => {
         intrinsics::atomic_load::<u32, { intrinsics::AtomicOrdering::SeqCst }, false>($pointer)
     };
 }
 
-#[cfg(not(rapx_ge_100))]
-macro_rules! atomic_load_seqcst {
-    ($pointer:expr) => {
-        intrinsics::atomic_load::<u32, { intrinsics::AtomicOrdering::SeqCst }>($pointer)
-    };
-}
-
-#[cfg(rapx_ge_100)]
 macro_rules! atomic_store_seqcst {
     ($pointer:expr, $value:expr) => {
         intrinsics::atomic_store::<u32, { intrinsics::AtomicOrdering::SeqCst }, false>(
-            $pointer, $value,
-        )
-    };
-}
-
-#[cfg(not(rapx_ge_100))]
-macro_rules! atomic_store_seqcst {
-    ($pointer:expr, $value:expr) => {
-        intrinsics::atomic_store::<u32, { intrinsics::AtomicOrdering::SeqCst }>(
             $pointer, $value,
         )
     };

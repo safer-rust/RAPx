@@ -57,15 +57,6 @@ impl<'tcx> CallGraphAnalyzer<'tcx> {
                     DefKind::Fn | DefKind::AssocFn | DefKind::Closure => {
                         self.tcx.optimized_mir(def_id)
                     }
-                    #[cfg(rapx_defkind_const_struct)]
-                    DefKind::Const { .. }
-                    | DefKind::Static { .. }
-                    | DefKind::AssocConst { .. }
-                    | DefKind::AnonConst => {
-                        // NOTE: safer fallback for constants
-                        self.tcx.mir_for_ctfe(def_id)
-                    }
-                    #[cfg(not(rapx_defkind_const_struct))]
                     DefKind::Const
                     | DefKind::Static { .. }
                     | DefKind::AssocConst

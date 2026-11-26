@@ -11,13 +11,10 @@ pub fn layout_intrinsics(value: u32) {
     let f = const { intrinsics::type_name::<u32>() }.len() as u32;
     let g = const { intrinsics::offset_of::<(u8, u32)>(0, 1) } as u32;
     let h = const { intrinsics::variant_count::<Option<u32>>() } as u32;
-    #[cfg(rapx_ge_100)]
     let i = intrinsics::reflection::type_id_eq(
         const { intrinsics::reflection::type_id::<u32>() },
         const { intrinsics::reflection::type_id::<u64>() },
     ) as u32;
-    #[cfg(not(rapx_ge_100))]
-    let i = 0_u32;
     unsafe { need_nonzero(a ^ b ^ c ^ d ^ e ^ f ^ g ^ h ^ i ^ value) };
 }
 
