@@ -35,6 +35,7 @@ fn cargo_check(dir: &Utf8Path) {
     /* Here we prepare the cargo command as cargo check, which is similar to build, but much faster */
     let mut cmd = Command::new("cargo");
     cmd.current_dir(dir).arg("check");
+    super::build_scripts::configure(&mut cmd, super::build_scripts::collect(dir, cargo_args));
 
     /* set the target as a filter for phase_rustc_rap */
     cmd.args(cargo_args);

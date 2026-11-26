@@ -104,10 +104,9 @@ impl Callbacks for RapCallback {
                 let mut providers = Providers::default();
                 rustc_metadata::provide(&mut providers);
                 let mut crate_source = (providers.extern_queries.used_crate_source)(tcx, cnum);
-                // HACK: rustc will emit "crate ... required to be available in rlib format, but
-                // was not found in this form" errors once we use `tcx.dependency_formats()` if
-                // there's no rlib provided, so setting a dummy path here to workaround those errors.
-                {
+                // Allow metadata-only analysis without an rlib, but never
+                // replace real paths or supply placeholders to the linker.
+                if crate_source.rlib.is_none() && !tcx.sess.opts.output_types.should_link() {
                     Arc::make_mut(&mut crate_source).rlib = Some(PathBuf::new());
                 }
                 crate_source

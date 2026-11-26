@@ -14,6 +14,7 @@ use rapx::util::log::{init_log, rap_error_and_exit};
 use std::env;
 
 mod args;
+mod build_scripts;
 mod cargo_check;
 mod runner;
 
@@ -27,8 +28,7 @@ fn phase_rustc_wrapper() {
 
     let is_primary = env::var("CARGO_PRIMARY_PACKAGE").is_ok();
     let package_name = env::var("CARGO_PKG_NAME").unwrap_or_default();
-    let is_build_script =
-        env::var("CARGO_CRATE_NAME").map_or(false, |name| name == "build_script_build");
+    let is_build_script = is_primary && build_scripts::is_build_script(args::skip2());
 
     // check `CARGO_PRIMARY_PACKAGE` to make sure we only run
     // rapx for the local crate, but not dependencies.
