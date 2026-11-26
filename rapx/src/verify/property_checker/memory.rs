@@ -49,20 +49,73 @@ fn multiple_of(term: &Int<'_>, divisor: u64, depth: usize) -> bool {
     }
 }
 
-/// Check whether the current path permits `term` to have a non-zero residue.
-/// Keeping this query separate avoids coupling simple congruence facts to the
-/// VM's full finite-width address expression.
-fn can_be_non_multiple<'z3, 'tcx>(
-    vm_state: &VmExecutor<'z3, 'tcx>,
-    term: &Int<'z3>,
-    divisor: u64,
-) -> SatResult {
-    let solver = Solver::new(vm_state.z3_ctx);
-    let zero = Int::from_u64(vm_state.z3_ctx, 0);
-    let divisor = Int::from_u64(vm_state.z3_ctx, divisor);
-    vm_state.assert_path_constraints(&solver);
-    solver.assert(&term.rem(&divisor)._eq(&zero).not());
-    solver.check()
+/// Remove operations that cannot change the residue modulo a concrete
+/// alignment. In particular, a machine wrap modulo 2^N can introduce a
+/// large and unnecessary coefficient into a much smaller alignment query.
+fn alignment_operand<'z3>(term: &Int<'z3>, align: u64, depth: usize) -> Int<'z3> {
+    if depth == 0 {
+        return term.clone();
+    }
+
+    let ctx = term.get_ctx();
+    if multiple_of(term, align, depth) {
+        return Int::from_u64(ctx, 0);
+    }
+    let child = |i| term.nth_child(i).and_then(|ast| ast.as_int());
+    match term.decl().kind() {
+        DeclKind::MOD => {
+            if let (Some(value), Some(modulus)) = (child(0), child(1)) {
+                let modulus = modulus.simplify();
+                let divisor = Int::from_u64(ctx, align);
+                if modulus.gt(&Int::from_u64(ctx, 0)).simplify().as_bool() == Some(true)
+                    && modulus.modulo(&divisor).simplify().as_u64() == Some(0)
+                {
+                    return alignment_operand(&value, align, depth - 1);
+                }
+            }
+        }
+        DeclKind::ADD | DeclKind::SUB | DeclKind::UMINUS => {
+            let terms: Option<Vec<_>> = (0..term.num_children())
+                .map(|i| child(i).map(|value| alignment_operand(&value, align, depth - 1)))
+                .collect();
+            if let Some(terms) = terms {
+                let terms: Vec<_> = terms.iter().collect();
+                return match term.decl().kind() {
+                    DeclKind::ADD => Int::add(ctx, &terms),
+                    DeclKind::SUB => Int::sub(ctx, &terms),
+                    _ => -terms[0].clone(),
+                };
+            }
+        }
+        _ => {}
+    }
+    term.clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use z3::{Config, Context};
+
+    #[test]
+    fn alignment_rewrite_only_removes_compatible_moduli() {
+        let ctx = Context::new(&Config::new());
+        let x = Int::new_const(&ctx, "x");
+        let four = Int::from_u64(&ctx, 4);
+        let offset = Int::mul(&ctx, &[&four, &Int::new_const(&ctx, "n")]);
+        let sum = Int::add(&ctx, &[&x, &offset]);
+        let word_modulus = Int::from_str(&ctx, "18446744073709551616").unwrap();
+        let wrapped = sum.modulo(&word_modulus);
+        assert_eq!(alignment_operand(&wrapped, 4, 16).simplify(), x);
+
+        let remainder = sum.modulo(&Int::from_u64(&ctx, 6));
+        assert_eq!(alignment_operand(&remainder, 4, 16), remainder);
+        let undefined_remainder = sum.modulo(&Int::from_u64(&ctx, 0));
+        assert_eq!(
+            alignment_operand(&undefined_remainder, 4, 16),
+            undefined_remainder
+        );
+    }
 }
 
 impl PropertyChecker {
@@ -230,39 +283,6 @@ impl PropertyChecker {
                             return CheckResult::Failed;
                         }
         }
-        // Address arithmetic emitted by rustc commonly appears as
-        // `AddWithOverflow` followed by an assert and a cast back to a pointer.
-        // For a power-of-two Rust alignment, wrapping modulo 2^N preserves the
-        // residue. Once the original address is proved aligned, the result is
-        // aligned iff the offset delta is aligned. Prove those two smaller
-        // facts independently instead of asking Z3 to solve the combined
-        // finite-width modulo expression.
-        if let (
-            ValueSource::ExposedAddress {
-                address,
-                provenance: original,
-            },
-            Some(current),
-            Some(required),
-        ) = (
-            &value.source,
-            &value.provenance,
-            align.simplify().as_u64(),
-        )
-            && current.alloc_id == original.alloc_id
-            && required.is_power_of_two()
-            && matches!(
-                can_be_non_multiple(vm_state, address, required),
-                SatResult::Unsat
-            )
-        {
-            let delta = Int::sub(vm_state.z3_ctx, &[&current.offset, &original.offset]);
-            match can_be_non_multiple(vm_state, &delta, required) {
-                SatResult::Unsat => return CheckResult::ProvedBySmt,
-                SatResult::Sat => return CheckResult::Failed,
-                SatResult::Unknown => {}
-            }
-        }
         let align_term = align;
         let zero = Int::from_u64(vm_state.z3_ctx, 0);
         let local = Solver::new(vm_state.z3_ctx);
@@ -293,7 +313,13 @@ impl PropertyChecker {
             local.assert(&value.z3_term.rem(known_align)._eq(&zero));
         }
         vm_state.assert_path_constraints(&local);
-        let negated = value.z3_term.rem(&align_term)._eq(&zero).not();
+        let operand = match align_term.simplify().as_u64() {
+            Some(required) if required.is_power_of_two() => {
+                alignment_operand(&value.z3_term.simplify(), required, 16).simplify()
+            }
+            _ => value.z3_term.clone(),
+        };
+        let negated = operand.rem(&align_term)._eq(&zero).not();
         local.assert(&negated);
         let r = match local.check() {
             z3::SatResult::Sat

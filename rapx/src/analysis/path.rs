@@ -71,8 +71,6 @@ pub struct PathTree {
     /// Set when enumeration stopped at a path or depth limit, so the tree
     /// holds only some of the paths.
     truncated: bool,
-    /// Set when bounded SCC expansion omitted further loop iterations.
-    scc_truncated: bool,
     trait_impl_limited: bool,
 }
 
@@ -113,7 +111,6 @@ impl PathTree {
             call_parents: FxHashMap::default(),
             expanded_call_blocks: FxHashSet::default(),
             truncated: false,
-            scc_truncated: false,
             trait_impl_limited: false,
         }
     }
@@ -123,14 +120,6 @@ impl PathTree {
     }
 
     pub fn is_truncated(&self) -> bool {
-        self.truncated || self.scc_truncated
-    }
-
-    pub fn is_scc_truncated(&self) -> bool {
-        self.scc_truncated
-    }
-
-    pub fn is_path_truncated(&self) -> bool {
         self.truncated
     }
 
@@ -146,10 +135,6 @@ impl PathTree {
         self.truncated = true;
     }
 
-    pub fn mark_scc_truncated(&mut self) {
-        self.scc_truncated = true;
-    }
-
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -161,7 +146,6 @@ impl PathTree {
         filtered.call_parents = self.call_parents.clone();
         filtered.expanded_call_blocks = self.expanded_call_blocks.clone();
         filtered.truncated = self.truncated;
-        filtered.scc_truncated = self.scc_truncated;
         filtered.trait_impl_limited = self.trait_impl_limited;
         for path in self.to_vecs() {
             if keep(&path) {
@@ -320,7 +304,6 @@ impl PathTree {
         sub.call_parents = self.call_parents.clone();
         sub.expanded_call_blocks = self.expanded_call_blocks.clone();
         sub.truncated = self.truncated;
-        sub.scc_truncated = self.scc_truncated;
         sub.trait_impl_limited = self.trait_impl_limited;
         let _ = self.walk_prefixes(target_block, &mut |prefix| {
             sub.insert(prefix);

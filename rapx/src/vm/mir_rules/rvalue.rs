@@ -287,22 +287,7 @@ pub(crate) fn eval_binary_op<'z3, 'tcx>(
             };
             let result =
                 overflowing_binary(state.z3_ctx, layout, arithmetic, &lhs.z3_term, &rhs.z3_term);
-            // Only addition/subtraction preserve the allocation-relative
-            // meaning of an exposed address. Multiplication still carries
-            // numeric alignment facts, but must not manufacture provenance.
-            let provenance = if matches!(op, BinOp::AddWithOverflow | BinOp::SubWithOverflow) {
-                state.provenance_for_binary_op(op, &lhs, &rhs)
-            } else {
-                None
-            };
-            let facts = state.facts_for_binary_op(op, &lhs, &rhs, &provenance);
-            let mut value = VmValue {
-                z3_term: result.value,
-                ty: fields[0],
-                provenance,
-                facts,
-                source: ValueSource::None,
-            };
+            let mut value = VmValue::new(result.value, fields[0]);
             value.facts.init = true;
             if matches!(op, BinOp::AddWithOverflow | BinOp::SubWithOverflow)
                 && !matches!(&rhs.source, ValueSource::ExposedAddress { .. })
@@ -1450,21 +1435,6 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     .and_then(pow2_factor)
                     .map(|p| Int::from_u64(self.z3_ctx, p)),
             },
-            // Dividing a value known to be a multiple of `a` by a concrete
-            // divisor `d` preserves a factor of `a / d` only when `d` divides
-            // `a`. Integer truncation makes the general case unsafe to infer.
-            BinOp::Div => match (
-                lhs.facts.align_n.as_ref().and_then(|a| a.simplify().as_u64()),
-                rhs.z3_term.simplify().as_u64(),
-            ) {
-                (Some(a), Some(d)) if d > 0 && a % d == 0 && a / d > 1 => {
-                    Some(Int::from_u64(self.z3_ctx, a / d))
-                }
-                _ => None,
-            },
-            // A remainder is not generally a multiple of the dividend's
-            // known alignment (for example, 8 % 6 == 2).
-            BinOp::Rem => None,
             _ => lhs.facts.align_n.clone(),
         };
 

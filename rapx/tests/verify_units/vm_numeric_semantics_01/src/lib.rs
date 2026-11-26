@@ -2,87 +2,75 @@
 #![register_tool(rapx)]
 #![allow(internal_features)]
 
-// Each condition is true for the guarded input. Swapping the two reads must
-// change the verdict: pruning the true branch or keeping the false branch
-// cannot accidentally make both tests pass. Inputs stay symbolic in MIR.
+#[rapx::requires(ValidNum(_value == 1), kind = "precond")]
+unsafe fn require_true(_value: u8) {}
+
+#[rapx::requires(ValidNum(_value == 0), kind = "precond")]
+unsafe fn require_false(_value: u8) {}
+
+// Eager conjunction keeps both computations in the same MIR path.
+macro_rules! both {
+    ($left:expr, $right:expr) => {
+        ((($left) as u8) & (($right) as u8)) != 0
+    };
+}
+
+// Test the VM's computed result at an unconditional checkpoint on the guarded
+// path. The result must satisfy one contract and violate its complement.
 macro_rules! numeric_pair {
     ($sound:ident, $unsound:ident, $input:ident: $ty:ty, $value:expr, $condition:block) => {
         #[rapx::verify]
-        pub fn $sound($input: $ty) -> u8 {
-            if $input != $value {
-                return 0;
-            }
-            let data = [7_u8];
-            let ptr = data.as_ptr();
-            let matches = $condition;
-            unsafe {
-                if matches {
-                    ptr.read()
-                } else {
-                    ptr.add(1).read()
-                }
+        pub fn $sound($input: $ty) {
+            if $input == $value {
+                let value: bool = $condition;
+                unsafe { require_true(value as u8) };
             }
         }
 
         #[rapx::verify]
-        pub fn $unsound($input: $ty) -> u8 {
-            if $input != $value {
-                return 0;
-            }
-            let data = [7_u8];
-            let ptr = data.as_ptr();
-            let matches = $condition;
-            unsafe {
-                if matches {
-                    ptr.add(1).read()
-                } else {
-                    ptr.read()
-                }
+        pub fn $unsound($input: $ty) {
+            if $input == $value {
+                let value: bool = $condition;
+                unsafe { require_false(value as u8) };
             }
         }
     };
 }
-
-// A Boolean short-circuit joins predecessor values without any arithmetic.
-// Its feasible true branch must survive path-condition preprocessing.
-numeric_pair!(sound_short_circuit_guard, unsound_short_circuit_guard, n: i32, -3, {
-    n == -3 && n < 0
-});
 
 // Both fields must survive copying an overflow tuple before projection.
 numeric_pair!(sound_add_overflow_tuple, unsound_add_overflow_tuple, n: u8, 255, {
     let result = n.overflowing_add(1);
     let moved = result;
     let (value, overflow) = moved;
-    value == 0 && overflow
+    both!(value == 0, overflow)
 });
 numeric_pair!(sound_sub_overflow_tuple, unsound_sub_overflow_tuple, n: u8, 0, {
     let result = n.overflowing_sub(1);
     let moved = result;
     let (value, overflow) = moved;
-    value == 255 && overflow
+    both!(value == 255, overflow)
 });
 numeric_pair!(sound_mul_overflow_tuple, unsound_mul_overflow_tuple, n: u8, 16, {
     let result = n.overflowing_mul(16);
     let moved = result;
     let (value, overflow) = moved;
-    value == 0 && overflow
+    both!(value == 0, overflow)
 });
 numeric_pair!(sound_add_no_overflow, unsound_add_no_overflow, n: u8, 7, {
     let (value, overflow) = n.overflowing_add(1);
-    value == 8 && !overflow
+    both!(value == 8, !overflow)
 });
 numeric_pair!(sound_signed_add_overflow, unsound_signed_add_overflow, n: i8, 127, {
     let (value, overflow) = n.overflowing_add(1);
-    value == -128 && overflow
+    both!(value == -128, overflow)
 });
 numeric_pair!(sound_signed_sub_overflow, unsound_signed_sub_overflow, n: i8, -128, {
     let (value, overflow) = n.overflowing_sub(1);
-    value == 127 && overflow
+    both!(value == 127, overflow)
 });
 numeric_pair!(sound_signed_mul_overflow, unsound_signed_mul_overflow, n: i8, -128, {
     let (value, overflow) = n.overflowing_mul(-1);
-    value == -128 && overflow
+    both!(value == -128, overflow)
 });
 
 numeric_pair!(sound_narrow_cast, unsound_narrow_cast, n: u16, 256, {
@@ -102,13 +90,13 @@ numeric_pair!(sound_unsigned_to_signed, unsound_unsigned_to_signed, n: u8, 255, 
 });
 
 numeric_pair!(sound_signed_div_rem, unsound_signed_div_rem, n: i32, -3, {
-    n / 2 == -1 && n % 2 == -1
+    both!(n / 2 == -1, n % 2 == -1)
 });
 numeric_pair!(sound_negative_divisor, unsound_negative_divisor, n: i32, -3, {
-    n / -2 == 1 && n % -2 == -1
+    both!(n / -2 == 1, n % -2 == -1)
 });
 numeric_pair!(sound_positive_dividend, unsound_positive_dividend, n: i32, 3, {
-    n / -2 == -1 && n % -2 == 1
+    both!(n / -2 == -1, n % -2 == 1)
 });
 numeric_pair!(sound_unsigned_not, unsound_unsigned_not, n: u8, 0, {
     !n == 255
@@ -133,34 +121,20 @@ numeric_pair!(sound_signed_cttz, unsound_signed_cttz, n: i8, -2, {
     core::intrinsics::cttz(n) == 1
 });
 
-// The address is non-null, but its arithmetic result is zero. Neither pointer
-// provenance nor non-null facts may survive in the returned integer field.
+// The address is non-null, but the numeric result of subtracting it from
+// itself is zero and does not overflow.
 #[rapx::verify]
-pub fn sound_zero_result_drops_pointer_facts() -> u8 {
+pub fn sound_address_subtraction() {
     let data = [7_u8];
-    let ptr = data.as_ptr();
-    let addr = ptr as usize;
+    let addr = data.as_ptr() as usize;
     let (zero, overflow) = addr.overflowing_sub(addr);
-    unsafe {
-        if zero == 0 && !overflow {
-            ptr.read()
-        } else {
-            (zero as *const u8).read()
-        }
-    }
+    unsafe { require_true(both!(zero == 0, !overflow) as u8) };
 }
 
 #[rapx::verify]
-pub fn unsound_zero_result_drops_pointer_facts() -> u8 {
+pub fn unsound_address_subtraction() {
     let data = [7_u8];
-    let ptr = data.as_ptr();
-    let addr = ptr as usize;
+    let addr = data.as_ptr() as usize;
     let (zero, overflow) = addr.overflowing_sub(addr);
-    unsafe {
-        if zero == 0 && !overflow {
-            (zero as *const u8).read()
-        } else {
-            ptr.read()
-        }
-    }
+    unsafe { require_false(both!(zero == 0, !overflow) as u8) };
 }

@@ -55,8 +55,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
     /// Coverage limits reached while extracting this function's paths.
     pub(crate) fn limits(&self) -> VerificationLimits {
         VerificationLimits {
-            path_limited: self.path_tree.is_path_truncated(),
-            scc_limited: self.path_tree.is_scc_truncated(),
+            path_limited: self.path_tree.is_truncated(),
             mono_limited: self.path_tree.is_trait_impl_limited(),
         }
     }

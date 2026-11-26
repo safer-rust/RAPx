@@ -120,7 +120,6 @@ impl<'tcx> PathExtractor<'tcx> {
             Some(body) => PathGraph::new_with_body(self.tcx, self.def_id, body),
             None => PathGraph::new(self.tcx, self.def_id),
         };
-        caller_graph.conservative_origins = true;
         caller_graph.find_scc();
         let caller_paths = PathEnumerator::new(&caller_graph)
             .with_path_limit(self.config.path_limit())
@@ -149,7 +148,6 @@ struct PathComposer<'g, 'tcx> {
     limit: usize,
     cache: FxHashMap<usize, Rc<Vec<Vec<usize>>>>,
     truncated: bool,
-    scc_truncated: bool,
 }
 
 impl<'g, 'tcx> PathComposer<'g, 'tcx> {
@@ -160,7 +158,6 @@ impl<'g, 'tcx> PathComposer<'g, 'tcx> {
             limit: path_limit,
             cache: FxHashMap::default(),
             truncated: false,
-            scc_truncated: false,
         }
     }
 
@@ -198,11 +195,11 @@ impl<'g, 'tcx> PathComposer<'g, 'tcx> {
                 break;
             }
         }
-        if self.truncated || caller_paths.is_path_truncated() || pending.iter().any(|paths| !paths.is_empty()) {
+        if self.truncated
+            || caller_paths.is_truncated()
+            || pending.iter().any(|paths| !paths.is_empty())
+        {
             result.mark_truncated();
-        }
-        if self.scc_truncated || caller_paths.is_scc_truncated() {
-            result.mark_scc_truncated();
         }
         result
     }
@@ -253,13 +250,11 @@ impl<'g, 'tcx> PathComposer<'g, 'tcx> {
         } else {
             PathGraph::new(self.call_index.tcx(), callee)
         };
-        local_graph.conservative_origins = true;
         local_graph.find_scc();
         let local_paths = PathEnumerator::new(&local_graph)
             .with_path_limit(self.limit)
             .enumerate_paths_repeat(self.allow_repeat);
-        self.truncated |= local_paths.is_path_truncated();
-        self.scc_truncated |= local_paths.is_scc_truncated();
+        self.truncated |= local_paths.is_truncated();
         let mut result = Vec::new();
         for path in local_paths.to_vecs() {
             let Some(&last) = path.last() else { continue };
