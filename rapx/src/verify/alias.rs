@@ -268,6 +268,11 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(vm_state: &VmExecutor<'z3, 'tcx>, checkp
                             {
                                 return VmAliasResult::Failed("&mut deref through a shared reference writes immutable data".into());
                             }
+                        } else if let Some(reason) = escape_region_violation(vm_state.tcx, checkpoint.caller, root) {
+                            // A direct reference parameter whose view escapes to
+                            // the return must not claim a region that outlives its
+                            // own, as in the shared-reference case below.
+                            return VmAliasResult::Failed(reason);
                         }
                     }
                     return VmAliasResult::Proved;
@@ -503,11 +508,10 @@ fn check_view_alias<'z3, 'tcx>(
 
     if let Some(origin) = vm_state.resolve_origin(&origin_val) {
         match (kind, origin.kind) {
-            (HazardKind::UniqueView, VmOriginKind::MutRef) => return VmAliasResult::Proved,
-            (HazardKind::SharedView, VmOriginKind::SharedRef) => {
+            (HazardKind::UniqueView, VmOriginKind::MutRef) | (HazardKind::SharedView, VmOriginKind::SharedRef) => {
                 // Aliasing-safe, but if the view escapes to the return, its
                 // claimed region must not outlive the source reference's region.
-                if let Some(reason) = shared_view_escape_region_violation(tcx, caller, destination, origin.local.as_usize()) {
+                if let Some(reason) = view_escape_region_violation(tcx, caller, destination, origin.local.as_usize()) {
                     return VmAliasResult::Failed(reason);
                 }
                 return VmAliasResult::Proved;
@@ -630,10 +634,10 @@ fn check_view_alias<'z3, 'tcx>(
     VmAliasResult::Proved
 }
 
-/// A shared view re-borrowed from the reference parameter `local` and returned
-/// must not claim a region that outlives the parameter's own region. Returns a
+/// A view re-borrowed from the reference parameter `local` and returned must
+/// not claim a region that outlives the parameter's own region. Returns a
 /// violation reason when `local`'s region does not outlive the return region.
-fn shared_view_escape_region_violation(
+fn view_escape_region_violation(
     tcx: rustc_middle::ty::TyCtxt<'_>,
     caller: DefId,
     destination: Option<Local>,
