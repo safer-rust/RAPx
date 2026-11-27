@@ -428,14 +428,12 @@ pub(crate) struct InlineCtx<'z3, 'tcx> {
     pub symbolic_generic_const_inline: bool,
     /// Terms from depth-limited calls; dependent checks become `Unknown`.
     pub inline_truncated_terms: FxHashSet<Int<'z3>>,
-    /// Terms from incompletely explored inline branches.
-    pub inline_branch_terms: FxHashSet<Int<'z3>>,
-    /// Alternative VM states produced by inline branches.
-    pub pending_states: Vec<Box<VmExecutor<'z3, 'tcx>>>,
     /// Caller referent local for each inlined callee argument.
     pub arg_referents: Vec<Option<Local>>,
     /// `(caller local, field path, value)` writes replayed after frame restoration.
     pub deferred_field_writes: Vec<(Local, Vec<usize>, VmValue<'z3, 'tcx>)>,
+    /// Alternative VM states produced by inline branches.
+    pub pending_states: Vec<Box<VmExecutor<'z3, 'tcx>>>,
 }
 
 /// The extra semantics attached to a value, beyond its term/type/provenance.

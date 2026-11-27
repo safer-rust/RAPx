@@ -414,7 +414,6 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             self.path_state.diagnostics.merge_inline_fallback(&explored_diagnostics);
             let dest_ty = self.body().local_decls[dest].ty;
             let unknown_term = self.fresh_int("inline_branch_unknown");
-            self.path_state.inline.inline_branch_terms.insert(unknown_term.clone());
             if may_recurse {
                 self.path_state.inline
                     .inline_truncated_terms
@@ -519,7 +518,6 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         *self.content_mut(alloc_id) = MemoryContent::default();
         let ty = self.body().local_decls[local].ty;
         let unknown_term = self.fresh_int("inline_write_unknown");
-        self.path_state.inline.inline_branch_terms.insert(unknown_term.clone());
         let mut unknown = VmValue::new(unknown_term, ty);
         if let Some(prior) = prior
             && prior.provenance_alloc_id() == Some(alloc_id)

@@ -322,11 +322,8 @@ impl PropertyChecker {
                 {
                     return CheckResult::Failed;
                 }
-                // An incomplete inline may leave the target or an argument as
-                // a placeholder; such a property cannot be decided.
-                if vm_state.incomplete_inline_terms()
-                    .any(|terms| vm_state.atom_depends_on_terms(checkpoint, property, terms))
-                {
+                // A depth-limited inline leaves a placeholder result; dependent properties cannot be decided.
+                if vm_state.atom_depends_on_terms(checkpoint, property, vm_state.inline_truncated_terms()) {
                     return CheckResult::Unknown(UnknownReason::IncompleteInline);
                 }
                 if vm_state.diagnostics().has_incomplete_inline_branch()

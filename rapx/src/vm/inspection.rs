@@ -38,8 +38,8 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         self.path_state.constraints.term_caches.sizes.get(&ty)
     }
 
-    pub(crate) fn incomplete_inline_terms(&self) -> impl Iterator<Item = &FxHashSet<Int<'z3>>> {
-        [&self.path_state.inline.inline_truncated_terms, &self.path_state.inline.inline_branch_terms].into_iter()
+    pub(crate) fn inline_truncated_terms(&self) -> &FxHashSet<Int<'z3>> {
+        &self.path_state.inline.inline_truncated_terms
     }
 
     pub(crate) fn has_matching_index_access_fact(&self, slice_val: &VmValue<'z3, 'tcx>, index_val: &VmValue<'z3, 'tcx>) -> bool {
