@@ -42,7 +42,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let (view_id, _) = self.allocate_slice(len, size, align.clone(), Some(elem));
         self.alloc_mut(view_id).base = value.z3_term.clone();
         self.alloc_mut(view_id).parent = Some(parent_id);
-        if !self.alloc(parent_id).facts.dead {
+        if !self.alloc(parent_id).dead {
             self.content_mut(view_id).facts.initialized = true;
         }
         if let Some(offset) = parent_offset {
@@ -408,7 +408,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         self.container_data_alloc(header, ty).or_else(|| {
             // The header → data fallback is only for local slice views.
             // External parameter headers retain their own contract range facts.
-            if self.alloc(header).is_external() {
+            if self.alloc(header).is_raw_storage() {
                 None
             } else {
                 self.header_data_alloc(header)

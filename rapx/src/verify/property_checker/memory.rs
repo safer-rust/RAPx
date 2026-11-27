@@ -218,7 +218,7 @@ impl PropertyChecker {
             }
         }
         if let Some(prov) = &value.provenance
-            && let Some(aligned_ty) = vm_state.alloc(prov.alloc_id).facts.for_each.aligned_ty {
+            && let Some(aligned_ty) = vm_state.content(prov.alloc_id).element_facts.aligned_ty {
                 let fa = vm_state.align_sym_read(aligned_ty);
                 if let (Some(fa_u64), Some(align_u64)) =
                     (fa.simplify().as_u64(), align.simplify().as_u64())
@@ -231,7 +231,7 @@ impl PropertyChecker {
             // `MaybeUninit<T>` and T share alignment; an array has its
             // element's alignment. A live stack local carries that guarantee
             // even when the full generic layout is symbolic.
-            if !alloc.is_external()
+            if !alloc.is_raw_storage()
                 && let Some(required) = align.simplify().as_u64()
                 && let Some(local) = vm_state.local_allocations().find_map(|(local, id)| {
                     (id == prov.alloc_id).then_some(local)
@@ -402,7 +402,7 @@ impl PropertyChecker {
             return CheckResult::ProvedByRule;
         }
         if let Some(ref prov) = value.provenance
-            && !vm_state.alloc(prov.alloc_id).is_external() {
+            && !vm_state.alloc(prov.alloc_id).is_raw_storage() {
                 return CheckResult::ProvedByRule;
             }
         // For an external pointer, check nullability against the *path
@@ -452,11 +452,11 @@ impl PropertyChecker {
 
         if value.provenance_alloc_id().is_some_and(|id| {
             let root = vm_state.root_alloc(id);
-            vm_state.alloc(root).facts.drop_may_free
+            vm_state.alloc(root).drop_may_free
                 && !vm_state.has_available_transfer(root)
                 && !vm_state.local_allocations().any(|(local, header)| {
                     let ty = vm_state.body().local_decls[local].ty;
-                    !vm_state.alloc(header).facts.dead
+                    !vm_state.alloc(header).dead
                         && vm_state.container_ptr_field(ty).is_some_and(|path| {
                             has_owner_ptr_invariant(vm_state.tcx, ty, &path, PropertyKind::Allocated)
                         })
@@ -494,7 +494,7 @@ impl PropertyChecker {
             return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
 
-        if vm_state.alloc(alloc_id).facts.dead {
+        if vm_state.alloc(alloc_id).dead {
             if !vm_state.is_maybe_uninit_ptr(&value, alloc_id) {
                 let is_param_ref = vm_state.resolve_origin(&value).is_some_and(|origin| {
                     origin.local.as_usize() <= vm_state.body().arg_count
@@ -539,7 +539,7 @@ impl PropertyChecker {
         // backs `>= n` `T` elements, so a pointer loaded from the container
         // (whose provenance names the container allocation) satisfies
         // `Allocated(cur, T, n)`.
-        if let Some((t, n)) = &vm_state.alloc(alloc_id).facts.for_each.allocated {
+        if let Some((t, n)) = &vm_state.content(alloc_id).element_facts.allocated {
             let resolved_t = vm_state.instantiate_callsite_ty(checkpoint, *t);
             if Some(resolved_t) == required_ty {
                 let req_count = property
@@ -811,7 +811,7 @@ impl PropertyChecker {
                 vm_state.content(id).facts.initialized,
                 access.as_u64()
             );
-            if vm_state.alloc(id).facts.dead {
+            if vm_state.alloc(id).dead {
                 // `assume_init_drop` (and other MaybeUninit drop/read ops)
                 // legitimately consume an initialized element from storage that
                 // may be going out of scope; the `Init` requirement concerns
@@ -877,7 +877,7 @@ impl PropertyChecker {
                 && value.facts.non_null
                 && vm_state.is_value_aligned(&value)
                 && matches!(value.ty.kind(), TyKind::RawPtr(..))
-                && !vm_state.alloc(id).facts.dead
+                && !vm_state.alloc(id).dead
                 && call_write::write_target_arg(vm_state.tcx, checkpoint.callee)
                     .is_some_and(|arg| property.target_place().is_some_and(|place| place.base == PlaceBase::Arg(arg))) {
                     return CheckResult::ProvedByRule;
@@ -999,7 +999,7 @@ impl PropertyChecker {
             };
         };
 
-        if vm_state.alloc(id).facts.dead {
+        if vm_state.alloc(id).dead {
             if let Some(origin) = vm_state.resolve_origin(&value) {
                 let is_param = origin.local.as_usize() <= vm_state.body().arg_count
                     && origin.local != Local::from_usize(0);
@@ -1037,12 +1037,12 @@ impl PropertyChecker {
             while let Some(parent_id) = vm_state.alloc(root_id).parent {
                 root_id = parent_id;
             }
-            if vm_state.alloc(root_id).facts.locally_allocated
-                && !vm_state.alloc(root_id).facts.dead
+            if vm_state.alloc(root_id).is_allocator()
+                && !vm_state.alloc(root_id).dead
             {
                 if check_region == Some(vm_state.tcx.lifetimes.re_static) {
                     let owned_here = vm_state.local_allocations().any(|(local, id)| {
-                        !vm_state.alloc(id).facts.dead
+                        !vm_state.alloc(id).dead
                             && vm_state.container_data_alloc(id, vm_state.body().local_decls[local].ty)
                                 == Some(root_id)
                     });
@@ -1063,11 +1063,11 @@ impl PropertyChecker {
                 let zero = Int::from_u64(vm_state.z3_ctx, 0);
                 return self.smt_check(&solver, &vm_state.alloc(root_id).base._eq(&zero));
             }
-            if !vm_state.alloc(root_id).is_external() && !vm_state.alloc(root_id).facts.dead {
+            if !vm_state.alloc(root_id).is_raw_storage() && !vm_state.alloc(root_id).dead {
                 return CheckResult::ProvedByRule;
             }
-            if !vm_state.alloc(root_id).facts.dead
-                && let Some(src_region) = &vm_state.alloc(root_id).facts.liveness {
+            if !vm_state.alloc(root_id).dead
+                && let Some(src_region) = &vm_state.alloc(root_id).liveness {
                     if let Some(r) = check_region {
                         let outlives = crate::vm::region::region_outlives(
                             vm_state.tcx,

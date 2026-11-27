@@ -117,10 +117,10 @@ pub(super) fn detect(tcx: TyCtxt<'_>) -> FxHashMap<DefId, Vec<Span>> {
                 .filter(|state| !state.vm.diagnostics().is_unsupported())
             {
                 for (id, span) in &state.raw_allocs {
-                    let facts = &state.vm.alloc(*id).facts;
-                    if !facts.dead
-                        && !facts.drop_may_free
-                        && !facts.function_var_may_drop
+                    let alloc = state.vm.alloc(*id);
+                    if !alloc.dead
+                        && !alloc.drop_may_free
+                        && !alloc.function_var_may_drop
                         && !spans.contains(span)
                     {
                         spans.push(*span);
@@ -232,11 +232,11 @@ fn execute<'z3, 'tcx>(
                 let allocation = source_alloc.and_then(|header| {
                     vm.container_data_alloc(header, value.ty)
                         .or_else(|| {
-                            (vm.alloc(header).facts.owning.is_some() || is_std_owner_type(value.ty))
+                            (vm.alloc(header).owning.is_some() || is_std_owner_type(value.ty))
                                 .then_some(header)
                         })
                         .filter(|id| {
-                            vm.alloc(*id).facts.owning.is_some() || is_std_owner_type(value.ty)
+                            vm.alloc(*id).owning.is_some() || is_std_owner_type(value.ty)
                         })
                         .filter(|id| {
                             vm.alloc(*id).size.simplify().as_u64() != Some(0)

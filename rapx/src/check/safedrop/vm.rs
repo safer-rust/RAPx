@@ -156,7 +156,7 @@ fn record_dangling_exit<'z3, 'tcx>(
         if let Some(alloc_id) = state
             .local_value(local)
             .and_then(|v| v.provenance_alloc_id())
-            && state.alloc(alloc_id).facts.dead
+            && state.alloc(alloc_id).dead
         {
             events.push(SafeDropEvent {
                 alloc_id,

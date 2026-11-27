@@ -354,11 +354,11 @@ pub(crate) fn check_alias_vm<'z3, 'tcx>(vm_state: &VmExecutor<'z3, 'tcx>, checkp
                 }
             }
             if let Some(prov) = &origin_val.provenance {
-                let is_external = vm_state.alloc(prov.alloc_id).is_external();
-                if !is_external {
+                let is_raw_storage = vm_state.alloc(prov.alloc_id).is_raw_storage();
+                if !is_raw_storage {
                     return VmAliasResult::Proved;
                 }
-                // External provenance: safe for shared ref, unsafe for mut ref.
+                // Raw storage needs additional evidence for reference aliasing.
                 let has_shared_ref = vm_state.body().local_decls.iter().any(|d| {
                     matches!(
                         d.ty.kind(),

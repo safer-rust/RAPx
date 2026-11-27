@@ -13,7 +13,7 @@ use crate::{
 
 use crate::contract::place::{index_access_locals, rebind_property_place, slice_offset_locals};
 use super::state::{
-    AllocId, ElementTy, IndexBoundFact, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue,
+    AllocId, BoundFact, ElementTy, IndexBoundFact, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue,
 };
 
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
@@ -175,7 +175,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     // struct invariants against the struct, function `requires`
                     // against the function.
                     if let Some(PropertyArg::Region(region)) = property.args().get(1) {
-                        self.alloc_mut(id).facts.liveness = Some(*region);
+                        self.alloc_mut(id).liveness = Some(*region);
                     }
                 }
             }
@@ -188,7 +188,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                         (val.provenance_alloc_id(), property.try_type_arg_at(1))
                         && let Some(span) = self.bounded_span(&val, ty)
                     {
-                        self.alloc_mut(alloc_id).facts.bounded_spans.push(span);
+                        self.alloc_mut(alloc_id).record_bound(span);
                     }
                     self.set_in_bounds_for_value(property, val);
                 }
@@ -227,7 +227,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                                 .insert((prov.offset.clone(), expected_ty));
                         }
                         if property.for_each().is_some() {
-                            self.alloc_mut(alloc_id).facts.for_each.target_ty = Some(expected_ty);
+                            self.content_mut(alloc_id).element_facts.target_ty = Some(expected_ty);
                         }
                         if property.for_each().is_none()
                             && self.alloc(alloc_id).element_ty.is_generic()
@@ -306,7 +306,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             && let Some(pointee) = mir_utils::pointee_ty(result.ty)
             && let Some(span) = self.bounded_span(result, pointee)
         {
-            self.alloc_mut(alloc_id).facts.bounded_spans.push(span);
+            self.alloc_mut(alloc_id).record_bound(span);
         }
     }
 
@@ -322,7 +322,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             self.local_value(local)?.provenance_alloc_id()
         });
         let Some(id) = id else { return };
-        self.alloc_mut(id).facts.dead = false;
+        self.alloc_mut(id).dead = false;
         let region = self.contract_target_local(property).and_then(|local| {
             let ty = if local.as_usize() > 0 && local.as_usize() <= self.body().arg_count {
                 super::region::fn_arg_ty(
@@ -341,7 +341,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         if let Some(region) = region
             && !matches!(region.kind(), rustc_middle::ty::RegionKind::ReErased)
         {
-            self.alloc_mut(id).facts.liveness = Some(region);
+            self.alloc_mut(id).liveness = Some(region);
         }
         self.content_mut(id).facts.initialized = true;
         self.content_mut(id).facts.cstr_trusted = true;
@@ -372,9 +372,9 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let Some(alloc_id) = val.provenance_alloc_id() else {
             return false;
         };
-        self.alloc_mut(alloc_id).facts.dead = false;
-        if self.alloc(alloc_id).is_external() {
-            self.alloc_mut(alloc_id).facts.liveness = Some(self.tcx.lifetimes.re_static);
+        self.alloc_mut(alloc_id).dead = false;
+        if self.alloc(alloc_id).is_raw_storage() {
+            self.alloc_mut(alloc_id).liveness = Some(self.tcx.lifetimes.re_static);
         }
         if self.alloc(alloc_id).element_ty.is_generic() {
             self.alloc_mut(alloc_id).element_ty = ElementTy::Typed(elem_ty);
@@ -454,11 +454,8 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         // Preserve only the range supplied by the contract. It does not
         // establish the size of the entire allocation.
         let bytes = Int::mul(self.z3_ctx, &[&count, &self.size_sym(elem_ty)]);
-        let range = (value.z3_term, bytes);
-        let ranges = &mut self.alloc_mut(alloc_id).facts.bounded_ranges;
-        if !ranges.contains(&range) {
-            ranges.push(range);
-        }
+        let range = BoundFact::Bytes { address: value.z3_term, size: bytes };
+        self.alloc_mut(alloc_id).record_bound(range);
     }
 
     fn materialize_allocated_fact(&mut self, property: &Property<'tcx>) {
@@ -486,7 +483,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 return;
             };
             if let Some(alloc_id) = val.provenance_alloc_id() {
-                self.alloc_mut(alloc_id).facts.dead = false;
+                self.alloc_mut(alloc_id).dead = false;
             }
             let v = self.materialize_external_alloc(elem_ty, count_term, val.ty, false);
             self.set_local(local, v);
@@ -537,7 +534,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     return;
                 }
                 if let Some(alloc_id) = val.provenance_alloc_id() {
-                    self.alloc_mut(alloc_id).facts.dead = false;
+                    self.alloc_mut(alloc_id).dead = false;
                     if self.alloc(alloc_id).size.as_u64().is_some() {
                         return;
                     }
@@ -958,7 +955,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     /// Set owning invariant on the target value.
     fn set_owning_for_value(&mut self, val: VmValue<'z3, 'tcx>) {
         if let Some(prov) = &val.provenance {
-            self.alloc_mut(prov.alloc_id).facts.owning = Some(val.z3_term.clone());
+            self.alloc_mut(prov.alloc_id).owning = Some(val.z3_term.clone());
             self.content_mut(prov.alloc_id).facts.initialized = true;
         }
     }
@@ -968,9 +965,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         self.contract_target_value(property)?.provenance_alloc_id()
     }
 
-    /// Record the `Align(container.iter(), T)` for_each fact: every element
-    /// pointer is aligned to `align_of(T)`.  Anchored to the container
-    /// allocation so a pointer loaded from it can discharge `Align(cur, T)`.
+    /// Record the alignment guaranteed for every pointer element in the contents.
     fn record_for_each_align(&mut self, property: &Property<'tcx>) {
         let Some(ty) = property.try_type_arg_at(1) else {
             return;
@@ -978,11 +973,10 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let Some(alloc_id) = self.for_each_target_alloc(property) else {
             return;
         };
-        self.alloc_mut(alloc_id).facts.for_each.aligned_ty = Some(ty);
+        self.content_mut(alloc_id).element_facts.aligned_ty = Some(ty);
     }
 
-    /// Record the `Allocated(container.iter(), T, n)` for_each fact: every
-    /// element pointer backs `>= n` `T` elements (`n` may be symbolic).
+    /// Record the allocation capacity guaranteed for every pointer element.
     fn record_for_each_allocated(&mut self, property: &Property<'tcx>) {
         let Some(ty) = property.try_type_arg_at(1) else {
             return;
@@ -995,16 +989,14 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let Some(alloc_id) = self.for_each_target_alloc(property) else {
             return;
         };
-        self.alloc_mut(alloc_id).facts.for_each.allocated = Some((ty, count));
+        self.content_mut(alloc_id).element_facts.allocated = Some((ty, count));
     }
 
-    /// Record the `Owning(container.iter())` for_each fact: every element
-    /// pointer is the sole owner of its pointee.  Anchored to the container
-    /// allocation so a pointer loaded from it can discharge `Owning(cur)`.
+    /// Record trusted ownership for every pointer element in the contents.
     fn record_for_each_owning(&mut self, property: &Property<'tcx>) {
         let Some(alloc_id) = self.for_each_target_alloc(property) else {
             return;
         };
-        self.alloc_mut(alloc_id).facts.for_each.owning = true;
+        self.content_mut(alloc_id).element_facts.owning = true;
     }
 }

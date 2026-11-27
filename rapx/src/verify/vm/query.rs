@@ -4,7 +4,7 @@ use crate::contract::{ContractExpr, ContractPlace, ContractProjection, PlaceBase
 use crate::def_ids::type_ids;
 use crate::util::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
-use crate::vm::state::{AllocId, OffsetKind, VmExecutor, VmValue};
+use crate::vm::state::{AllocId, BoundFact, OffsetKind, VmExecutor, VmValue};
 use rustc_middle::{
     mir::{Local, Operand},
     ty::{Ty, TyKind},
@@ -134,7 +134,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         ty: Ty<'tcx>,
     ) -> bool {
         self.bounded_span(value, ty)
-            .is_some_and(|span| self.alloc(alloc_id).facts.bounded_spans.contains(&span))
+            .is_some_and(|span| self.alloc(alloc_id).bounds.contains(&span))
     }
 
     pub(crate) fn has_bounded_range(
@@ -143,14 +143,17 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         address: &Int<'z3>,
         bytes: &Int<'z3>,
     ) -> bool {
-        let ranges = &self.alloc(alloc_id).facts.bounded_ranges;
+        let ranges = &self.alloc(alloc_id).bounds;
         if ranges.is_empty() {
             return false;
         }
         let solver = z3::Solver::new(self.z3_ctx);
         self.assert_path_constraints(&solver);
         let end = Int::add(self.z3_ctx, &[address, bytes]);
-        ranges.iter().any(|(start, size)| {
+        ranges.iter().any(|bound| {
+            let BoundFact::Bytes { address: start, size } = bound else {
+                return false;
+            };
             let limit = Int::add(self.z3_ctx, &[start, size]);
             let covered = z3::ast::Bool::and(
                 self.z3_ctx,
@@ -274,7 +277,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                         if type_ids::is_maybe_uninit_type(adt.did()))))
             && {
                 let a = self.alloc(alloc_id);
-                !a.is_external()
+                !a.is_raw_storage()
                     && a.element_ty.as_ty().is_some_and(|ty| {
                         if let TyKind::Adt(adt, _) = ty.kind() {
                             type_ids::is_maybe_uninit_type(adt.did())

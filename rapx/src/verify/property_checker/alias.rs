@@ -87,7 +87,7 @@ impl PropertyChecker {
         // `Owning(container.iter())` for_each: every element pointer is the
         // sole owner of its pointee, so a pointer loaded from the container
         // (whose provenance names the container allocation) is a valid owner.
-        if vm_state.alloc(alloc_id).facts.for_each.owning {
+        if vm_state.content(alloc_id).element_facts.owning {
             return CheckResult::ProvedByRule;
         }
         let origin = vm_state.resolve_origin(&value);
@@ -148,7 +148,7 @@ impl PropertyChecker {
                     })
             })
         });
-        let internal_alloc = !vm_state.alloc(alloc_id).is_external();
+        let internal_alloc = !vm_state.alloc(alloc_id).is_raw_storage();
         let local_alloc = vm_state.local_allocations().any(|(_, id)| id == alloc_id);
         let untrusted_raw_origin = origin.as_ref().is_none_or(|origin| match origin.kind {
             VmOriginKind::RawPtr | VmOriginKind::SharedRef | VmOriginKind::Unknown => true,
@@ -202,7 +202,6 @@ impl PropertyChecker {
         }
         let matches_owning_precondition = vm_state
             .alloc(alloc_id)
-            .facts
             .owning
             .as_ref()
             .is_some_and(|owner| owner == &value.z3_term);

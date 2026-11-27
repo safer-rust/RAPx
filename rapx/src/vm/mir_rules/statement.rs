@@ -469,7 +469,7 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
                         (matches!(
                             state.alloc(id).kind,
                             AllocKind::Slice { .. } | AllocKind::ExternalSlice { .. }
-                        ) || state.alloc(id).facts.locally_allocated)
+                        ) || state.alloc(id).is_allocator())
                             && state.alloc(id).element_ty.as_ty() == Some(state.tcx.types.u8)
                     });
                     let wrote_object = state.write_through_pointer(&pointed, Vec::new(), value);
@@ -543,12 +543,12 @@ pub(crate) fn exec_storage_live<'z3, 'tcx>(state: &mut VmExecutor<'z3, 'tcx>, lo
     state.ensure_local_allocation(local);
     let alloc_id = state.path_state.current_frame.local_alloc[&local];
     *state.content_mut(alloc_id) = MemoryContent::default();
-    state.alloc_mut(alloc_id).facts.dead = false;
+    state.alloc_mut(alloc_id).dead = false;
 }
 
 pub(crate) fn exec_storage_dead<'z3, 'tcx>(state: &mut VmExecutor<'z3, 'tcx>, local: Local) {
     if let Some(alloc_id) = state.path_state.current_frame.local_alloc.get(&local).copied() {
-        state.alloc_mut(alloc_id).facts.dead = true;
+        state.alloc_mut(alloc_id).dead = true;
     }
 }
 

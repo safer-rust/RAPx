@@ -185,7 +185,7 @@ impl PropertyChecker {
                     // element target type (`let cur = buckets[i]`). The fact comes
                     // from the invariant, so this does not bless dangling pointers
                     // in containers that carry no such invariant.
-                    if let Some(target) = vm_state.alloc(alloc_id).facts.for_each.target_ty
+                    if let Some(target) = vm_state.content(alloc_id).element_facts.target_ty
                         && target == expected_ty
                     {
                         return CheckResult::ProvedByRule;

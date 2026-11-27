@@ -104,7 +104,7 @@ impl PropertyChecker {
             // owning pointer field (or a slice view's parent chain); track the
             // heap buffer rather than the container struct's stack allocation.
             let alloc_id = vm_state.data_alloc_of(alloc_id, value.ty).unwrap_or(alloc_id);
-            if vm_state.alloc(alloc_id).facts.dead {
+            if vm_state.alloc(alloc_id).dead {
                 return CheckResult::Failed;
             }
 

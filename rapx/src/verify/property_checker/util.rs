@@ -106,7 +106,7 @@ impl PropertyChecker {
                 if !v.facts.non_null {
                     let possibly_null = match &v.provenance {
                         None => true,
-                        Some(prov) => vm_state.alloc(prov.alloc_id).is_external(),
+                        Some(prov) => vm_state.alloc(prov.alloc_id).is_raw_storage(),
                     };
                     if possibly_null {
                         return true;

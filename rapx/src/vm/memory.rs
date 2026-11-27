@@ -8,17 +8,17 @@ use rustc_middle::{
 };
 use z3::{Context, Sort, ast::{Array, Ast, Bool, Int}};
 
-use super::state::{AllocId, AllocKind, Allocation, ElementTy, MemoryContent, MemoryUnit, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue, ARRAY_INDEX_MAX};
+use super::state::{AllocId, AllocKind, Allocation, BoundFact, ElementTy, MemoryContent, MemoryUnit, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue, ARRAY_INDEX_MAX};
 
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     /// The key of a bounded span. Unsized slices and strings also need their length.
-    pub(crate) fn bounded_span(&self, value: &VmValue<'z3, 'tcx>, ty: Ty<'tcx>) -> Option<(Int<'z3>, Ty<'tcx>, Option<Int<'z3>>)> {
+    pub(crate) fn bounded_span(&self, value: &VmValue<'z3, 'tcx>, ty: Ty<'tcx>) -> Option<BoundFact<'z3, 'tcx>> {
         let len = if matches!(ty.kind(), TyKind::Slice(_) | TyKind::Str) {
             Some(self.slice_len_from_value(value)?)
         } else {
             None
         };
-        Some((value.z3_term.clone(), ty, len))
+        Some(BoundFact::Object { address: value.z3_term.clone(), ty, len })
     }
 
     pub(crate) fn copy_memory_values(
@@ -50,7 +50,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                         .is_some_and(|value| value.z3_term == target.z3_term)
             });
         let slice_target = target.provenance.as_ref().is_some_and(|prov| {
-            matches!(self.alloc(prov.alloc_id).kind, AllocKind::Slice { .. } | AllocKind::ExternalSlice { .. })
+            self.alloc(prov.alloc_id).slice_len().is_some()
         });
         let allocated_target = target.provenance.as_ref().is_some_and(|prov| {
             let alloc = self.alloc(prov.alloc_id);
@@ -148,8 +148,8 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             .filter(|id| self.root_alloc(*id) == root)
             .collect();
         for id in aliases {
-            self.alloc_mut(id).facts.for_each = Default::default();
             let content = self.content_mut(id);
+            content.element_facts = Default::default();
             content.values.clear();
             content.indexed_elements.clear();
             content.indexed_elements_modified = true;
@@ -249,7 +249,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         if prov.offset.simplify().as_u64() != Some(0)
             || mir_utils::pointee_ty(pointer.ty) != Some(value.ty)
             || !value.facts.init
-            || !matches!(self.alloc(prov.alloc_id).kind, AllocKind::Slice { .. } | AllocKind::External | AllocKind::ExternalSlice { .. })
+            || !(self.alloc(prov.alloc_id).slice_len().is_some() || self.alloc(prov.alloc_id).is_raw_storage())
             || !self.alloc(prov.alloc_id).element_ty.as_ty().is_some_and(|ty| {
                 ty != value.ty && matches!(ty.kind(), TyKind::Int(_) | TyKind::Uint(_))
             })
@@ -258,7 +258,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         }
         self.clear_write_evidence(prov.alloc_id);
         let written_ty = value.ty;
-        let local_allocation = self.alloc(prov.alloc_id).facts.locally_allocated;
+        let local_allocation = self.alloc(prov.alloc_id).is_allocator();
         if local_allocation {
             self.alloc_mut(prov.alloc_id).element_ty = ElementTy::Typed(written_ty);
         }
@@ -1471,7 +1471,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             };
             let wrote_object = path.is_empty()
                 && pointer.provenance.as_ref().is_some_and(|prov| {
-                    self.alloc(prov.alloc_id).is_external()
+                    self.alloc(prov.alloc_id).is_raw_storage()
                         && self.alloc(prov.alloc_id).element_ty.as_ty() != Some(value.ty)
                 })
                 && self.write_provenance_allocation(pointer, value.clone());

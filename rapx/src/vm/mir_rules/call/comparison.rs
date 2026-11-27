@@ -10,7 +10,7 @@ use rustc_middle::{
 };
 use z3::ast::{Ast, Bool, Int};
 
-use super::super::super::state::{AllocKind, ValueSource, VmExecutor, VmValue};
+use super::super::super::state::{ValueSource, VmExecutor, VmValue};
 use crate::def_ids::lang_api::{self, LangItem};
 use crate::util::mir_utils;
 
@@ -176,10 +176,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let slice_id = slice.provenance_alloc_id()?;
         let slice_alloc = self.alloc(slice_id);
         if slice_alloc.element_ty.as_ty() != Some(self.tcx.types.u8)
-            || !matches!(
-                slice_alloc.kind,
-                AllocKind::Slice { .. } | AllocKind::ExternalSlice { .. }
-            )
+            || slice_alloc.slice_len().is_none()
             || slice.provenance.as_ref()?.offset.simplify().as_u64() != Some(0)
         {
             return None;

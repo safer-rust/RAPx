@@ -17,7 +17,7 @@ impl PropertyChecker {
         solver: &Solver<'z3>,
         alloc_id: crate::vm::state::AllocId,
     ) -> CheckResult {
-        if vm_state.alloc(alloc_id).facts.dead {
+        if vm_state.alloc(alloc_id).dead {
             return CheckResult::Failed;
         }
         if vm_state.is_utf8_trusted(alloc_id) {

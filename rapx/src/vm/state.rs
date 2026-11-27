@@ -192,21 +192,19 @@ impl<'z3, 'tcx> VmValue<'z3, 'tcx> {
     }
 }
 
-/// The shape of an allocation: a single object, a slice/array buffer, or
-/// externally supplied storage. `element_ty` (typed vs untyped) and the
-/// `parent` sub-view edge stay separate fields.
+/// Allocation category and optional element count.
 #[derive(Clone, Debug)]
 pub(crate) enum AllocKind<'z3> {
-    /// A single object: a `Box<T>` heap object, a struct, a scalar, or an
-    /// untyped raw buffer.
+    /// A modeled object, such as a struct, scalar, or heap pointee.
     Object,
-    /// External storage with a symbolic extent; pointer nullability is tracked
-    /// by path conditions rather than by this allocation kind.
+    /// Externally supplied storage without a recorded element count.
     External,
     /// A slice/array buffer with a known element count.
     Slice { len: Int<'z3> },
     /// External allocation with a known, possibly symbolic element count.
     ExternalSlice { len: Int<'z3> },
+    /// Storage returned by a modeled allocation or reallocation call.
+    Allocator { len: Option<Int<'z3>> },
 }
 
 /// The element type of an allocation's contents, either a concrete [`Ty`] or
@@ -247,58 +245,33 @@ impl<'tcx> From<Option<Ty<'tcx>>> for ElementTy<'tcx> {
     }
 }
 
-/// Uniform facts about the *pointer elements* of a container, established by
-/// `x.iter()` for_each invariants.
-///
-/// Each fact is a property every element pointer satisfies. The facts are
-/// anchored to the container allocation, separate from its storage layout.
+/// Properties shared by every pointer element in the stored contents.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct ForEachFacts<'z3, 'tcx> {
-    /// `Typed(iter(), T)`: every element pointer points at a valid `T`.
+pub(crate) struct ElementPointerFacts<'z3, 'tcx> {
+    /// Every element pointer points at a valid value of this type.
     pub target_ty: Option<Ty<'tcx>>,
-    /// `Align(iter(), T)`: every element pointer is aligned to `align_of(T)`.
+    /// Every element pointer is aligned for this type.
     pub aligned_ty: Option<Ty<'tcx>>,
-    /// `Allocated(iter(), T, n)`: every element pointer backs `>= n` `T`
-    /// elements (`n` may be symbolic).
+    /// Every element pointer backs at least this many values of the given type.
     pub allocated: Option<(Ty<'tcx>, Int<'z3>)>,
-    /// `Owning(iter())` is trusted; alias validation is handled separately.
+    /// Every element pointer has trusted ownership; aliasing is checked separately.
     pub owning: bool,
 }
 
-/// Per-allocation *lifecycle* facts (`dead`/`liveness`/`for_each`), kept apart
-/// from the allocation's shape metadata and `parent` edge so identity/layout
-/// and facts are separated at the type level.  The *content* facts
-/// (readability, C-string/UTF-8 trust) live on [`ContentFacts`] instead.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct AllocFacts<'z3, 'tcx> {
-    /// Whether the allocation is dead after storage ends or a drop.
-    pub dead: bool,
-    /// Whether an unresolved `Fn*` call may have freed this allocation.
-    pub function_var_may_drop: bool,
-    /// A destructor may have freed this allocation.
-    pub drop_may_free: bool,
-    /// Pointer term licensed by an `Owning` precondition.
-    pub owning: Option<Int<'z3>>,
-    /// Whether this allocation was created in the analyzed function.
-    pub locally_allocated: bool,
-    /// Assumed live region for external allocations; `None` grants no lifetime.
-    pub liveness: Option<Region<'tcx>>,
-    /// Facts shared by all pointer elements of this allocation.
-    pub for_each: ForEachFacts<'z3, 'tcx>,
-    /// `(address, type, length)` spans licensed by `InBound` contracts. The
-    /// length is the pointer's length for a slice or `str`, whose size depends
-    /// on it, and `None` for other types.
-    pub bounded_spans: Vec<(Int<'z3>, Ty<'tcx>, Option<Int<'z3>>)>,
-    /// Byte ranges established by explicit allocation/bounds contracts.
-    /// Each entry is (start address, byte count), not a whole-allocation extent.
-    pub bounded_ranges: Vec<(Int<'z3>, Int<'z3>)>,
+/// Bounds established for an object or a byte range.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum BoundFact<'z3, 'tcx> {
+    /// Object bound; `len` is present only for slices and strings.
+    Object { address: Int<'z3>, ty: Ty<'tcx>, len: Option<Int<'z3>> },
+    /// Byte range beginning at `address` with length `size`.
+    Bytes { address: Int<'z3>, size: Int<'z3> },
 }
 
 /// Per-allocation *content* facts: whether the allocation's contents are
 /// readable (initialized), whether they were asserted to be a valid C string /
 /// UTF-8, and whether they were licensed for `SplitTransmute` re-interpretation.
 /// These describe the stored bytes/values, so they live on [`MemoryContent`]
-/// next to that data, rather than on [`AllocFacts`] (lifecycle).
+/// next to that data, rather than on [`Allocation`].
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ContentFacts<'tcx> {
     /// Whether the allocation contains a readable value.
@@ -331,10 +304,20 @@ pub(crate) struct Allocation<'z3, 'tcx> {
     pub align: Int<'z3>,
     /// Element type of the stored object or slice.
     pub element_ty: ElementTy<'tcx>,
-    /// Object, slice, or external allocation shape.
+    /// Allocation category and optional element count.
     pub kind: AllocKind<'z3>,
-    /// Allocation lifecycle and ownership facts.
-    pub facts: AllocFacts<'z3, 'tcx>,
+    /// Whether the allocation is dead after storage ends or a drop.
+    pub dead: bool,
+    /// Whether an unresolved `Fn*` call may have freed this allocation.
+    pub function_var_may_drop: bool,
+    /// A destructor may have freed this allocation.
+    pub drop_may_free: bool,
+    /// Pointer term licensed by an `Owning` precondition.
+    pub owning: Option<Int<'z3>>,
+    /// Assumed live region for external allocations; `None` grants no lifetime.
+    pub liveness: Option<Region<'tcx>>,
+    /// Object and byte-range bounds licensed by contracts.
+    pub bounds: Vec<BoundFact<'z3, 'tcx>>,
     /// Source allocation of a view; followed to find its aliasing root.
     pub parent: Option<AllocId>,
 }
@@ -355,22 +338,37 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
             align,
             element_ty: element_ty.into(),
             kind,
-            facts: AllocFacts::default(),
+            dead: false,
+            function_var_may_drop: false,
+            drop_may_free: false,
+            owning: None,
+            liveness: None,
+            bounds: Vec::new(),
             parent: None,
         }
     }
 
-    /// Whether this allocation models externally supplied storage.
-    pub(crate) fn is_external(&self) -> bool {
+    pub(crate) fn record_bound(&mut self, bound: BoundFact<'z3, 'tcx>) {
+        if !self.bounds.contains(&bound) {
+            self.bounds.push(bound);
+        }
+    }
+
+    /// Storage whose nullability and validity require explicit evidence.
+    pub(crate) fn is_raw_storage(&self) -> bool {
         matches!(
             self.kind,
-            AllocKind::External | AllocKind::ExternalSlice { .. }
+            AllocKind::External | AllocKind::ExternalSlice { .. } | AllocKind::Allocator { .. }
         )
+    }
+
+    pub(crate) fn is_allocator(&self) -> bool {
+        matches!(self.kind, AllocKind::Allocator { .. })
     }
 
     /// Legacy external-allocation placeholder, not evidence of a byte extent.
     pub(crate) fn has_unbounded_size(&self) -> bool {
-        self.is_external() && self.size.simplify().as_u64() == Some(i64::MAX as u64)
+        self.is_raw_storage() && self.size.simplify().as_u64() == Some(i64::MAX as u64)
     }
 
     /// The slice/array element count, if this allocation is slice data.
@@ -380,16 +378,17 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
     pub(crate) fn slice_len(&self) -> Option<&Int<'z3>> {
         match &self.kind {
             AllocKind::Slice { len } | AllocKind::ExternalSlice { len } => Some(len),
+            AllocKind::Allocator { len } => len.as_ref(),
             _ => None,
         }
     }
 
     /// Record a slice's logical length without changing its allocated size.
     pub(crate) fn set_slice_len(&mut self, len: Int<'z3>) {
-        self.kind = if self.is_external() {
-            AllocKind::ExternalSlice { len }
-        } else {
-            AllocKind::Slice { len }
+        self.kind = match &self.kind {
+            AllocKind::Allocator { .. } => AllocKind::Allocator { len: Some(len) },
+            AllocKind::External | AllocKind::ExternalSlice { .. } => AllocKind::ExternalSlice { len },
+            _ => AllocKind::Slice { len },
         };
     }
 }
@@ -435,8 +434,7 @@ pub(crate) struct InlineCtx<'z3, 'tcx> {
     pub pending_states: Vec<Box<VmExecutor<'z3, 'tcx>>>,
     /// Terms returned by intrinsic effects the VM could not model.
     pub opaque_intrinsic_terms: FxHashSet<Int<'z3>>,
-    /// Results of a modeled intrinsic whose input aggregate was not resolved
-    /// from memory (for example, a symbolic array element of a SIMD vector).
+    /// Intrinsic results whose input aggregate could not be resolved from memory.
     pub unresolved_memory_terms: FxHashSet<Int<'z3>>,
     /// Caller referent local for each inlined callee argument.
     pub arg_referents: Vec<Option<Local>>,
@@ -463,18 +461,10 @@ pub(crate) enum ValueSource<'z3> {
     SliceLen(Int<'z3>),
     /// A compile-time `offset_of!` field offset.
     FieldOffset,
-    /// Numeric address derived from an exposed pointer. This records the
-    /// original pointer relation for address-only checks; it does not grant
-    /// provenance to a pointer reconstructed from integer arithmetic.
-    ExposedAddress {
-        address: Int<'z3>,
-        provenance: Provenance<'z3>,
-    },
+    /// Original pointer relation for address checks; integer arithmetic grants no provenance.
+    ExposedAddress { address: Int<'z3>, provenance: Provenance<'z3> },
     /// Borrow of a field path rooted at a caller local.
-    FieldBorrow {
-        base: Local,
-        fields: Vec<usize>,
-    },
+    FieldBorrow { base: Local, fields: Vec<usize> },
     /// A known enum discriminant.
     KnownDiscriminant(Int<'z3>),
     /// Variant whose payload fields are being written before `SetDiscriminant`.
@@ -528,7 +518,7 @@ impl<'z3> ValueSource<'z3> {
 /// ([`MemoryContent`]).  Splitting the two keeps the identity/layout facts apart
 /// from the mutable memory the values live in, while colocating them in one
 /// unit so no parallel table can drift out of sync.  Facts live in three
-/// anchored layers — lifecycle ([`AllocFacts`]), content ([`ContentFacts`]),
+/// anchored layers — lifecycle ([`Allocation`]), content ([`ContentFacts`]),
 /// and value ([`ValueFacts`] on each [`VmValue`]) — see each type's doc.
 #[derive(Clone)]
 pub(crate) struct MemoryUnit<'z3, 'tcx> {
@@ -559,6 +549,8 @@ pub(crate) struct MemoryContent<'z3, 'tcx> {
     pub(crate) copied_prefix: Option<(Ty<'tcx>, Int<'z3>)>,
     /// Initialization and validity facts about the stored contents.
     pub(crate) facts: ContentFacts<'tcx>,
+    /// Properties of every pointer element stored here.
+    pub(crate) element_facts: ElementPointerFacts<'z3, 'tcx>,
 }
 
 impl MemoryContent<'_, '_> {
@@ -704,13 +696,13 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 self.path_state.ownership_transfers[id].available.saturating_sub(1);
         }
         if may_free && let Some(alloc_id) = value.provenance_alloc_id() {
-            self.alloc_mut(self.root_alloc(alloc_id)).facts.drop_may_free = true;
+            self.alloc_mut(self.root_alloc(alloc_id)).drop_may_free = true;
         }
     }
 
     pub(crate) fn record_memory_drop(&mut self, alloc_id: AllocId, local: Local) {
         self.record_memory_event(alloc_id, local, MemoryEventKind::Drop);
-        self.alloc_mut(alloc_id).facts.dead = true;
+        self.alloc_mut(alloc_id).dead = true;
     }
 
     pub(crate) fn record_memory_use(&self, alloc_id: AllocId, local: Local) {
@@ -722,7 +714,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             events.borrow_mut().push(MemoryEvent {
                 alloc_id,
                 kind,
-                was_dead: self.alloc(alloc_id).facts.dead,
+                was_dead: self.alloc(alloc_id).dead,
                 site: self.path_state.diagnostics.active_mir,
                 local: local.as_usize(),
             });
@@ -944,8 +936,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         self.allocate_internal(size, align, element_ty, AllocKind::Object)
     }
 
-    /// Allocate a fresh external allocation (for raw-pointer parameters).
-    /// External allocations may be null and have unlimited size.
+    /// Model external storage; nullability and extent require separate evidence.
     pub(crate) fn allocate_external(
         &mut self,
         size: Int<'z3>,
@@ -953,6 +944,15 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         element_ty: Option<Ty<'tcx>>,
     ) -> (AllocId, Int<'z3>) {
         self.allocate_internal(size, align, element_ty, AllocKind::External)
+    }
+
+    pub(crate) fn allocate_from_allocator(
+        &mut self,
+        size: Int<'z3>,
+        align: Int<'z3>,
+        element_ty: Option<Ty<'tcx>>,
+    ) -> (AllocId, Int<'z3>) {
+        self.allocate_internal(size, align, element_ty, AllocKind::Allocator { len: None })
     }
 
     /// Allocate a slice/array data allocation with a known (possibly symbolic)
@@ -982,7 +982,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     ) -> (AllocId, Int<'z3>) {
         let id = AllocId(self.path_state.mem_units.len());
         let base = {
-            let prefix = if matches!(kind, AllocKind::External) { "ext" } else { "heap" };
+            let prefix = if matches!(kind, AllocKind::External | AllocKind::Allocator { .. }) { "ext" } else { "heap" };
             let name = format!("{prefix}_{}", id.0);
             Int::new_const(self.z3_ctx, name.as_str())
         };
@@ -1293,7 +1293,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let zero = Int::from_u64(self.z3_ctx, 0);
         for unit in &self.path_state.mem_units {
             let alloc = &unit.allocation;
-            if !alloc.is_external() {
+            if !alloc.is_raw_storage() {
                 solver.assert(&alloc.base._eq(&zero).not());
             }
             solver.assert(&alloc.size.ge(&zero));

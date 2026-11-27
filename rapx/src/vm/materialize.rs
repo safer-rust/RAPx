@@ -90,7 +90,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         };
         self.content_mut(alloc_id).facts.initialized = true;
         if let Some(region) = alive_region {
-            self.alloc_mut(alloc_id).facts.liveness = Some(region);
+            self.alloc_mut(alloc_id).liveness = Some(region);
         }
         self.set_field_value(
             local,
@@ -597,7 +597,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                         let align = self.align_sym(pointee_ty);
                         let (alloc_id, base) = self.allocate(size, align, Some(pointee_ty));
                         self.content_mut(alloc_id).facts.initialized = true;
-                        self.alloc_mut(alloc_id).facts.liveness =
+                        self.alloc_mut(alloc_id).liveness =
                             Some(self.tcx.lifetimes.re_static);
                         for (i, &b) in bytes.iter().enumerate() {
                             self.record_byte_value(

@@ -245,21 +245,21 @@ pub(crate) fn exec_drop<'z3, 'tcx>(state: &mut VmExecutor<'z3, 'tcx>, place: &Pl
                         && !has_owner_ptr_invariant(state.tcx, ty, path, PropertyKind::Owning)
                 });
                 if shared_owner {
-                    state.alloc_mut(data_id).facts.drop_may_free = true;
+                    state.alloc_mut(data_id).drop_may_free = true;
                     if let Some(path) = ptr_path
                         && let Some(mut field) = state.load_value(header, ty, &path).cloned()
                     {
                         field.provenance = None;
                         state.store_value(header, ty, path, field);
                     }
-                    state.alloc_mut(header).facts.dead = true;
+                    state.alloc_mut(header).dead = true;
                 } else if !is_param {
                     state.record_memory_drop(data_id, source);
                     dropped_data = true;
                 }
             }
         }
-        state.alloc_mut(alloc_id).facts.dead = true;
+        state.alloc_mut(alloc_id).dead = true;
         if place.projection.is_empty() {
             state.invalidate_owner_field(place.local);
         }

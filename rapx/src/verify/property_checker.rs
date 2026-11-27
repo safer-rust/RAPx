@@ -266,7 +266,7 @@ impl PropertyChecker {
             if vm_state.content(alloc_id).indexed_elements_modified {
                 return CheckResult::Unknown(UnknownReason::Unimplemented);
             }
-            let facts = &vm_state.alloc(alloc_id).facts.for_each;
+            let facts = &vm_state.content(alloc_id).element_facts;
             let expected_ty = property.args().get(1).and_then(|arg| match arg {
                 PropertyArg::Ty(ty) => Some(*ty),
                 _ => None,
@@ -310,7 +310,7 @@ impl PropertyChecker {
                     .and_then(|value| value.provenance_alloc_id());
                 if target_alloc_id
                     .is_some_and(|id| {
-                        vm_state.alloc(vm_state.root_alloc(id)).facts.function_var_may_drop
+                        vm_state.alloc(vm_state.root_alloc(id)).function_var_may_drop
                     })
                 {
                     return CheckResult::Unknown(UnknownReason::UnsupportedEffect(vec![

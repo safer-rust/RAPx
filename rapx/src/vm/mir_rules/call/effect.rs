@@ -361,13 +361,12 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                         .get(*align_arg)
                         .map(|value| value.z3_term.clone())
                         .unwrap_or_else(|| Int::from_u64(self.z3_ctx, 1));
-                    let (alloc_id, base) = self.allocate_external(
+                    let (alloc_id, base) = self.allocate_from_allocator(
                         size.z3_term.clone(),
                         align,
                         Some(self.tcx.types.u8),
                     );
-                    self.alloc_mut(alloc_id).facts.owning = Some(base.clone());
-                    self.alloc_mut(alloc_id).facts.locally_allocated = true;
+                    self.alloc_mut(alloc_id).owning = Some(base.clone());
                     if *zeroed {
                         self.content_mut(alloc_id).facts.initialized = true;
                     }
@@ -401,14 +400,15 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     self.path_state.inline.pending_states.push(Box::new(failure));
 
                     let old = pointer.provenance_alloc_id();
-                    let (alloc_id, base) = self.allocate_external(size.z3_term.clone(), align.z3_term.clone(), Some(self.tcx.types.u8));
+                    let (alloc_id, base) = self.allocate_from_allocator(size.z3_term.clone(), align.z3_term.clone(), Some(self.tcx.types.u8));
                     self.path_state.constraints.assertions.push(base._eq(&zero).not());
                     if let Some(old) = old {
                         self.path_state.mem_units[alloc_id.0].content = self.path_state.mem_units[old.0].content.clone();
-                        self.alloc_mut(old).facts.dead = true;
+                        // Reallocation may add elements not covered by the old facts.
+                        self.content_mut(alloc_id).element_facts = Default::default();
+                        self.alloc_mut(old).dead = true;
                     }
-                    self.alloc_mut(alloc_id).facts.owning = Some(base.clone());
-                    self.alloc_mut(alloc_id).facts.locally_allocated = true;
+                    self.alloc_mut(alloc_id).owning = Some(base.clone());
                     self.set_local(dest, VmValue {
                         z3_term: base,
                         ty,
@@ -565,7 +565,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     ) -> Option<VmValue<'z3, 'tcx>> {
         let dest_ty = self.body().local_decls[dest].ty;
         let dest_alloc_id = self.path_state.current_frame.local_alloc.get(&dest).copied();
-        self.alloc_mut(alloc_id).facts.owning = Some(base.clone());
+        self.alloc_mut(alloc_id).owning = Some(base.clone());
         self.content_mut(alloc_id).facts.initialized = true;
         self.set_local(
             dest,

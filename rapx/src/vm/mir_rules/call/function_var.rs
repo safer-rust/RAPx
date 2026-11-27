@@ -112,7 +112,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             .iter()
             .filter_map(|(local, id)| {
                 (matches!(self.body().local_decls[*local].ty.kind(), TyKind::Ref(..))
-                    && !self.alloc(*id).facts.dead)
+                    && !self.alloc(*id).dead)
                     .then(|| self.local_value(*local))
                     .flatten()
                     .and_then(VmValue::provenance_alloc_id)
@@ -140,16 +140,16 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         for id in affected {
             let may_drop = !borrowed.contains(&id);
             if may_drop {
-                self.alloc_mut(id).facts.function_var_may_drop = true;
+                self.alloc_mut(id).function_var_may_drop = true;
             }
             self.forget_memory_values(id);
             for alias in 0..self.path_state.mem_units.len() {
                 let alias = AllocId(alias);
                 if self.root_alloc(alias) == id {
-                    let facts = &mut self.alloc_mut(alias).facts;
-                    facts.owning = None;
+                    let alloc = self.alloc_mut(alias);
+                    alloc.owning = None;
                     if may_drop {
-                        facts.liveness = None;
+                        alloc.liveness = None;
                     }
                 }
             }
