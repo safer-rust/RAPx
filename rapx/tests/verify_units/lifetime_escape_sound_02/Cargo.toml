@@ -1,0 +1,8 @@
+[package]
+name = "lifetime_escape_sound_02"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+[workspace]

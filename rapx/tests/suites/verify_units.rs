@@ -706,6 +706,8 @@ sound_tests! {
     // A shared view re-borrowed from `x: &'a str` and returned as `&'a str`
     // keeps the same region, so the escape is lifetime-safe.
     lifetime_escape_sound_01: "verify_units/lifetime_escape_sound_01" => "return_longer",
+    // The same for a `&mut` view re-borrowed from `s: &'a mut [T]`.
+    lifetime_escape_sound_02: "verify_units/lifetime_escape_sound_02" => "same_region_mut",
 }
 
 // CString's unknown extent no longer proves the later raw write's bounds.
@@ -731,6 +733,10 @@ unsound_hazard_tests! {
     lifetime_escape_unsound_01: "verify_units/lifetime_escape_unsound_01" => "return_shorter_as_longer" => "Alias",
     // The same escape when the raw pointer is the return value of a call.
     lifetime_escape_unsound_02: "verify_units/lifetime_escape_unsound_02" => "extend_via_call" => "Alias",
+    // The same escapes for a `&mut` view: through a raw-pointer deref, and
+    // through `from_raw_parts_mut`.
+    lifetime_escape_unsound_03: "verify_units/lifetime_escape_unsound_03" => "extend_mut_via_call" => "Alias",
+    lifetime_escape_unsound_04: "verify_units/lifetime_escape_unsound_04" => "extend_mut_view" => "Alias",
 }
 
 // An *independent* `*mut T` must be assumed to alias the shared `&[T]`
