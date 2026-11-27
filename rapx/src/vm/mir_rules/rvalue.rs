@@ -28,11 +28,6 @@ pub(crate) fn eval_use<'z3, 'tcx>(
         return eval_global_static_ptr(state, place, static_id);
     }
     let mut val = state.value_of_operand(operand);
-    if let Some(local) = operand.place().map(|place| place.local)
-        && let Some(alloc_id) = val.provenance_alloc_id()
-    {
-        state.record_memory_use(alloc_id, local);
-    }
     if let rustc_middle::mir::Operand::Constant(c) = operand
         && place.projection.is_empty()
     {
@@ -79,7 +74,7 @@ pub(crate) fn eval_ref<'z3, 'tcx>(
         };
         let is_slice_ref_from_raw = is_slice_ref && is_raw_ptr_source && has_deref;
         let src_in_bounds = if is_slice_ref_from_raw {
-            addr.is_pointer()
+            addr.has_provenance()
         } else {
             state
                 .local_value(place.local)
@@ -1327,7 +1322,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         rhs: &VmValue<'z3, 'tcx>,
         result: &Int<'z3>,
     ) -> Option<Provenance<'z3>> {
-        if rhs.is_pointer() || !matches!(op, BinOp::Add | BinOp::AddWithOverflow | BinOp::AddUnchecked
+        if rhs.has_provenance() || !matches!(op, BinOp::Add | BinOp::AddWithOverflow | BinOp::AddUnchecked
             | BinOp::Sub | BinOp::SubWithOverflow | BinOp::SubUnchecked) {
             return None;
         }

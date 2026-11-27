@@ -997,6 +997,6 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let Some(alloc_id) = self.for_each_target_alloc(property) else {
             return;
         };
-        self.content_mut(alloc_id).element_facts.owning = true;
+        self.content_mut(alloc_id).element_facts.own_pointees = true;
     }
 }

@@ -120,7 +120,7 @@ pub(super) fn detect(tcx: TyCtxt<'_>) -> FxHashMap<DefId, Vec<Span>> {
                     let alloc = state.vm.alloc(*id);
                     if !alloc.dead
                         && !alloc.drop_may_free
-                        && !alloc.function_var_may_drop
+                        && !alloc.function_var_may_free
                         && !spans.contains(span)
                     {
                         spans.push(*span);

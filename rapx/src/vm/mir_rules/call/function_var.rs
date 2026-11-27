@@ -140,7 +140,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         for id in affected {
             let may_drop = !borrowed.contains(&id);
             if may_drop {
-                self.alloc_mut(id).function_var_may_drop = true;
+                self.alloc_mut(id).function_var_may_free = true;
             }
             self.forget_memory_values(id);
             for alias in 0..self.path_state.mem_units.len() {

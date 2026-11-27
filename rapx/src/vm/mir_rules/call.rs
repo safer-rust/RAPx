@@ -124,15 +124,6 @@ pub(super) fn exec_call<'z3, 'tcx>(
     } else {
         None
     };
-    if drop_call.is_none() {
-        for (arg, value) in args.iter().zip(&arg_values) {
-            if let Some(local) = arg.node.place().map(|place| place.local)
-                && let Some(alloc_id) = value.provenance_alloc_id()
-            {
-                state.record_memory_use(alloc_id, local);
-            }
-        }
-    }
     if callee.is_some_and(|c| {
         matches!(state.tcx.def_kind(c), DefKind::Fn | DefKind::AssocFn)
             && matches!(
@@ -159,6 +150,30 @@ pub(super) fn exec_call<'z3, 'tcx>(
     });
 
     let model = state.select_call_model(&site, drop_call);
+    // Passing a pointer does not access its pointee; only memory effects do.
+    if let CallModel::Summary(effects) = &model {
+        for effect in effects {
+            let memory_args = match effect {
+                CallEffect::LoadMemory { pointer_arg }
+                | CallEffect::StoreMemory { pointer_arg, .. }
+                | CallEffect::AtomicRmw { pointer_arg }
+                | CallEffect::FillBytes { pointer_arg, .. }
+                | CallEffect::SimdHavocMemory { pointer_arg, .. } => [Some(*pointer_arg), None],
+                CallEffect::CopyMemory { source_arg, destination_arg, .. } => [Some(*source_arg), Some(*destination_arg)],
+                CallEffect::SwapMemory { left_arg, right_arg }
+                | CallEffect::ReturnRawEq { left_arg, right_arg } => [Some(*left_arg), Some(*right_arg)],
+                CallEffect::ReturnCompareBytes { left_arg, right_arg, .. } => [Some(*left_arg), Some(*right_arg)],
+                _ => [None, None],
+            };
+            for index in memory_args.into_iter().flatten() {
+                if let Some((Some(local), value)) = site.arg_locals.get(index).zip(site.arg_values.get(index))
+                    && let Some(alloc_id) = value.provenance_alloc_id()
+                {
+                    state.record_memory_use(alloc_id, *local);
+                }
+            }
+        }
+    }
     let finish_policy = model.finish_policy();
     let summary_used = model.uses_summary_invariants();
     if state.execute_call_model(model, &site) == RuleFlow::Pruned {

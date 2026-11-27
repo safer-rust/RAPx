@@ -87,7 +87,7 @@ impl PropertyChecker {
         // `Owning(container.iter())` for_each: every element pointer is the
         // sole owner of its pointee, so a pointer loaded from the container
         // (whose provenance names the container allocation) is a valid owner.
-        if vm_state.content(alloc_id).element_facts.owning {
+        if vm_state.content(alloc_id).element_facts.own_pointees {
             return CheckResult::ProvedByRule;
         }
         let origin = vm_state.resolve_origin(&value);

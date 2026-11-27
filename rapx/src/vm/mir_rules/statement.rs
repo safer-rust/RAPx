@@ -345,6 +345,9 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
         .projection
         .iter()
         .any(|p| matches!(p.kind(), ProjectionElem::Deref));
+    if has_deref && let Some(alloc_id) = state.local_value(place.local).and_then(VmValue::provenance_alloc_id) {
+        state.record_memory_use(alloc_id, place.local);
+    }
 
     if !place.projection.is_empty() {
         state.record_projected_store(place, &value);

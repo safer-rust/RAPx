@@ -186,8 +186,8 @@ impl<'z3, 'tcx> VmValue<'z3, 'tcx> {
         matches!(self.source, ValueSource::FieldOffset)
     }
 
-    /// Whether this value is a pointer (carries provenance).
-    pub(crate) fn is_pointer(&self) -> bool {
+    /// Whether this value carries allocation provenance.
+    pub(crate) fn has_provenance(&self) -> bool {
         self.provenance.is_some()
     }
 }
@@ -255,7 +255,7 @@ pub(crate) struct ElementPointerFacts<'z3, 'tcx> {
     /// Every element pointer backs at least this many values of the given type.
     pub allocated: Option<(Ty<'tcx>, Int<'z3>)>,
     /// Every element pointer has trusted ownership; aliasing is checked separately.
-    pub owning: bool,
+    pub own_pointees: bool,
 }
 
 /// An object or byte-range bound recorded on an allocation.
@@ -296,6 +296,8 @@ pub(crate) struct ContentFacts<'tcx> {
 /// `AllocId` is a monotonic counter that doubles as the vector index).
 #[derive(Clone, Debug)]
 pub(crate) struct Allocation<'z3, 'tcx> {
+    /// Allocation category and optional element count.
+    pub kind: AllocKind<'z3>,
     /// Symbolic base address.
     pub base: Int<'z3>,
     /// Size in bytes, possibly symbolic.
@@ -304,14 +306,6 @@ pub(crate) struct Allocation<'z3, 'tcx> {
     pub align: Int<'z3>,
     /// Element type of the stored object or slice.
     pub element_ty: ElementTy<'tcx>,
-    /// Allocation category and optional element count.
-    pub kind: AllocKind<'z3>,
-    /// Whether the allocation is dead after storage ends or a drop.
-    pub dead: bool,
-    /// Whether an unresolved `Fn*` call may have freed this allocation.
-    pub function_var_may_drop: bool,
-    /// A destructor may have freed this allocation.
-    pub drop_may_free: bool,
     /// Pointer term licensed by an `Owning` precondition.
     pub owning: Option<Int<'z3>>,
     /// Assumed live region for external allocations; `None` grants no lifetime.
@@ -320,6 +314,12 @@ pub(crate) struct Allocation<'z3, 'tcx> {
     pub bounds: Vec<AllocBoundFact<'z3, 'tcx>>,
     /// Source allocation of a view; followed to find its aliasing root.
     pub parent: Option<AllocId>,
+    /// Whether the allocation is dead after storage ends or a drop.
+    pub dead: bool,
+    /// Whether an unresolved `Fn*` call may have freed this allocation.
+    pub function_var_may_free: bool,
+    /// A destructor may have freed this allocation.
+    pub drop_may_free: bool,
 }
 
 impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
@@ -333,18 +333,18 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
         kind: AllocKind<'z3>,
     ) -> Self {
         Allocation {
+            kind,
             base,
             size,
             align,
             element_ty: element_ty.into(),
-            kind,
-            dead: false,
-            function_var_may_drop: false,
-            drop_may_free: false,
             owning: None,
             liveness: None,
             bounds: Vec::new(),
             parent: None,
+            dead: false,
+            function_var_may_free: false,
+            drop_may_free: false,
         }
     }
 

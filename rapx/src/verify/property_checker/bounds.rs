@@ -881,7 +881,7 @@ impl PropertyChecker {
         }
         if let Some(op) = checkpoint.args.first() {
             let target_val = vm_state.value_of_operand(op);
-            if target_val.is_pointer() {
+            if target_val.has_provenance() {
                 return true;
             }
         }

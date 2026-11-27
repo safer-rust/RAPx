@@ -523,7 +523,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             });
             if let Some(src_local) = src
                 && let Some(src_val) = self.local_value(src_local) {
-                    let has_better_prov = src_val.is_pointer()
+                    let has_better_prov = src_val.has_provenance()
                         && src_val.facts.non_null
                         && self.local_value(dest_local).is_none_or(|d| {
                             d.provenance.is_none() || !d.facts.non_null

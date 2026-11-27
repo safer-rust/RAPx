@@ -83,7 +83,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     if let Some(value) = self.field_value(local, &fields) {
                         return Some(value.clone());
                     }
-                    if let Some(base_value) = self.local_value(local) && base_value.is_pointer() {
+                    if let Some(base_value) = self.local_value(local) && base_value.has_provenance() {
                         return Some(VmValue {
                             z3_term: base_value.z3_term.clone(),
                             ty: base_value.ty,
@@ -239,7 +239,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             rustc_middle::ty::TyKind::Ref(..) | rustc_middle::ty::TyKind::RawPtr(..)
         ) && let Some(owner) = self.find_local_by_address(&value.z3_term)
             && let Some(heap_field) = self.owner_ptr_field(owner)
-            && heap_field.is_pointer()
+            && heap_field.has_provenance()
         {
             value.z3_term = heap_field.z3_term.clone();
             value.provenance = heap_field.provenance.clone();

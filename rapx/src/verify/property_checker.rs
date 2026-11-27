@@ -278,7 +278,7 @@ impl PropertyChecker {
                     .as_ref()
                     .is_some_and(|(ty, _)| Some(*ty) == expected_ty),
                 PropertyKind::Typed => expected_ty.is_some() && facts.target_ty == expected_ty,
-                PropertyKind::Owning => facts.owning,
+                PropertyKind::Owning => facts.own_pointees,
                 _ => true,
             };
             if !established {
@@ -310,7 +310,7 @@ impl PropertyChecker {
                     .and_then(|value| value.provenance_alloc_id());
                 if target_alloc_id
                     .is_some_and(|id| {
-                        vm_state.alloc(vm_state.root_alloc(id)).function_var_may_drop
+                        vm_state.alloc(vm_state.root_alloc(id)).function_var_may_free
                     })
                 {
                     return CheckResult::Unknown(UnknownReason::UnsupportedEffect(vec![

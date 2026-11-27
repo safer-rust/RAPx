@@ -166,7 +166,7 @@ impl PropertyChecker {
         // (`align_of::<Box<i32>>() = 8`).  Require a provenance so a pointer
         // local whose value fell back to its own stack-address default (and is
         // really some unaligned offset) is not mistaken for a stack borrow.
-        if value.is_pointer()
+        if value.has_provenance()
             && let Some(local) = vm_state.find_local_by_address(&value.z3_term) {
                 let local_ty = vm_state.body().local_decls[local].ty;
                 let local_align = vm_state.align_sym_read(local_ty);
