@@ -1,7 +1,7 @@
-//! Materialize external fields and pointee values in symbolic memory.
+//! Materialize constants, external fields, and pointee values in symbolic memory.
 
 use rustc_middle::{
-    mir::{Local, Operand, Place, Rvalue, StatementKind},
+    mir::{ConstValue, Local, Operand, Place, Rvalue, StatementKind},
     ty::{Region, Ty, TyKind},
 };
 use z3::ast::Int;
@@ -811,5 +811,100 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let elem_term = Int::from_u64(self.z3_ctx, elem_size.max(1));
         self.path_state.constraints.assertions
             .push(Int::mul(self.z3_ctx, &[&cap, &elem_term]).le(&isize_max));
+    }
+
+    pub(crate) fn symbolic_const_term(&self, constant: &rustc_middle::mir::Const<'tcx>) -> Int<'z3> {
+        self.symbolic_const_term_text(&format!("{constant:?}"))
+    }
+
+    pub(crate) fn symbolic_const_term_text(&self, text: &str) -> Int<'z3> {
+        let name = format!("const_{}", text.replace([':', '#', ' '], "_"));
+        Int::new_const(self.z3_ctx, name.as_str())
+    }
+
+    pub(crate) fn const_param_input(&self, index: u32) -> Option<(Int<'z3>, Ty<'tcx>)> {
+        let generics = self.tcx.generics_of(self.path_state.current_frame.current_def_id);
+        if index as usize >= generics.count() {
+            return None;
+        }
+        let param = generics.param_at(index as usize, self.tcx);
+        if !matches!(param.kind, rustc_middle::ty::GenericParamDefKind::Const { .. }) {
+            return None;
+        }
+        let ty = self.tcx.type_of(param.def_id).instantiate_identity();
+        let ty = ty.skip_norm_wip();
+        let value = rustc_middle::ty::Const::new_param(self.tcx, rustc_middle::ty::ParamConst::new(index, param.name));
+        let term = self.symbolic_const_term(&rustc_middle::mir::Const::Ty(ty, value));
+        Some((term, ty))
+    }
+
+    pub(crate) fn materialize_const_adt(&mut self, local: Local, constant: &rustc_middle::mir::Const<'tcx>) {
+        if let rustc_middle::mir::Const::Unevaluated(uneval, _) = constant
+            && mir_utils::is_sized_type_property(self.tcx, uneval.def, "LAYOUT")
+            && !uneval.args.is_empty()
+            && let TyKind::Adt(layout_def, layout_args) = constant.ty().kind()
+        {
+            let ty = uneval.args.type_at(0);
+            for (index, field) in layout_def.non_enum_variant().fields.iter().enumerate() {
+                let term = match field.name.as_str() {
+                    "size" => self.size_sym(ty),
+                    "align" => self.align_sym(ty),
+                    _ => continue,
+                };
+                let field_ty = mir_utils::field_ty(self.tcx, field, layout_args);
+                self.set_field_value(local, vec![index], VmValue::new(term, field_ty));
+            }
+            return;
+        }
+        self.materialize_const_fields(local, Vec::new(), constant);
+    }
+
+    /// Materialize scalar fields nested inside a constant aggregate.
+    pub(crate) fn materialize_const_fields(
+        &mut self,
+        local: Local,
+        prefix: Vec<usize>,
+        constant: &rustc_middle::mir::Const<'tcx>,
+    ) {
+        self.materialize_const_fields_rec(local, prefix, constant, 0);
+    }
+
+    fn materialize_const_fields_rec(
+        &mut self,
+        local: Local,
+        prefix: Vec<usize>,
+        constant: &rustc_middle::mir::Const<'tcx>,
+        depth: usize,
+    ) {
+        if depth >= 8 {
+            return;
+        }
+        let Some((_variant, fields)) = mir_utils::const_destructure(self.tcx, constant) else {
+            return;
+        };
+        for (idx, (field_val, field_ty)) in fields.iter().enumerate() {
+            let term = self.const_field_term(field_val, *field_ty);
+            let mut path = prefix.clone();
+            path.push(idx);
+            self.set_field_value(local, path.clone(), VmValue::new(term, *field_ty));
+            let nested_aggregate = match field_ty.kind() {
+                TyKind::Tuple(..) => true,
+                TyKind::Adt(adt, _) => !adt.is_enum() && !adt.is_union(),
+                _ => false,
+            };
+            if nested_aggregate {
+                self.materialize_const_fields_rec(local, path, &rustc_middle::mir::Const::Val(*field_val, *field_ty), depth + 1);
+            }
+        }
+    }
+
+    fn const_field_term(&self, val: &ConstValue, ty: Ty<'tcx>) -> Int<'z3> {
+        if let Some(scalar) = (*val).try_to_scalar_int() {
+            if let Some(term) = self.scalar_bits_term(ty, scalar.to_bits(scalar.size())) {
+                return term;
+            }
+        }
+        let name = format!("const_field_{}", format!("{val:?}").replace([':', '#', ' '], "_"));
+        Int::new_const(self.z3_ctx, name.as_str())
     }
 }
