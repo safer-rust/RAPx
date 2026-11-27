@@ -13,7 +13,7 @@ use crate::{
 
 use crate::contract::place::{index_access_locals, rebind_property_place, slice_offset_locals};
 use super::state::{
-    AllocId, BoundFact, ElementTy, IndexBoundFact, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue,
+    AllocId, AllocBoundFact, ElementTy, IndexBoundFact, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue,
 };
 
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
@@ -454,7 +454,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         // Preserve only the range supplied by the contract. It does not
         // establish the size of the entire allocation.
         let bytes = Int::mul(self.z3_ctx, &[&count, &self.size_sym(elem_ty)]);
-        let range = BoundFact::Bytes { address: value.z3_term, size: bytes };
+        let range = AllocBoundFact::Bytes { address: value.z3_term, size: bytes };
         self.alloc_mut(alloc_id).record_bound(range);
     }
 

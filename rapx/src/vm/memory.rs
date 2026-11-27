@@ -8,17 +8,17 @@ use rustc_middle::{
 };
 use z3::{Context, Sort, ast::{Array, Ast, Bool, Int}};
 
-use super::state::{AllocId, AllocKind, Allocation, BoundFact, ElementTy, MemoryContent, MemoryUnit, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue, ARRAY_INDEX_MAX};
+use super::state::{AllocId, AllocKind, Allocation, AllocBoundFact, ElementTy, MemoryContent, MemoryUnit, Provenance, ValueFacts, ValueSource, VmExecutor, VmValue, ARRAY_INDEX_MAX};
 
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     /// The key of a bounded span. Unsized slices and strings also need their length.
-    pub(crate) fn bounded_span(&self, value: &VmValue<'z3, 'tcx>, ty: Ty<'tcx>) -> Option<BoundFact<'z3, 'tcx>> {
+    pub(crate) fn bounded_span(&self, value: &VmValue<'z3, 'tcx>, ty: Ty<'tcx>) -> Option<AllocBoundFact<'z3, 'tcx>> {
         let len = if matches!(ty.kind(), TyKind::Slice(_) | TyKind::Str) {
             Some(self.slice_len_from_value(value)?)
         } else {
             None
         };
-        Some(BoundFact::Object { address: value.z3_term.clone(), ty, len })
+        Some(AllocBoundFact::Object { address: value.z3_term.clone(), ty, len })
     }
 
     pub(crate) fn copy_memory_values(

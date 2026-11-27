@@ -109,7 +109,7 @@ pub(crate) struct ValueFacts<'z3> {
     pub ownership_transfer: Option<usize>,
 }
 
-/// A declared slice/index bound retained when a generic `SliceIndex` cannot be reduced to arithmetic.
+/// A checked slice/index relation carried by an index value when `SliceIndex` cannot be reduced to arithmetic.
 #[derive(Clone, Debug)]
 pub(crate) struct IndexBoundFact<'z3> {
     /// Symbolic identity of the slice whose bound was checked.
@@ -258,9 +258,9 @@ pub(crate) struct ElementPointerFacts<'z3, 'tcx> {
     pub owning: bool,
 }
 
-/// Bounds established for an object or a byte range.
+/// An object or byte-range bound recorded on an allocation.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum BoundFact<'z3, 'tcx> {
+pub(crate) enum AllocBoundFact<'z3, 'tcx> {
     /// Object bound; `len` is present only for slices and strings.
     Object { address: Int<'z3>, ty: Ty<'tcx>, len: Option<Int<'z3>> },
     /// Byte range beginning at `address` with length `size`.
@@ -317,7 +317,7 @@ pub(crate) struct Allocation<'z3, 'tcx> {
     /// Assumed live region for external allocations; `None` grants no lifetime.
     pub liveness: Option<Region<'tcx>>,
     /// Object and byte-range bounds licensed by contracts.
-    pub bounds: Vec<BoundFact<'z3, 'tcx>>,
+    pub bounds: Vec<AllocBoundFact<'z3, 'tcx>>,
     /// Source allocation of a view; followed to find its aliasing root.
     pub parent: Option<AllocId>,
 }
@@ -348,7 +348,7 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
         }
     }
 
-    pub(crate) fn record_bound(&mut self, bound: BoundFact<'z3, 'tcx>) {
+    pub(crate) fn record_bound(&mut self, bound: AllocBoundFact<'z3, 'tcx>) {
         if !self.bounds.contains(&bound) {
             self.bounds.push(bound);
         }

@@ -4,7 +4,7 @@ use crate::contract::{ContractExpr, ContractPlace, ContractProjection, PlaceBase
 use crate::def_ids::type_ids;
 use crate::util::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
-use crate::vm::state::{AllocId, BoundFact, OffsetKind, VmExecutor, VmValue};
+use crate::vm::state::{AllocId, AllocBoundFact, OffsetKind, VmExecutor, VmValue};
 use rustc_middle::{
     mir::{Local, Operand},
     ty::{Ty, TyKind},
@@ -151,7 +151,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         self.assert_path_constraints(&solver);
         let end = Int::add(self.z3_ctx, &[address, bytes]);
         ranges.iter().any(|bound| {
-            let BoundFact::Bytes { address: start, size } = bound else {
+            let AllocBoundFact::Bytes { address: start, size } = bound else {
                 return false;
             };
             let limit = Int::add(self.z3_ctx, &[start, size]);
