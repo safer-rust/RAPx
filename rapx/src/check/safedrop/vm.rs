@@ -10,7 +10,7 @@ use crate::vm::{
 use rustc_hir::def_id::DefId;
 use rustc_middle::{mir::{BasicBlock, Local, TerminatorKind}, ty::{TyCtxt, TyKind}};
 use rustc_span::{Span, Symbol};
-use z3::{Config, Context};
+use z3::{Config, Context, Params, SatResult, Solver};
 
 #[derive(Clone, Copy)]
 enum SafeDropEventKind {
@@ -65,6 +65,19 @@ fn execute_item<'z3, 'tcx>(states: Vec<VmExecutor<'z3, 'tcx>>, item: &RelevantIt
         for mut state in VmExecutor::execute_items_after_with_cleanup(vec![state], std::slice::from_ref(item)) {
             if let Some((before, destination, scalar_args)) = &recovery {
                 recover_opaque_call(&mut state, before, *destination, *scalar_args);
+            }
+            if let RelevantItem::Terminator { def_id, block, .. } = item
+                && matches!(state.body_for(*def_id).basic_blocks[*block].terminator().kind, TerminatorKind::SwitchInt { .. })
+            {
+                let solver = Solver::new(state.z3_ctx);
+                let mut params = Params::new(state.z3_ctx);
+                params.set_u32("timeout", 1_000);
+                solver.set_params(&params);
+                state.assert_path_constraints(&solver);
+                // Keep uncertain branches; prune only proven contradictions.
+                if solver.check() == SatResult::Unsat {
+                    continue;
+                }
             }
             next.push(state);
         }

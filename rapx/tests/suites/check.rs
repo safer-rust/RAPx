@@ -23,6 +23,7 @@ check_contain_test!(check_uaf_08, "check/uaf_8",  CMD_CHECK_UAF, "Use-after-free
 check_contain_test!(check_uaf_09, "check/uaf_9",  CMD_CHECK_UAF, "Use-after-free detected in function \"main\"");
 // check_contain_test!(check_uaf_10, "check/uaf_10", CMD_CHECK_UAF, "Double free detected in function \"evil_test\"");
 // Disabled: test was already broken before the path-pruning changes (ICE in alias analysis).
+check_contain_test!(check_uaf_11, "check/uaf_11", CMD_CHECK_UAF, "Use-after-free detected in function \"use_old_pointer_after_realloc\"");
 
 // Dangling pointer false positives
 check_not_contain_test!(check_uaf_false_01, "check/uaf_false_1",  CMD_CHECK_UAF, "detected");
@@ -44,6 +45,7 @@ check_not_contain_test!(check_uaf_false_17, "check/uaf_false_17", CMD_CHECK_UAF,
 check_not_contain_test!(check_uaf_false_18, "check/uaf_false_18", CMD_CHECK_UAF, "detected");
 check_not_contain_test!(check_uaf_false_19, "check/uaf_false_19", CMD_CHECK_UAF, "detected");
 check_not_contain_test!(check_uaf_false_20, "check/uaf_false_20", CMD_CHECK_UAF, "detected");
+check_not_contain_test!(check_uaf_false_21, "check/uaf_false_21", CMD_CHECK_UAF, "detected");
 
 // Memory leak detection
 check_contain_test!(check_memleak_01, "check/memleak_1", CMD_CHECK_MEMLEAK, "Memory Leak detected in function main");
