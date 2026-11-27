@@ -17,7 +17,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             } => {
                 let dest_ty = self.body().local_decls[dest].ty;
                 let Some((elem_ty, len)) = self.simd_lane_type(dest_ty) else {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                     return;
                 };
                 let Some((lhs_local, rhs_local)) = caller_arg_locals
@@ -26,22 +26,22 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     .flatten()
                     .zip(caller_arg_locals.get(*rhs_arg).copied().flatten())
                 else {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                     return;
                 };
                 let Some((lhs, rhs)) = args.get(*lhs_arg).zip(args.get(*rhs_arg)) else {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                     return;
                 };
                 let Some((input_ty, input_len)) = self.simd_lane_type(lhs.ty) else {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                     return;
                 };
                 if input_len != len
                     || rhs.ty != lhs.ty
                     || !matches!(input_ty.kind(), TyKind::Int(_) | TyKind::Uint(_))
                 {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                     return;
                 }
                 let lanes: Option<Vec<_>> = (0..len)
@@ -60,7 +60,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     })
                     .collect();
                 let Some(lanes) = lanes else {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                     return;
                 };
                 let true_value = if matches!(elem_ty.kind(), TyKind::Int(_)) {
@@ -68,7 +68,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 } else if let Some((_, max, _, _)) = self.integer_limits(elem_ty) {
                     max
                 } else {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                     return;
                 };
                 let zero = Int::from_u64(self.z3_ctx, 0);
@@ -85,7 +85,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             } => {
                 let dest_ty = self.body().local_decls[dest].ty;
                 let Some((elem_ty, len)) = self.simd_lane_type(dest_ty) else {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                     return;
                 };
                 let Some((min, max, modulus, signed)) = self.integer_limits(elem_ty) else {
@@ -152,17 +152,17 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             CallEffect::SimdReduce { vector_arg, initial_arg, op } => {
                 let dest_ty = self.body().local_decls[dest].ty;
                 let Some(vector) = args.get(*vector_arg) else {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                     return;
                 };
                 let Some((elem_ty, len)) = self.simd_lane_type(vector.ty) else {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                     return;
                 };
                 let Some(layout) = self.integer_layout(elem_ty) else {
                     // Floating-point unordered reductions admit reassociation;
                     // keep them opaque until a matching FP model is available.
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                     return;
                 };
                 if len == 0
@@ -170,18 +170,18 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                         != matches!(dest_ty.kind(), TyKind::Bool))
                     || (!matches!(op, SimdReduceOp::All | SimdReduceOp::Any) && dest_ty != elem_ty)
                 {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                     return;
                 }
                 let Some(local) = caller_arg_locals.get(*vector_arg).copied().flatten() else {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                     return;
                 };
                 let lanes: Option<Vec<_>> = (0..len)
                     .map(|index| self.field_value(local, &[0, index]).map(|value| value.z3_term.clone()))
                     .collect();
                 let Some(lanes) = lanes else {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                     return;
                 };
                 let zero = Int::from_u64(self.z3_ctx, 0);
@@ -198,7 +198,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     let mut terms = lanes.into_iter();
                     let first = if let Some(index) = initial_arg {
                         let Some(initial) = args.get(*index).filter(|value| value.ty == elem_ty) else {
-                            self.set_opaque_intrinsic_result(dest);
+                            self.set_opaque_return(dest);
                             return;
                         };
                         initial.z3_term.clone()
@@ -230,7 +230,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             CallEffect::SimdSplat { arg } => {
                 let dest_ty = self.body().local_decls[dest].ty;
                 let Some((elem_ty, len)) = self.simd_lane_type(dest_ty) else {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                     return;
                 };
                 let Some(input) = args.get(*arg) else {
@@ -262,7 +262,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     if unresolved_vector_read {
                         self.set_unresolved_memory_result(dest);
                     } else {
-                        self.set_opaque_intrinsic_result(dest);
+                        self.set_opaque_return(dest);
                     }
                     return;
                 };
@@ -270,11 +270,11 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     .get(*vector_arg)
                     .and_then(|value| self.simd_lane_type(value.ty))
                 else {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                     return;
                 };
                 if index >= len as u64 {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                     return;
                 }
                 if let Some(mut value) = self.field_value(local, &[0, index as usize]).cloned() {
@@ -284,7 +284,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     if unresolved_vector_read {
                         self.set_unresolved_memory_result(dest);
                     } else {
-                        self.set_opaque_intrinsic_result(dest);
+                        self.set_opaque_return(dest);
                     }
                 }
             }
@@ -295,7 +295,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             } => {
                 let dest_ty = self.body().local_decls[dest].ty;
                 let Some((elem_ty, len)) = self.simd_lane_type(dest_ty) else {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                     return;
                 };
                 let Some((local, index, replacement)) = caller_arg_locals
@@ -388,21 +388,21 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             }
             CallEffect::SimdBitmask { arg } => {
                 let Some(local) = caller_arg_locals.get(*arg).copied().flatten() else {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                     return;
                 };
                 let Some((_, len)) = args
                     .get(*arg)
                     .and_then(|value| self.simd_lane_type(value.ty))
                 else {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                     return;
                 };
                 if len == 0
                     || len > 64
                     || !matches!(self.body().local_decls[dest].ty.kind(), TyKind::Uint(_))
                 {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                     return;
                 }
                 let lanes: Option<Vec<_>> = (0..len)
@@ -412,7 +412,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     })
                     .collect();
                 let Some(lanes) = lanes else {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                     return;
                 };
                 let zero = Int::from_u64(self.z3_ctx, 0);

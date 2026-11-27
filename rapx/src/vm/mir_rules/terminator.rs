@@ -122,10 +122,6 @@ pub(crate) fn exec_switch_int<'z3, 'tcx>(
             return RuleFlow::Pruned;
         }
     }
-    if VmExecutor::term_involves(&state.path_state.inline.opaque_intrinsic_terms, &discr_val.z3_term) {
-        state.record_opaque_control_flow("SwitchInt");
-    }
-
     // If the discriminator is a comparison result, record the direct boolean
     // condition alongside the ite-encoded `discr == value` fact, so the SMT
     // solver can reason about `offset <= len` directly.
@@ -186,9 +182,6 @@ pub(crate) fn exec_assert<'z3, 'tcx>(
     expected: bool,
 ) {
     let cond_val = state.value_of_operand(cond);
-    if VmExecutor::term_involves(&state.path_state.inline.opaque_intrinsic_terms, &cond_val.z3_term) {
-        state.record_opaque_control_flow("Assert");
-    }
     // If the asserted operand is a comparison result, record the direct boolean
     // condition (`idx < len`) alongside the ite-encoded fact, so the SMT solver
     // can unfold it (mirrors `exec_switchint`).

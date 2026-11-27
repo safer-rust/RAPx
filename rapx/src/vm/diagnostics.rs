@@ -42,7 +42,6 @@ pub(crate) struct Diagnostics {
     unsupported_details: FxHashSet<String>,
     unsupported_effects: FxHashSet<String>,
     missing_mir: FxHashSet<String>,
-    opaque_control_flow: FxHashSet<String>,
     incomplete_inline_branch: bool,
 }
 
@@ -82,10 +81,6 @@ impl Diagnostics {
         &self.missing_mir
     }
 
-    pub(crate) fn opaque_control_flow(&self) -> &FxHashSet<String> {
-        &self.opaque_control_flow
-    }
-
     pub(crate) fn record_unsupported(&mut self, location: Option<&str>, operation: &str) {
         self.unsupported_mir = true;
         self.unsupported_details
@@ -106,14 +101,6 @@ impl Diagnostics {
         ));
     }
 
-    pub(crate) fn record_opaque_control_flow(&mut self, location: Option<&str>, operation: &str) {
-        self.unsupported_mir = true;
-        self.opaque_control_flow.insert(format!(
-            "{}: opaque call result controls {operation}",
-            location.unwrap_or("unknown location")
-        ));
-    }
-
     pub(crate) fn only_copy_memory_target_unavailable_since(&self, before: &Self) -> bool {
         self.unsupported_mir
             && !before.unsupported_mir
@@ -125,7 +112,6 @@ impl Diagnostics {
                 .all(|effect| effect.contains("CopyMemory target unavailable"))
             && self.unsupported_details == before.unsupported_details
             && self.missing_mir == before.missing_mir
-            && self.opaque_control_flow == before.opaque_control_flow
     }
 
     pub(crate) fn recover_copy_memory_target(&mut self, before: &Self) {
@@ -142,7 +128,6 @@ impl Diagnostics {
             && self.missing_mir.len() > before.missing_mir.len()
             && self.unsupported_details == before.unsupported_details
             && self.unsupported_effects == before.unsupported_effects
-            && self.opaque_control_flow == before.opaque_control_flow
     }
 
     pub(crate) fn recover_missing_mir(&mut self, before: &Self) {
@@ -166,7 +151,6 @@ impl Diagnostics {
     ) -> bool {
         self.needs_statement_fallback(was_unsupported)
             && self.missing_mir.len() == previous_missing_mir
-            && self.opaque_control_flow.is_empty()
     }
 
     pub(crate) fn missing_mir_count(&self) -> usize {

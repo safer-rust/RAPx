@@ -17,7 +17,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     value.ty = self.body().local_decls[dest].ty;
                     self.set_local(dest, value);
                 } else {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                 }
             }
             CallEffect::StoreMemory {

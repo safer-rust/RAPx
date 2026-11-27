@@ -432,8 +432,6 @@ pub(crate) struct InlineCtx<'z3, 'tcx> {
     pub inline_branch_terms: FxHashSet<Int<'z3>>,
     /// Alternative VM states produced by inline branches.
     pub pending_states: Vec<Box<VmExecutor<'z3, 'tcx>>>,
-    /// Terms returned by intrinsic effects the VM could not model.
-    pub opaque_intrinsic_terms: FxHashSet<Int<'z3>>,
     /// Intrinsic results whose input aggregate could not be resolved from memory.
     pub unresolved_memory_terms: FxHashSet<Int<'z3>>,
     /// Caller referent local for each inlined callee argument.
@@ -808,11 +806,6 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(crate) fn record_missing_mir(&mut self, callee: DefId) {
         let location = self.path_state.diagnostics.location_label(self.tcx);
         self.path_state.diagnostics.record_missing_mir(location.as_deref(), &self.tcx.def_path_str(callee));
-    }
-
-    pub(crate) fn record_opaque_control_flow(&mut self, operation: &str) {
-        let location = self.path_state.diagnostics.location_label(self.tcx);
-        self.path_state.diagnostics.record_opaque_control_flow(location.as_deref(), operation);
     }
 
     /// Capture the frame-scoped state before switching to an inlined callee.

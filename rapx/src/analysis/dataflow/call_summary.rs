@@ -49,7 +49,7 @@ pub(crate) enum CallEffect {
     /// (`MaybeUninit::assume_init`, `ManuallyDrop::into_inner`): same term and
     /// facts, retyped to the destination — no pointer `non_null` forcing.
     ReturnArgValue { arg: usize },
-    /// An unconstrained return value; no relation to its arguments is modeled.
+    /// A fresh return value with no modeled relation to the arguments.
     ReturnOpaque,
     /// Fold a constant unchecked float-to-int conversion; other inputs remain opaque.
     ReturnFloatToIntUnchecked,

@@ -192,15 +192,9 @@ impl PropertyChecker {
             effect_details.sort();
             let mut missing_mir: Vec<_> = vm_state.diagnostics().missing_mir().iter().cloned().collect();
             missing_mir.sort();
-            let mut opaque_control_flow: Vec<_> =
-                vm_state.diagnostics().opaque_control_flow().iter().cloned().collect();
-            opaque_control_flow.sort();
             let mut reasons = Vec::new();
             if !missing_mir.is_empty() {
                 reasons.push(UnknownReason::MissingMir(missing_mir));
-            }
-            if !opaque_control_flow.is_empty() {
-                reasons.push(UnknownReason::OpaqueControlFlow(opaque_control_flow));
             }
             if details.is_empty() && effect_details.is_empty() && reasons.is_empty() {
                 details.push("MIR operation could not be modeled (location unavailable)".to_string());
@@ -348,13 +342,8 @@ impl PropertyChecker {
                 };
                 crate::rap_debug!("property rule: {}", rule.name);
                 let result = (rule.apply)(self, vm_state, checkpoint, property);
-                // A universal proof remains valid; a violation based on an opaque result may be spurious.
                 if vm_state.diagnostics().has_incomplete_inline_branch() && result == CheckResult::Failed {
                     CheckResult::Unknown(UnknownReason::IncompleteInline)
-                } else if result == CheckResult::Failed
-                    && vm_state.atom_depends_on_terms(checkpoint, property, vm_state.opaque_intrinsic_terms())
-                {
-                    CheckResult::Unknown(UnknownReason::UnmodeledIntrinsic("opaque intrinsic result".to_string()))
                 } else {
                     result
                 }

@@ -40,13 +40,9 @@ pub(crate) enum UnknownReason {
     UnsupportedMir(Vec<String>),
     /// The VM could not model one or more call effects.
     UnsupportedEffect(Vec<String>),
-    /// An intrinsic result was left opaque because its effect was not modeled.
-    UnmodeledIntrinsic(String),
 
     /// An inlined callee stopped at the depth limit or an incomplete branch.
     IncompleteInline,
-    /// An opaque value influenced a control-flow decision.
-    OpaqueControlFlow(Vec<String>),
     /// An unsafe call's callee could not be resolved.
     UnresolvedUnsafeCall,
 

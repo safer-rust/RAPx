@@ -42,10 +42,6 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         [&self.path_state.inline.inline_truncated_terms, &self.path_state.inline.inline_branch_terms].into_iter()
     }
 
-    pub(crate) fn opaque_intrinsic_terms(&self) -> &FxHashSet<Int<'z3>> {
-        &self.path_state.inline.opaque_intrinsic_terms
-    }
-
     pub(crate) fn unresolved_memory_terms(&self) -> &FxHashSet<Int<'z3>> {
         &self.path_state.inline.unresolved_memory_terms
     }

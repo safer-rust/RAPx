@@ -61,7 +61,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 }
             }
             CallEffect::ReturnOpaque => {
-                self.set_opaque_intrinsic_result(dest);
+                self.set_opaque_return(dest);
             }
             CallEffect::ReturnFloatToIntUnchecked => {
                 let dest_ty = self.body().local_decls[dest].ty;
@@ -71,7 +71,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 if let Some(term) = result {
                     self.set_local(dest, VmValue::new(term, dest_ty));
                 } else {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                 }
             }
             CallEffect::ReturnSizeOfVal { arg } => {
@@ -90,7 +90,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     let ty = self.body().local_decls[dest].ty;
                     self.set_local(dest, VmValue::new(size, ty));
                 } else {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                 }
             }
             CallEffect::ReturnAlignOfVal { arg } => {
@@ -107,7 +107,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     let ty = self.body().local_decls[dest].ty;
                     self.set_local(dest, VmValue::new(align, ty));
                 } else {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                 }
             }
             CallEffect::ReturnCompareBytes {
@@ -154,7 +154,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                         self.set_local(dest, pointer);
                     }
                 } else {
-                    self.set_opaque_intrinsic_result(dest);
+                    self.set_opaque_return(dest);
                 }
             }
             effect @ (CallEffect::LoadMemory { .. }
@@ -208,8 +208,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                         .ite(&one, &zero);
                     self.set_local(dest, VmValue::new(term, ty));
                 } else {
-                    let term = self.fresh_int("raw_eq_result");
-                    self.path_state.inline.opaque_intrinsic_terms.insert(term.clone());
+                    let term = self.fresh_integer_input("raw_eq_result", ty);
                     self.set_local(dest, VmValue::new(term, ty));
                 }
             }
@@ -509,7 +508,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     fn set_opaque_simd_result(&mut self, dest: Local) {
         let dest_ty = self.body().local_decls[dest].ty;
         let Some((elem_ty, len)) = self.simd_lane_type(dest_ty) else {
-            self.set_opaque_intrinsic_result(dest);
+            self.set_opaque_return(dest);
             return;
         };
         let limits = self.integer_limits(elem_ty);
@@ -542,10 +541,9 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         true
     }
 
-    fn set_opaque_intrinsic_result(&mut self, dest: Local) {
+    fn set_opaque_return(&mut self, dest: Local) {
         let ty = self.body().local_decls[dest].ty;
-        let term = self.fresh_int("intrinsic_result");
-        self.path_state.inline.opaque_intrinsic_terms.insert(term.clone());
+        let term = self.fresh_integer_input("opaque_return", ty);
         self.set_local(dest, VmValue::new(term, ty));
     }
 
