@@ -329,9 +329,6 @@ impl PropertyChecker {
                 {
                     return CheckResult::Unknown(UnknownReason::IncompleteInline);
                 }
-                if vm_state.atom_depends_on_terms(checkpoint, property, vm_state.unresolved_memory_terms()) {
-                    return CheckResult::Unknown(UnknownReason::Unimplemented);
-                }
                 if vm_state.diagnostics().has_incomplete_inline_branch()
                     && (checkpoint.callee.is_some() || !checkpoint.args.is_empty())
                 {

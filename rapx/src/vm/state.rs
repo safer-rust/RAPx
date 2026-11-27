@@ -424,7 +424,7 @@ impl<'z3, 'tcx> Allocation<'z3, 'tcx> {
 pub(crate) struct InlineCtx<'z3, 'tcx> {
     /// Recursive inlining depth, bounded by `MAX_INLINE_DEPTH`.
     pub inline_depth: usize,
-    /// The inline call passes a symbolic generic type through a const argument.
+    /// The inlined callee has a generic-dependent constant call operand and an unresolved type argument.
     pub symbolic_generic_const_inline: bool,
     /// Terms from depth-limited calls; dependent checks become `Unknown`.
     pub inline_truncated_terms: FxHashSet<Int<'z3>>,
@@ -432,8 +432,6 @@ pub(crate) struct InlineCtx<'z3, 'tcx> {
     pub inline_branch_terms: FxHashSet<Int<'z3>>,
     /// Alternative VM states produced by inline branches.
     pub pending_states: Vec<Box<VmExecutor<'z3, 'tcx>>>,
-    /// Intrinsic results whose input aggregate could not be resolved from memory.
-    pub unresolved_memory_terms: FxHashSet<Int<'z3>>,
     /// Caller referent local for each inlined callee argument.
     pub arg_referents: Vec<Option<Local>>,
     /// `(caller local, field path, value)` writes replayed after frame restoration.

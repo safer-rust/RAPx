@@ -547,13 +547,6 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         self.set_local(dest, VmValue::new(term, ty));
     }
 
-    fn set_unresolved_memory_result(&mut self, dest: Local) {
-        let ty = self.body().local_decls[dest].ty;
-        let term = self.fresh_int("unresolved_memory_result");
-        self.path_state.inline.unresolved_memory_terms.insert(term.clone());
-        self.set_local(dest, VmValue::new(term, ty));
-    }
-
     fn set_external_container_result(
         &mut self,
         dest: Local,

@@ -405,6 +405,38 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             })
     }
 
+    /// Copy materialized fields when a pointer reads one element of an array allocation.
+    pub(crate) fn array_element_fields_at_pointer(
+        &self,
+        pointer: &VmValue<'z3, 'tcx>,
+        element_ty: Ty<'tcx>,
+    ) -> Vec<(Vec<usize>, VmValue<'z3, 'tcx>)> {
+        let Some(provenance) = &pointer.provenance else { return Vec::new() };
+        let size = self.size_of_ty(element_ty);
+        let Some(index) = provenance.offset.simplify().as_u64()
+            .filter(|offset| size != 0 && offset % size == 0)
+            .and_then(|offset| usize::try_from(offset / size).ok())
+        else { return Vec::new() };
+        let content = self.content(provenance.alloc_id);
+        if content.indexed_elements_modified { return Vec::new(); }
+        let values = &content.values;
+        let mut view_ty = None;
+        for (ty, _) in values.keys() {
+            if let TyKind::Array(elem, len) = ty.kind()
+                && *elem == element_ty
+                && len.try_to_target_usize(self.tcx).is_some_and(|len| u64::try_from(index).is_ok_and(|index| index < len))
+            {
+                if view_ty.is_some_and(|seen| seen != *ty) { return Vec::new(); }
+                view_ty = Some(*ty);
+            }
+        }
+        let Some(view_ty) = view_ty else { return Vec::new() };
+        values.iter().filter_map(|((ty, path), value)| {
+            (*ty == view_ty && path.first() == Some(&index) && path.len() > 1)
+                .then(|| (path[1..].to_vec(), value.clone()))
+        }).collect()
+    }
+
     fn field_path_at_offset(
         &self,
         ty: Ty<'tcx>,

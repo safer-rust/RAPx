@@ -281,6 +281,14 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
                 && field.as_usize() == 0));
     let source_fields = source_place
         .map(|source| {
+            if source.projection.len() == 1
+                && matches!(source.projection[0], ProjectionElem::Deref)
+                && let Some(pointer) = state.local_value(source.local)
+            {
+                let ty = source.ty(state.body(), state.tcx).ty;
+                let fields = state.array_element_fields_at_pointer(pointer, ty);
+                if !fields.is_empty() { return fields; }
+            }
             let prefix = source
                 .projection
                 .iter()

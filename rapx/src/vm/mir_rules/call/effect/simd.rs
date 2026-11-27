@@ -247,23 +247,13 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 vector_arg,
                 index_arg,
             } => {
-                // A nonzero or symbolic offset denotes a vector selected from
-                // an aggregate allocation. Its lanes may exist in memory even
-                // when no direct field value was materialized for this local.
-                let unresolved_vector_read = args.get(*vector_arg).is_some_and(|value| {
-                    value.provenance.as_ref().is_some_and(|p| p.offset.simplify().as_u64() != Some(0))
-                });
                 let Some((local, index)) =
                     caller_arg_locals.get(*vector_arg).copied().flatten().zip(
                         args.get(*index_arg)
                             .and_then(|value| value.z3_term.simplify().as_u64()),
                     )
                 else {
-                    if unresolved_vector_read {
-                        self.set_unresolved_memory_result(dest);
-                    } else {
-                        self.set_opaque_return(dest);
-                    }
+                    self.set_opaque_return(dest);
                     return;
                 };
                 let Some((_, len)) = args
@@ -281,11 +271,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     value.ty = self.body().local_decls[dest].ty;
                     self.set_local(dest, value);
                 } else {
-                    if unresolved_vector_read {
-                        self.set_unresolved_memory_result(dest);
-                    } else {
-                        self.set_opaque_return(dest);
-                    }
+                    self.set_opaque_return(dest);
                 }
             }
             CallEffect::SimdInsert {
