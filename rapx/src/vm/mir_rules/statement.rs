@@ -260,6 +260,11 @@ pub(crate) fn exec_assign<'z3, 'tcx>(
             Operand::Copy(source) | Operand::Move(source),
             _,
         )
+        | Rvalue::Cast(
+            rustc_middle::mir::CastKind::PointerCoercion(rustc_middle::ty::adjustment::PointerCoercion::Unsize, _),
+            Operand::Copy(source) | Operand::Move(source),
+            _,
+        )
         | Rvalue::CopyForDeref(source) => Some(source),
         Rvalue::Reborrow(_, _, source) => Some(source),
         _ => None,

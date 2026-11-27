@@ -321,7 +321,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             .or_else(|| self.alloc(provenance.alloc_id).element_ty.as_ty()) else {
             return false;
         };
-        let Some(path) = self.field_path_at_offset(root_ty, offset, pointee_ty) else {
+        let Some(path) = self.field_path_at_offset(root_ty, offset, pointee_ty, false) else {
             return false;
         };
         self.clear_write_evidence(provenance.alloc_id);
@@ -368,9 +368,10 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let path = if offset == 0 && root_ty == pointee_ty {
             Vec::new()
         } else {
-            self.field_path_at_offset(root_ty, offset, pointee_ty)?
+            self.field_path_at_offset(root_ty, offset, pointee_ty, true)?
         };
         self.load_value(provenance.alloc_id, root_ty, &path)
+            .filter(|value| value.ty == pointee_ty)
             .cloned()
             .or_else(|| {
                 (0..path.len()).rev().find_map(|prefix_len| {
@@ -409,6 +410,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         ty: Ty<'tcx>,
         offset: u64,
         target_ty: Ty<'tcx>,
+        allow_maybe_uninit_inner: bool,
     ) -> Option<Vec<usize>> {
         // Resolve a concrete array element before looking for ADT or tuple fields.
         if let TyKind::Array(element, length) = ty.kind() {
@@ -416,10 +418,14 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             let index = offset.checked_div(size)?;
             if index >= length.try_to_target_usize(self.tcx)? { return None; }
             let remainder = offset % size;
-            let mut path = if remainder == 0 && *element == target_ty {
+            // Only reads may reuse a materialized T value at a MaybeUninit<T>
+            // element slot; writes still need byte-level initialization tracking.
+            let stored_inner = allow_maybe_uninit_inner && matches!(element.kind(), TyKind::Adt(adt, args)
+                if type_ids::is_maybe_uninit_type(adt.did()) && args.type_at(0) == target_ty);
+            let mut path = if remainder == 0 && (*element == target_ty || stored_inner) {
                 Vec::new()
             } else {
-                self.field_path_at_offset(*element, remainder, target_ty)?
+                self.field_path_at_offset(*element, remainder, target_ty, allow_maybe_uninit_inner)?
             };
             path.insert(0, index as usize);
             return Some(path);
@@ -444,7 +450,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             let nested = if offset == start && field_ty == target_ty {
                 Some(Vec::new())
             } else {
-                self.field_path_at_offset(field_ty, offset - start, target_ty)
+                self.field_path_at_offset(field_ty, offset - start, target_ty, allow_maybe_uninit_inner)
             };
             if let Some(mut nested) = nested {
                 nested.insert(0, index);
@@ -1112,7 +1118,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             let path = if root_ty == ty && offset == 0 {
                 Some(Vec::new())
             } else {
-                self.field_path_at_offset(root_ty, offset, ty)
+                self.field_path_at_offset(root_ty, offset, ty, false)
             }?;
             Some((*local, path))
         });
@@ -1747,16 +1753,11 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     }
                 }
                 let int_val = mir_utils::eval_const_scalar_int(self.tcx, &constant.const_, &text)
-                    .or_else(|| {
-                        (self.path_state.current_frame.current_def_id == self.target_def_id
-                            && self.instantiated_target_body.is_some())
-                            .then(|| match constant.const_ {
-                                rustc_middle::mir::Const::Ty(_, value) => value.try_to_target_usize(self.tcx),
-                                _ => None,
-                            })
-                            .flatten()
+                    .or_else(|| match constant.const_ {
+                        rustc_middle::mir::Const::Ty(_, value) => value.try_to_target_usize(self.tcx)
                             .filter(|value| *value <= u32::MAX as u64)
-                            .map(|value| value as i128)
+                            .map(|value| value as i128),
+                        _ => None,
                     });
                 let field_offset = int_val.is_none() && mir_utils::offset_of_container(self.tcx, &constant.const_).is_some();
                 let enum_variant = mir_utils::const_destructure(self.tcx, &constant.const_)

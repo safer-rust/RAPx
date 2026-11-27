@@ -698,11 +698,11 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 _ => None,
             })
             .collect();
-        // A bare `&local` (no projection) exposes the pointee's whole field
-        // map. Only propagate fields that carry provenance (pointer leaves);
-        // plain scalar fields (e.g. array elements) must not leak into the
-        // reference or they can corrupt downstream InBound reasoning.
+        // A mutable ADT borrow exposes scalar fields to inlined methods; other
+        // bare borrows copy only fields carrying pointer provenance.
         let empty_proj = source_place.projection.is_empty();
+        let mutable_adt = matches!(self.body().local_decls[dest].ty.kind(),
+            TyKind::Ref(_, inner, rustc_middle::ty::Mutability::Mut) if matches!(inner.kind(), TyKind::Adt(..)));
         let keys: Vec<Vec<usize>> = self.field_paths(source_place.local);
         for path in keys {
             let matches_prefix = field_prefix.is_empty()
@@ -718,7 +718,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                     continue;
                 }
                 if let Some(v) = self.field_value(source_place.local, &path).cloned() {
-                    if empty_proj && v.provenance.is_none() {
+                    if empty_proj && !mutable_adt && v.provenance.is_none() {
                         continue;
                     }
                     self.set_field_value(dest, rest, v);

@@ -331,14 +331,11 @@ impl PropertyChecker {
                 // An incomplete inline may leave the target or an argument as
                 // a placeholder; such a property cannot be decided.
                 if vm_state.incomplete_inline_terms()
-                    .any(|terms| vm_state.atom_depends_on_inline_terms(checkpoint, property, terms))
+                    .any(|terms| vm_state.atom_depends_on_terms(checkpoint, property, terms))
                 {
                     return CheckResult::Unknown(UnknownReason::IncompleteInline);
                 }
-                if vm_state.atom_depends_on_inline_terms(checkpoint, property, vm_state.opaque_intrinsic_terms()) {
-                    return CheckResult::Unknown(UnknownReason::UnmodeledIntrinsic("opaque intrinsic result".to_string()));
-                }
-                if vm_state.atom_depends_on_inline_terms(checkpoint, property, vm_state.unresolved_memory_terms()) {
+                if vm_state.atom_depends_on_terms(checkpoint, property, vm_state.unresolved_memory_terms()) {
                     return CheckResult::Unknown(UnknownReason::Unimplemented);
                 }
                 if vm_state.diagnostics().has_incomplete_inline_branch()
@@ -351,8 +348,13 @@ impl PropertyChecker {
                 };
                 crate::rap_debug!("property rule: {}", rule.name);
                 let result = (rule.apply)(self, vm_state, checkpoint, property);
+                // A universal proof remains valid; a violation based on an opaque result may be spurious.
                 if vm_state.diagnostics().has_incomplete_inline_branch() && result == CheckResult::Failed {
                     CheckResult::Unknown(UnknownReason::IncompleteInline)
+                } else if result == CheckResult::Failed
+                    && vm_state.atom_depends_on_terms(checkpoint, property, vm_state.opaque_intrinsic_terms())
+                {
+                    CheckResult::Unknown(UnknownReason::UnmodeledIntrinsic("opaque intrinsic result".to_string()))
                 } else {
                     result
                 }

@@ -645,6 +645,11 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
             {
                 ValueSource::SliceLen(len.clone())
             }
+            ValueSource::FieldBorrow { .. }
+                if matches!(kind, CastKind::PointerCoercion(rustc_middle::ty::adjustment::PointerCoercion::Unsize, _)) =>
+            {
+                src_val.source.clone()
+            }
             _ => src_val.source.field_offset_only(),
         },
     }

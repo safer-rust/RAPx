@@ -341,9 +341,8 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         Int::mul(self.z3_ctx, &[&elem_size, &count])
     }
 
-    /// Whether this atom's target or a checkpoint argument depends on an
-    /// unconstrained value introduced by incomplete inlining.
-    pub(crate) fn atom_depends_on_inline_terms(
+    /// Whether this atom's target or a checkpoint argument depends on any given term.
+    pub(crate) fn atom_depends_on_terms(
         &self,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,

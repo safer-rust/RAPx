@@ -130,7 +130,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             // Save places already in the relevance set before removing
             // the current definition.  When the uses of this statement
             // would re-add a place whose definition was already found earlier
-            // in the walk, skip it to prevent wrong (duplicate) matches.
+            // in the walk, skip it unless the assignment reads its own target.
             let already_seen: crate::compat::FxHashSet<crate::util::def_use::PlaceKey> =
                 relevant.places.clone();
             let indexed_write = place
@@ -140,7 +140,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
             if !indexed_write {
                 relevant.remove_all(&defs);
             }
-            uses.places.retain(|p| !already_seen.contains(p));
+            uses.places.retain(|p| !already_seen.contains(p) || defs.places.iter().any(|def| p.overlaps(def)));
             relevant.extend(uses);
             return;
         }
