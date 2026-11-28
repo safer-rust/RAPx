@@ -15,6 +15,26 @@ use crate::def_ids::lang_api;
 
 use super::{diagnostic_api, is_std_api, type_ids};
 
+/// Raw-pointer argument of the standard `Rc`/`Arc` reconstruction and strong-count APIs.
+pub(crate) fn shared_owner_raw_arg(tcx: TyCtxt<'_>, did: DefId) -> Option<usize> {
+    if !is_std_api(tcx, did)
+        || !tcx.opt_item_name(did).is_some_and(|name| matches!(name.as_str(),
+            "from_raw" | "from_raw_in" | "increment_strong_count" | "increment_strong_count_in"
+            | "decrement_strong_count" | "decrement_strong_count_in"))
+    {
+        return None;
+    }
+    let impl_id = tcx.inherent_impl_of_assoc(did)?;
+    let owner = tcx.type_of(impl_id).instantiate_identity().skip_norm_wip().ty_adt_def()?;
+    if !matches!(tcx.def_path_str(owner.did()).rsplit("::").next(), Some("Rc" | "Arc"))
+        || !is_std_api(tcx, owner.did())
+    {
+        return None;
+    }
+    tcx.fn_sig(did).skip_binder().inputs().skip_binder().iter()
+        .position(|ty| matches!(ty.kind(), TyKind::RawPtr(..)))
+}
+
 /// Identify standard-library UB and precondition checks. The path builder
 /// skips their costly MIR, while the VM handles them as check calls.
 pub fn is_ub_check(tcx: TyCtxt<'_>, callee: DefId) -> bool {
@@ -47,22 +67,8 @@ pub fn is_box_new(tcx: TyCtxt<'_>, did: DefId) -> bool {
     matches!(self_ty.kind(), TyKind::Adt(adt, _) if type_ids::is_std_box(adt.did()))
 }
 
-/// Identify Vec/String constructors whose MIR retains their length and capacity.
-pub fn is_vec_string_mir_constructor(tcx: TyCtxt<'_>, did: DefId) -> bool {
-    if !is_std_api(tcx, did)
-        || !tcx.opt_item_name(did).is_some_and(|name| matches!(name.as_str(), "new" | "with_capacity"))
-    {
-        return false;
-    }
-    let Some(impl_id) = tcx.inherent_impl_of_assoc(did) else {
-        return false;
-    };
-    let self_ty = tcx.type_of(impl_id).instantiate_identity().skip_norm_wip();
-    matches!(self_ty.kind(), TyKind::Adt(adt, _) if type_ids::is_std_vec(adt.did()) || type_ids::is_std_string(adt.did()))
-}
-
-/// Identify `NonNull::dangling` for its constructor summary when MIR expansion
-/// is disabled. Unlike an arbitrary `NonNull<T>`, its result is aligned for `T`
+/// Identify `NonNull::dangling` for its default constructor result model.
+/// Unlike an arbitrary `NonNull<T>`, its result is aligned for `T`
 /// and has no allocation provenance; the type invariant only guarantees non-nullness.
 pub fn is_nonnull_dangling(tcx: TyCtxt<'_>, did: DefId) -> bool {
     if !tcx

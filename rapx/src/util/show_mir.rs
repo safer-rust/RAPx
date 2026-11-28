@@ -1,3 +1,4 @@
+use crate::compat::MirTerminatorExt as _;
 use crate::compat::FxHashSet;
 use crate::def_ids::other_api::is_drop_fn;
 use crate::util::draw_dot::render_dot_string;
@@ -135,7 +136,7 @@ impl<'tcx> MirDisplay for BasicBlockData<'tcx> {
         }
         s += &format!(
             "{}{}",
-            self.terminator.clone().unwrap().display(),
+            self.rapx_terminator().clone().display(),
             NEXT_LINE
         );
         s
@@ -256,7 +257,8 @@ fn generate_mir_cfg_dot<'tcx>(
             .collect();
         let mut node_style = String::new();
 
-        if let Some(terminator) = &bb_data.terminator {
+        {
+            let terminator = &bb_data.rapx_terminator();
             let mut is_drop_related = false;
             match &terminator.kind {
                 TerminatorKind::Drop { .. } => is_drop_related = true,
@@ -274,8 +276,6 @@ fn generate_mir_cfg_dot<'tcx>(
                 node_style = ", style=\"filled\", fillcolor=\"#ffdddd\", color=\"red\"".to_string();
             }
             lines.push(format!("{:?}", terminator.kind));
-        } else {
-            lines.push("(no terminator)".to_string());
         }
 
         let label_content = lines.join("\\l");
@@ -287,7 +287,8 @@ fn generate_mir_cfg_dot<'tcx>(
             node_style
         ));
 
-        if let Some(terminator) = &bb_data.terminator {
+        {
+            let terminator = &bb_data.rapx_terminator();
             for target in terminator.successors() {
                 dot_content.push_str(&format!(
                     "    BB{} -> BB{} [label=\"\"];\n",

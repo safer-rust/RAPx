@@ -66,6 +66,7 @@ fn init_types(tcx: TyCtxt) -> HashMap<DefId, StdAdtType> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StdAdtType {
     AsciiChar,
+    Arc,
     Box,
     Cell,
     CString,
@@ -127,6 +128,7 @@ fn classify_type(
         | "std::ops::index_range::IndexRange"
         | "std::ops::IndexRange" => StdAdtType::IndexRange,
         "core::ascii::ascii_char::AsciiChar" | "std::ascii::AsciiChar" => StdAdtType::AsciiChar,
+        "alloc::sync::Arc" | "alloc::rcs::arc::Arc" | "std::sync::Arc" => StdAdtType::Arc,
         "alloc::rc::Rc" | "alloc::rcs::rc::Rc" | "std::rc::Rc" => StdAdtType::Rc,
         "std::sync::poison::mutex::Mutex"
         | "std::sync::nonpoison::mutex::Mutex"
@@ -178,6 +180,8 @@ macro_rules! type_predicates {
 }
 
 type_predicates! {
+    /// Whether this is `alloc::sync::Arc`.
+    is_std_arc => Arc,
     /// Whether this is `alloc::boxed::Box`.
     is_std_box => Box,
     /// Whether this is `alloc::ffi::CString`.
@@ -200,4 +204,9 @@ type_predicates! {
     is_std_sync_primitive => SyncPrimitive,
     /// Whether this is the standard `IndexRange` type.
     is_index_range => IndexRange,
+}
+
+/// Identify the allocation header behind the standard `Arc` type.
+pub(crate) fn is_std_arc_inner(tcx: TyCtxt<'_>, did: DefId) -> bool {
+    matches!(tcx.def_path_str(did).as_str(), "alloc::rcs::arc::ArcInner" | "alloc::sync::ArcInner")
 }

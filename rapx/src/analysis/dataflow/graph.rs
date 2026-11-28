@@ -1,3 +1,4 @@
+use crate::compat::MirTerminatorExt as _;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{
@@ -26,7 +27,8 @@ pub fn build_dataflow_graph_from_body(
         for (stmt_idx, stmt) in bb.statements.iter().enumerate() {
             graph.add_statm_to_graph(stmt, block_idx, stmt_idx);
         }
-        if let Some(terminator) = &bb.terminator {
+        {
+            let terminator = &bb.rapx_terminator();
             let stmt_idx = bb.statements.len();
             graph.add_terminator_to_graph(terminator, block_idx, stmt_idx);
         }

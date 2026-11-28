@@ -105,8 +105,8 @@ pub(crate) struct ValueFacts<'z3> {
     pub index_bounds: Option<Box<Vec<IndexBoundFact<'z3>>>>,
     /// Known divisor `n` for which `z3_term % n == 0`, possibly symbolic.
     pub align_n: Option<Int<'z3>>,
-    /// Identity of an ownership transfer carried by this pointer and its copies.
-    pub ownership_transfer: Option<usize>,
+    /// ID of the raw owner share carried by this pointer and its copies.
+    pub into_raw_id: Option<usize>,
 }
 
 /// A checked slice/index relation carried by an index value when `SliceIndex` cannot be reduced to arithmetic.
@@ -625,55 +625,55 @@ pub(crate) struct SavedCallerFrame<'z3, 'tcx> {
     pub(crate) deferred_writes: Vec<(Local, Vec<usize>, VmValue<'z3, 'tcx>)>,
 }
 
-/// A transferable ownership share. Copies of its pointer use the same entry.
+/// A raw pointer's ownership share; pointer copies refer to the same entry.
 #[derive(Clone)]
-pub(crate) struct OwnershipTransfer {
-    /// Root allocation whose ownership is being transferred.
+pub(crate) struct RawOwnerShare {
+    /// Root allocation whose ownership was passed to a raw pointer.
     alloc_id: AllocId,
-    /// Type whose destructor consumes this share.
+    /// Owner type reconstructed from this raw pointer.
     owner: DefId,
-    /// Shares still available to copied pointers.
-    available: usize,
+    /// Shares still available for reconstructing an owner.
+    remaining_shares: usize,
 }
 
 impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
     pub(crate) fn ownership_share(&self, value: &VmValue<'z3, 'tcx>, owner: DefId) -> Option<usize> {
-        let transfer = self.path_state.ownership_transfers.get(value.facts.ownership_transfer?)?;
+        let transfer = self.path_state.raw_owner_shares.get(value.facts.into_raw_id?)?;
         (transfer.owner == owner
             && value
                 .provenance_alloc_id()
                 .is_some_and(|id| self.root_alloc(id) == transfer.alloc_id))
-        .then_some(transfer.available)
+        .then_some(transfer.remaining_shares)
     }
 
     pub(crate) fn has_available_transfer(&self, alloc_id: AllocId) -> bool {
         let root = self.root_alloc(alloc_id);
-        self.path_state.ownership_transfers
+        self.path_state.raw_owner_shares
             .iter()
-            .any(|transfer| transfer.alloc_id == root && transfer.available > 0)
+            .any(|transfer| transfer.alloc_id == root && transfer.remaining_shares > 0)
     }
 
     pub(crate) fn begin_ownership_transfer(&mut self, local: Local, owner: DefId) {
         let Some(alloc_id) = self.local_value(local).and_then(|value| value.provenance_alloc_id()) else {
             return;
         };
-        let id = self.path_state.ownership_transfers.len();
-        self.path_state.ownership_transfers.push(OwnershipTransfer {
+        let id = self.path_state.raw_owner_shares.len();
+        self.path_state.raw_owner_shares.push(RawOwnerShare {
             alloc_id: self.root_alloc(alloc_id),
             owner,
-            available: 1,
+            remaining_shares: 1,
         });
         if let Some(mut value) = self.local_value(local).cloned() {
-            value.facts.ownership_transfer = Some(id);
+            value.facts.into_raw_id = Some(id);
             self.set_local(local, value);
         }
     }
 
     pub(crate) fn grant_ownership_share(&mut self, value: &VmValue<'z3, 'tcx>, owner: DefId) {
         if self.ownership_share(value, owner).is_some()
-            && let Some(id) = value.facts.ownership_transfer
+            && let Some(id) = value.facts.into_raw_id
         {
-            self.path_state.ownership_transfers[id].available += 1;
+            self.path_state.raw_owner_shares[id].remaining_shares += 1;
         }
     }
 
@@ -684,10 +684,10 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         may_free: bool,
     ) {
         if self.ownership_share(value, owner).is_some()
-            && let Some(id) = value.facts.ownership_transfer
+            && let Some(id) = value.facts.into_raw_id
         {
-            self.path_state.ownership_transfers[id].available =
-                self.path_state.ownership_transfers[id].available.saturating_sub(1);
+            self.path_state.raw_owner_shares[id].remaining_shares =
+                self.path_state.raw_owner_shares[id].remaining_shares.saturating_sub(1);
         }
         if may_free && let Some(alloc_id) = value.provenance_alloc_id() {
             self.alloc_mut(self.root_alloc(alloc_id)).drop_may_free = true;

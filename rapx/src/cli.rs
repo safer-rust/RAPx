@@ -4,7 +4,7 @@ pub mod help;
 
 use clap::{Args, Subcommand};
 
-pub use crate::verify::config::{ConstructorMirMode, PostfixRepeat, VerifyConfig, VerifyMode};
+pub use crate::verify::config::{PostfixRepeat, VerifyConfig, VerifyMode};
 pub use analyze::*;
 pub use check::*;
 

@@ -6,7 +6,6 @@ use rustc_middle::ty::TyCtxt;
 
 use crate::analysis::dataflow::types::DataflowGraph;
 use crate::compat::Spanned;
-use crate::contract::{PropertyKind, json::query_json_contracts};
 use crate::def_ids::other_api;
 use crate::util::def_use::{RelevantPlaces, call_args_uses_at, terminator_use_def};
 use crate::util::mir_utils::dep_callee_def_id;
@@ -134,6 +133,6 @@ pub(super) fn visit_non_call_terminator<'tcx>(
 fn call_changes_memory_state(tcx: TyCtxt<'_>, func: &Operand<'_>) -> bool {
     dep_callee_def_id(func).is_some_and(|callee| {
         other_api::is_drop_fn(tcx, callee)
-            || query_json_contracts(tcx, callee).iter().any(|property| property.kind() == Some(PropertyKind::RefCountShare))
+            || other_api::shared_owner_raw_arg(tcx, callee).is_some()
     })
 }

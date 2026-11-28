@@ -318,13 +318,6 @@ fn hashmap() {
     assert_not_contain(&output, "result: UNSOUND");
 }
 
-#[test]
-fn hashmap_skip_invariant() {
-    let output = run_with_args("verify_cases/hashmap", CMD_VERIFY_TARGETED_SKIP_INVARIANT);
-    assert_contain(&output, "result: SOUND");
-    assert_not_contain(&output, "result: UNSOUND");
-}
-
 // ================ Allocator Tests ================
 #[test]
 fn bump_allocator() {

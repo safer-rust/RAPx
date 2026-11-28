@@ -85,9 +85,9 @@ pub(crate) const PROPERTY_RULES: &[PropertyRule] = &[
         apply: PropertyChecker::check_owning,
     },
     PropertyRule {
-        name: "ref_count_share",
-        kind: PropertyKind::RefCountShare,
-        apply: PropertyChecker::check_ref_count_share,
+        name: "ptr_from",
+        kind: PropertyKind::PtrFrom,
+        apply: PropertyChecker::check_ptr_from,
     },
     PropertyRule {
         name: "alive",

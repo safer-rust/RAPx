@@ -619,7 +619,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                             index_bounds: None,
                             align_n: None,
                             dangling: false,
-                            ownership_transfer: None,
+                            into_raw_id: None,
                         };
                     }
                 }

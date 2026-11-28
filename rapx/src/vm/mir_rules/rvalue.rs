@@ -114,7 +114,7 @@ pub(crate) fn eval_ref<'z3, 'tcx>(
                 index_bounds: None,
                 align_n: slice_elem_align.or(alloc_align),
                 dangling: false,
-                ownership_transfer: addr.facts.ownership_transfer,
+                into_raw_id: addr.facts.into_raw_id,
             },
             source: match state.local_value(place.local).map(|value| &value.source) {
                 Some(ValueSource::SliceLen(len)) if is_slice_ref && has_deref => {
@@ -616,7 +616,7 @@ pub(crate) fn eval_cast<'z3, 'tcx>(
             init: src_val.facts.init,
             in_bounds: src_val.facts.in_bounds,
             index_bounds: None,
-            ownership_transfer: src_val.facts.ownership_transfer,
+            into_raw_id: src_val.facts.into_raw_id,
             align_n: if mir_utils::pointee_ty(src_ty).is_some_and(|t| t.is_unit()) {
                 None
             } else {

@@ -1,0 +1,6 @@
+[package]
+name = "ptr_from_shared_owner_01"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]

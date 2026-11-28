@@ -1,6 +1,7 @@
 //! Checkers for `Alias` and `Owning` properties.
 
-use crate::contract::Property;
+use crate::compat::MirTerminatorExt as _;
+use crate::contract::{Property, PropertyArg};
 use crate::def_ids::type_ids;
 use crate::util::mir_utils;
 use crate::verify::alias::{check_alias_vm, VmAliasResult, VmOriginKind};
@@ -15,35 +16,33 @@ use rustc_middle::{
 use super::PropertyChecker;
 
 impl PropertyChecker {
-    pub(super) fn check_ref_count_share<'z3, 'tcx>(
+    /// Prove that a raw pointer came from an owner of the declared type on this path.
+    pub(super) fn check_ptr_from<'z3, 'tcx>(
         &self,
         vm_state: &VmExecutor<'z3, 'tcx>,
         checkpoint: &Checkpoint<'tcx>,
         property: &Property<'tcx>,
     ) -> CheckResult {
-        let Some(owner) = checkpoint.callee.and_then(|did| {
-            crate::analysis::alias::hazard::reconstructed_owner(vm_state.tcx, did)
-                .map(|(_, owner)| owner)
-                .or_else(|| {
-                    let owner_ty = crate::util::name::get_adt_self_ty(vm_state.tcx, did)?;
-                    let TyKind::Adt(adt, _) = owner_ty.kind() else {
-                        return None;
-                    };
-                    Some(adt.did())
-                })
-        }) else {
-            return CheckResult::Unknown(UnknownReason::Unimplemented);
+        let Some(PropertyArg::Ty(expected_ty)) = property.args().get(1) else {
+            return CheckResult::Unknown(UnknownReason::UnsupportedProperty);
         };
-        let Some(value) = self
-            .target_value(vm_state, checkpoint, property)
-            .map(|value| vm_state.resolve_pointer_provenance(value))
+        let Some(owner) = checkpoint.callee
+            .and_then(|did| crate::util::name::get_adt_self_ty(vm_state.tcx, did))
+            .and_then(|ty| ty.ty_adt_def())
         else {
             return CheckResult::Unknown(UnknownReason::Unimplemented);
         };
-        match vm_state.ownership_share(&value, owner) {
-            Some(0) => CheckResult::Failed,
+        if expected_ty.ty_adt_def().is_none_or(|expected| expected.did() != owner.did()) {
+            return CheckResult::Unknown(UnknownReason::UnsupportedProperty);
+        }
+        let Some(value) = self.target_value(vm_state, checkpoint, property) else {
+            return CheckResult::Unknown(UnknownReason::Unimplemented);
+        };
+        let value = vm_state.resolve_pointer_provenance(value);
+        match vm_state.ownership_share(&value, owner.did()) {
+            Some(0) if checkpoint.callee.is_some_and(|did| crate::analysis::alias::hazard::reconstructed_owner(vm_state.tcx, did).is_some()) => CheckResult::Failed,
             Some(_) => CheckResult::ProvedByRule,
-            None => CheckResult::Unknown(UnknownReason::Unimplemented),
+            None => CheckResult::Failed,
         }
     }
 
@@ -245,7 +244,7 @@ fn owning_field_source(
     let mut written_fields = Vec::new();
     for block in body.basic_blocks.iter() {
         if let rustc_middle::mir::TerminatorKind::Call { destination, .. } =
-            &block.terminator().kind
+            &block.rapx_terminator().kind
             && destination.local == local
             && destination.projection.is_empty()
         {

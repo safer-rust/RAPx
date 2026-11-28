@@ -12,6 +12,7 @@
 //! chain (`flow_xor_violation` in `vm/alias.rs`), so this static forest is not
 //! consulted for live-value grouping.
 
+use crate::compat::MirTerminatorExt as _;
 use crate::util::mir_utils;
 use super::hazard as alias_hazard;
 use rustc_hash::FxHashMap;
@@ -107,7 +108,7 @@ impl AliasTree {
             // resolve the source argument from the callee MIR when available.
             if let rustc_middle::mir::TerminatorKind::Call {
                 func, args, destination, ..
-            } = &block.terminator().kind
+            } = &block.rapx_terminator().kind
             {
                 let dest_local = destination.local;
                 let dest_ty = body.local_decls[dest_local].ty;

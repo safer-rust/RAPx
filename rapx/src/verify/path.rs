@@ -17,6 +17,7 @@ mod call_index;
 
 pub(crate) use call_index::EntryBodies;
 
+use crate::compat::MirTerminatorExt as _;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{BasicBlock, Body, TerminatorKind},
@@ -259,7 +260,7 @@ impl<'g, 'tcx> PathComposer<'g, 'tcx> {
         for path in local_paths.to_vecs() {
             let Some(&last) = path.last() else { continue };
             if !matches!(
-                body.basic_blocks[BasicBlock::from(last)].terminator().kind,
+                body.basic_blocks[BasicBlock::from(last)].rapx_terminator().kind,
                 TerminatorKind::Return | TerminatorKind::TailCall { .. }
             ) {
                 continue;

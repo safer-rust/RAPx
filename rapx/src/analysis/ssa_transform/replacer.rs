@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 #![allow(unused_variables)]
 #![allow(dead_code)]
+use crate::compat::MirTerminatorExt as _;
 use super::ssa_transformer::SSATransformer;
 use rustc_abi::FieldIdx;
 use rustc_hir::def_id::DefIdMap;
@@ -99,8 +100,8 @@ impl<'tcx> Replacer<'tcx> {
     fn essa_process_basic_block(&mut self, bb: BasicBlock, body: &mut Body<'tcx>) {
         let switch_block_data = body.basic_blocks[bb].clone();
 
-        if let Some(terminator) = &switch_block_data.terminator
-            && let TerminatorKind::SwitchInt { discr, targets, .. } = &terminator.kind
+        let terminator = &switch_block_data.rapx_terminator();
+        if let TerminatorKind::SwitchInt { discr, targets, .. } = &terminator.kind
                 && targets.iter().count() == 1 {
                     let (value, target) = targets.iter().next().unwrap();
                     self.essa_assign_statement(&target, &bb, value, discr, body);
@@ -457,7 +458,7 @@ impl<'tcx> Replacer<'tcx> {
     fn process_basic_block(&mut self, bb: BasicBlock, body: &mut Body<'tcx>) {
         self.rename_statement(bb, body);
         self.rename_terminator(bb, body);
-        let terminator = body.basic_blocks[bb].terminator();
+        let terminator = &body.basic_blocks[bb].rapx_terminator();
         let successors: Vec<_> = terminator.successors().collect();
         if let TerminatorKind::SwitchInt { targets, .. } = &terminator.kind
             && targets.iter().count() == 1 {
@@ -589,7 +590,7 @@ impl<'tcx> Replacer<'tcx> {
     }
 
     fn rename_terminator(&mut self, bb: BasicBlock, body: &mut Body<'tcx>) {
-        let terminator: &mut Terminator<'tcx> = body.basic_blocks.as_mut()[bb].terminator_mut();
+        let terminator: &mut Terminator<'tcx> = body.basic_blocks.as_mut()[bb].rapx_terminator_mut();
         match &mut terminator.kind {
             TerminatorKind::Call {
                 args, destination, ..

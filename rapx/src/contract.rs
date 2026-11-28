@@ -162,6 +162,10 @@ pub(crate) enum ContractExpr<'tcx> {
     SizeOf(Ty<'tcx>),
     AlignOf(Ty<'tcx>),
     Len(Box<ContractExpr<'tcx>>, Option<DefId>),
+    /// Strong count at a field path in the allocation containing the pointer.
+    StrongRefCount { ptr: Box<ContractExpr<'tcx>>, field_path: Vec<String> },
+    /// Owner instances visible from this verification entry, keyed by owner type.
+    RcOwnerCount { ptr: Box<ContractExpr<'tcx>>, owner: DefId },
     MethodCall { receiver: Box<ContractExpr<'tcx>>, method: DefId, args: Vec<ContractExpr<'tcx>> },
     IsEmpty(Box<ContractExpr<'tcx>>, Option<DefId>),
     IndexAccess { slice: Box<ContractExpr<'tcx>>, index: Box<ContractExpr<'tcx>> },
@@ -221,7 +225,7 @@ pub(crate) enum PropertyKind {
     Unwrap,
     Typed,
     Owning,
-    RefCountShare,
+    PtrFrom,
     Alias,
     Alive,
     Pinned,

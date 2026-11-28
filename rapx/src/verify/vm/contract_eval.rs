@@ -1,5 +1,6 @@
 //! Checkpoint-bound contract expression evaluation over symbolic VM values.
 
+use crate::compat::MirTerminatorExt as _;
 use crate::util::mir_utils;
 use crate::verify::checkpoint::Checkpoint;
 use crate::contract::{BinOp, ContractExpr, PlaceBase};
@@ -84,7 +85,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         };
 
         let body = self.body();
-        let terminator = body.basic_blocks[checkpoint.block].terminator();
+        let terminator = &body.basic_blocks[checkpoint.block].rapx_terminator();
         let TerminatorKind::Call { func, .. } = &terminator.kind else {
             return ty;
         };
@@ -109,7 +110,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         index: u32,
     ) -> Option<Int<'z3>> {
         let body = self.body();
-        let terminator = body.basic_blocks[checkpoint.block].terminator();
+        let terminator = &body.basic_blocks[checkpoint.block].rapx_terminator();
         let TerminatorKind::Call { func, .. } = &terminator.kind else {
             return None;
         };
@@ -215,6 +216,19 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 } else {
                     Some(Int::from_u64(self.z3_ctx, 0))
                 }
+            }
+            ContractExpr::StrongRefCount { ptr, field_path } => {
+                let checkpoint = checkpoint?;
+                let owner_ty = crate::util::name::get_adt_self_ty(self.tcx, checkpoint.callee?)?;
+                let value = self.eval_contract_expr_to_value(Some(checkpoint), ptr)?;
+                let value = self.resolve_pointer_provenance(value);
+                self.strong_ref_count_at(&value, owner_ty, field_path)
+            }
+            ContractExpr::RcOwnerCount { ptr, owner } => {
+                let checkpoint = checkpoint?;
+                let value = self.eval_contract_expr_to_value(Some(checkpoint), ptr)?;
+                let value = self.resolve_pointer_provenance(value);
+                self.rc_owner_count(&value, *owner)
             }
             ContractExpr::Place(cp) => self.eval_contract_place(checkpoint, cp),
             ContractExpr::Len(inner, method) => {

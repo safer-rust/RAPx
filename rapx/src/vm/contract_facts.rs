@@ -420,7 +420,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 in_bounds: true,
                 index_bounds: None,
                 align_n: heap_align_n,
-                ownership_transfer: None,
+                into_raw_id: None,
             },
             source: ValueSource::None,
         }

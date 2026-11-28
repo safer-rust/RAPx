@@ -1,5 +1,6 @@
 //! Infer pointer offset direction from a callee's MIR.
 
+use crate::compat::MirTerminatorExt as _;
 use std::collections::HashSet;
 
 use rustc_hir::def_id::DefId;
@@ -48,7 +49,7 @@ fn pointer_offset(tcx: TyCtxt<'_>, callee: DefId, depth: usize) -> Option<Pointe
     let mut zst_switches = Vec::new();
     let mut ub_switches = Vec::new();
     let only_zst_or_ub_switches = body.basic_blocks.iter_enumerated().all(|(bb, block)| {
-        let TerminatorKind::SwitchInt { discr, .. } = &block.terminator().kind else {
+        let TerminatorKind::SwitchInt { discr, .. } = &block.rapx_terminator().kind else {
             return true;
         };
         if zst_property_operand(tcx, body, discr, pointee) {
@@ -71,7 +72,7 @@ fn pointer_offset(tcx: TyCtxt<'_>, callee: DefId, depth: usize) -> Option<Pointe
             && body
                 .basic_blocks
                 .iter_enumerated()
-                .filter(|(_, block)| matches!(block.terminator().kind, TerminatorKind::Return))
+                .filter(|(_, block)| matches!(block.rapx_terminator().kind, TerminatorKind::Return))
                 .all(|(bb, _)| dominators.dominates(*zst_bb, bb))
     } else {
         false
@@ -105,7 +106,7 @@ fn ub_check_result_operand(tcx: TyCtxt<'_>, body: &Body<'_>, discr: &Operand<'_>
         }
         if let TerminatorKind::Call {
             func, destination, ..
-        } = &block.terminator().kind
+        } = &block.rapx_terminator().kind
             && destination.local == place.local
         {
             if !destination.projection.is_empty() || callee.is_some() {
@@ -209,7 +210,7 @@ fn trace_pointer_offset<'tcx>(
             args,
             destination,
             ..
-        } = &block.terminator().kind
+        } = &block.rapx_terminator().kind
         else {
             continue;
         };

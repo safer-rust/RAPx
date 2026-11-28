@@ -1,3 +1,4 @@
+use crate::compat::MirTerminatorExt as _;
 use rustc_middle::{
     mir::{BinOp, Local, Operand, UnOp},
     ty::{Ty, TyKind},
@@ -49,7 +50,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         }
         let body = self.tcx.mir_for_ctfe(uneval.def);
         let calls_gcd = body.basic_blocks.iter().any(|bb| {
-            if let rustc_middle::mir::TerminatorKind::Call { func, .. } = &bb.terminator().kind
+            if let rustc_middle::mir::TerminatorKind::Call { func, .. } = &bb.rapx_terminator().kind
                 && let Some(did) = mir_utils::dep_callee_def_id(func)
             {
                 return crate::def_ids::other_api::is_gcd(self.tcx, did);
@@ -528,7 +529,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 index_bounds: None,
                 align_n,
                 init: base.facts.init,
-                ownership_transfer: base.facts.ownership_transfer,
+                into_raw_id: base.facts.into_raw_id,
             },
             source: ValueSource::None,
         };

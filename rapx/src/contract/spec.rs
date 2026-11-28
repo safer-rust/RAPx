@@ -85,11 +85,11 @@ static SPECS: &[PropertySpec] = &[
         "ownership(*{0}) = none: no other live owner points to the pointee",
     ),
     ps(
-        "RefCountShare",
-        PropertyKind::RefCountShare,
-        &[&[Target]],
+        "PtrFrom",
+        PropertyKind::PtrFrom,
+        &[&[Target, Ty]],
         ContractKind::Precond,
-        "{0} carries an unclaimed Arc/Rc strong-reference share",
+        "{0} originates from an into_raw call on {1} in this path",
     ),
     // Unverified: the checker returns `Unknown` (no implementation yet).
     ps(

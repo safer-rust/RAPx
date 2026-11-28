@@ -79,7 +79,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 offset: &provenance.offset - &offset,
                 offset_kind: None,
             });
-            field.facts.ownership_transfer = None;
+            field.facts.into_raw_id = None;
             let mut result = VmValue::new(self.fresh_int("raw_owner"), ty);
             result.facts.init = true;
             self.set_local(destination, result);

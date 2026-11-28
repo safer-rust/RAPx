@@ -1,3 +1,4 @@
+use crate::compat::MirTerminatorExt as _;
 use super::default::CallGraph;
 use crate::util::mir_utils::dep_callee_def_id;
 use crate::util::resolve::{self, instance_def_id, resolve_callee_instance};
@@ -81,7 +82,7 @@ impl<'b, 'tcx> CallGraphVisitor<'b, 'tcx> {
     pub fn visit(&mut self) {
         self.call_graph_info.register_fn(self.def_id);
         for data in self.body.basic_blocks.iter() {
-            let terminator = data.terminator();
+            let terminator = &data.rapx_terminator();
             self.visit_terminator(terminator);
         }
     }

@@ -2,6 +2,7 @@
 //!
 //! Slice paths, replay retained MIR through the symbolic VM, and check properties.
 
+use crate::compat::MirTerminatorExt as _;
 use std::cell::Cell;
 
 use rustc_hir::def_id::DefId;
@@ -269,7 +270,8 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                 }
             }
         }
-        if let Some(terminator) = &data.terminator {
+        {
+            let terminator = &data.rapx_terminator();
             match &terminator.kind {
                 TerminatorKind::Call { args, destination, .. } => {
                     if args.iter().any(|a| match &a.node {
@@ -469,6 +471,12 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
             contract::ContractExpr::Len(inner, method) => {
                 contract::ContractExpr::Len(Box::new(Self::rebind_contract_expr(inner, checkpoint)), *method)
             }
+            contract::ContractExpr::StrongRefCount { ptr, field_path } => contract::ContractExpr::StrongRefCount {
+                ptr: Box::new(Self::rebind_contract_expr(ptr, checkpoint)), field_path: field_path.clone(),
+            },
+            contract::ContractExpr::RcOwnerCount { ptr, owner } => contract::ContractExpr::RcOwnerCount {
+                ptr: Box::new(Self::rebind_contract_expr(ptr, checkpoint)), owner: *owner,
+            },
             contract::ContractExpr::MethodCall { receiver, method, args } => contract::ContractExpr::MethodCall {
                 receiver: Box::new(Self::rebind_contract_expr(receiver, checkpoint)),
                 method: *method,

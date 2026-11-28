@@ -1,3 +1,4 @@
+use crate::compat::MirTerminatorExt as _;
 use crate::compat::FxHashSet;
 use crate::graphs::scc::{Scc, SccExit, SccInfo};
 use rustc_middle::{
@@ -100,7 +101,7 @@ impl<'tcx> ControlFlowGraph<'tcx> {
         let body = self.body();
         body.basic_blocks
             .get(BasicBlock::from(index))
-            .and_then(|bb| bb.terminator.as_ref())
+            .map(|bb| bb.rapx_terminator())
     }
 }
 

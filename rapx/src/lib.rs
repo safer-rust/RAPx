@@ -14,6 +14,8 @@ pub(crate) mod preprocess;
 pub(crate) mod verify;
 pub(crate) mod vm;
 
+pub use compat::ErrorOutputType;
+
 extern crate rustc_abi;
 extern crate rustc_ast;
 extern crate rustc_attr_ir;

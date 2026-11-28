@@ -2,6 +2,7 @@ fn main() {
     emit_check_cfg("rapx_intrinsic_enum");
     emit_check_cfg("rapx_error_output_in_output");
     emit_check_cfg("rapx_post_analysis_no_rigid_aliases");
+    emit_check_cfg("rapx_mir_terminator_required");
 
     emit_cfg(
         "rapx_intrinsic_enum",
@@ -22,6 +23,13 @@ fn main() {
         rustc_src_contains_path(
             "compiler/rustc_middle/src/ty/mod.rs",
             "pub fn post_analysis_no_rigid_aliases(",
+        ),
+    );
+    emit_cfg(
+        "rapx_mir_terminator_required",
+        rustc_src_contains_path(
+            "compiler/rustc_middle/src/mir/mod.rs",
+            "pub terminator: Terminator<'tcx>",
         ),
     );
 }

@@ -1,20 +1,11 @@
 //! Identity of compiler intrinsics by `DefId` or lowered MIR variant.
 
 use rustc_hir::def_id::DefId;
-#[cfg(rapx_intrinsic_enum)]
-use rustc_middle::ty::Intrinsic;
 use rustc_middle::{mir::NonDivergingIntrinsic, ty::TyCtxt};
 use rustc_span::Symbol;
 
 pub(crate) fn intrinsic_name(tcx: TyCtxt<'_>, callee: Option<DefId>) -> Option<Symbol> {
-    let intrinsic = tcx.intrinsic(callee?)?;
-    #[cfg(rapx_intrinsic_enum)]
-    let name = match intrinsic.name {
-        Intrinsic::Rustc(name) | Intrinsic::Backend { llvm: name } => name,
-    };
-    #[cfg(not(rapx_intrinsic_enum))]
-    let name = intrinsic.name;
-    Some(name)
+    crate::compat::intrinsic_symbol(tcx, callee)
 }
 
 pub fn is_intrinsic(tcx: TyCtxt<'_>, callee: DefId) -> bool {

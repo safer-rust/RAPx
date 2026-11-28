@@ -4,6 +4,7 @@
 
 mod proof;
 
+use crate::compat::MirTerminatorExt as _;
 use std::rc::Rc;
 
 use indexmap::IndexMap;
@@ -41,8 +42,6 @@ use super::{
 pub(crate) struct FunctionVerifier<'target, 'tcx> {
     /// Compiler context for type and MIR queries.
     tcx: TyCtxt<'tcx>,
-    /// Options shared by path extraction and VM execution.
-    config: Rc<VerifyConfig>,
     /// Collected checkpoints, contracts, and invariants for this function.
     target: &'target FunctionTarget<'tcx>,
     /// Paths through the function and expanded callees for this verification run.
@@ -78,7 +77,6 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
                 .run_with_bodies();
         Self {
             tcx,
-            config,
             target,
             path_tree,
             slicer: BackwardSlicer::new(tcx, target.def_id, target.body, callee_bodies, entry_bodies),
@@ -166,7 +164,7 @@ impl<'target, 'tcx> FunctionVerifier<'target, 'tcx> {
     ) -> Vec<PropertyCheckResult<'tcx>> {
         let mut results = Vec::new();
         let z3_ctx = new_z3_context();
-        let mut cache = VmCache::new(&z3_ctx, self.config.constructor_mir_mode());
+        let mut cache = VmCache::new(&z3_ctx);
         for (checkpoint, tree) in self.build_exit_trees(check_unwind) {
             let all_paths = tree.to_vecs();
             let path_indices: FxHashMap<_, _> = all_paths.iter().cloned().enumerate().map(|(index, path)| (path, index)).collect();
@@ -333,7 +331,7 @@ fn is_preserved_slice_ref_invariant(tcx: TyCtxt<'_>, def_id: DefId, property: &P
                 _ => {}
             }
         }
-        match &block.terminator().kind {
+        match &block.rapx_terminator().kind {
             TerminatorKind::Call { destination, .. }
                 if destination.local == local && destination.projection.is_empty() =>
             {
@@ -437,7 +435,7 @@ fn type_invariant_subject_live(tcx: TyCtxt<'_>, def_id: DefId, tree: &PathTree, 
                 _ => {}
             }
         }
-        match &block.terminator().kind {
+        match &block.rapx_terminator().kind {
             TerminatorKind::Call {
                 args, destination, ..
             } => {

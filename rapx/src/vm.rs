@@ -35,7 +35,7 @@ use crate::{compat::{FxHashMap, FxHashSet}, vm::constructor_policy::ConstructorM
 use self::{
     diagnostics::Diagnostics,
     method_cache::CachedMethodResult,
-    state::{AllocId, Constraints, FrameState, InlineCtx, MemoryEvent, MemoryUnit, OwnershipTransfer, SavedCallerFrame},
+    state::{AllocId, Constraints, FrameState, InlineCtx, MemoryEvent, MemoryUnit, RawOwnerShare, SavedCallerFrame},
 };
 
 /// Executes MIR using an immutable context and a path-local symbolic state.
@@ -53,7 +53,7 @@ pub(crate) struct VmExecutor<'z3, 'tcx> {
     pub(crate) z3_ctx: &'z3 Context,
     /// Compiler type context.
     pub(crate) tcx: TyCtxt<'tcx>,
-    /// Constructor MIR mode selected for this verification run.
+    /// Internal constructor MIR policy for this VM run.
     constructor_mir_mode: ConstructorMirMode,
     /// Mutable state cloned when execution branches into separate paths.
     path_state: VmState<'z3, 'tcx>,
@@ -77,8 +77,8 @@ struct VmState<'z3, 'tcx> {
     constraints: Constraints<'z3, 'tcx>,
     /// Scratch state for recursive inlining.
     inline: InlineCtx<'z3, 'tcx>,
-    /// Ownership transfers shared by copies of the same raw pointer.
-    ownership_transfers: Vec<OwnershipTransfer>,
+    /// Refcount shares carried by raw pointers returned from owners.
+    raw_owner_shares: Vec<RawOwnerShare>,
     /// Allocation roots licensed by declared `Alias` contract sources.
     alias_hazard_allocs: FxHashSet<AllocId>,
     /// Optional trace of memory uses and drops on this path.
@@ -128,7 +128,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 static_allocs: FxHashMap::default(),
                 constraints,
                 inline: InlineCtx::default(),
-                ownership_transfers: Vec::new(),
+                raw_owner_shares: Vec::new(),
                 alias_hazard_allocs: FxHashSet::default(),
                 memory_events: None,
                 method_result_cache: Vec::default(),

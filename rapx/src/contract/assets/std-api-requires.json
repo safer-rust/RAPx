@@ -5729,6 +5729,10 @@
       ]
     },
     {
+      "tag": "ValidNum",
+      "args": ["strong_ref_count(ptr, strong.0.0) > rc_owner_count(ptr, Rc)"]
+    },
+    {
       "tag": "Align",
       "args": [
         "ptr",
@@ -5736,9 +5740,10 @@
       ]
     },
     {
-      "tag": "RefCountShare",
+      "tag": "PtrFrom",
       "args": [
-        "ptr"
+        "ptr",
+        "Rc"
       ]
     },
     {
@@ -5758,9 +5763,16 @@
       ]
     },
     {
-      "tag": "RefCountShare",
+      "tag": "ValidNum",
       "args": [
-        "ptr"
+        "strong_ref_count(ptr, strong.0.0) > 0"
+      ]
+    },
+    {
+      "tag": "PtrFrom",
+      "args": [
+        "ptr",
+        "Rc"
       ]
     },
     {
@@ -5787,9 +5799,16 @@
       ]
     },
     {
-      "tag": "RefCountShare",
+      "tag": "ValidNum",
       "args": [
-        "ptr"
+        "strong_ref_count(ptr, strong.0.0) > 0"
+      ]
+    },
+    {
+      "tag": "PtrFrom",
+      "args": [
+        "ptr",
+        "Rc"
       ]
     },
     {
@@ -5817,6 +5836,10 @@
       ]
     },
     {
+      "tag": "ValidNum",
+      "args": ["strong_ref_count(ptr, strong.0.0) > rc_owner_count(ptr, Rc)"]
+    },
+    {
       "tag": "Align",
       "args": [
         "ptr",
@@ -5824,9 +5847,10 @@
       ]
     },
     {
-      "tag": "RefCountShare",
+      "tag": "PtrFrom",
       "args": [
-        "ptr"
+        "ptr",
+        "Rc"
       ]
     },
     {
@@ -5847,9 +5871,16 @@
       ]
     },
     {
-      "tag": "RefCountShare",
+      "tag": "ValidNum",
       "args": [
-        "ptr"
+        "strong_ref_count(ptr, strong.0.0) > 0"
+      ]
+    },
+    {
+      "tag": "PtrFrom",
+      "args": [
+        "ptr",
+        "Rc"
       ]
     },
     {
@@ -5877,9 +5908,16 @@
       ]
     },
     {
-      "tag": "RefCountShare",
+      "tag": "ValidNum",
       "args": [
-        "ptr"
+        "strong_ref_count(ptr, strong.0.0) > 0"
+      ]
+    },
+    {
+      "tag": "PtrFrom",
+      "args": [
+        "ptr",
+        "Rc"
       ]
     },
     {
@@ -6044,6 +6082,10 @@
       ]
     },
     {
+      "tag": "ValidNum",
+      "args": ["strong_ref_count(ptr, strong) > rc_owner_count(ptr, Arc)"]
+    },
+    {
       "tag": "Align",
       "args": [
         "ptr",
@@ -6051,9 +6093,10 @@
       ]
     },
     {
-      "tag": "RefCountShare",
+      "tag": "PtrFrom",
       "args": [
-        "ptr"
+        "ptr",
+        "Arc"
       ]
     },
     {
@@ -6073,9 +6116,16 @@
       ]
     },
     {
-      "tag": "RefCountShare",
+      "tag": "ValidNum",
       "args": [
-        "ptr"
+        "strong_ref_count(ptr, strong) > 0"
+      ]
+    },
+    {
+      "tag": "PtrFrom",
+      "args": [
+        "ptr",
+        "Arc"
       ]
     },
     {
@@ -6102,9 +6152,16 @@
       ]
     },
     {
-      "tag": "RefCountShare",
+      "tag": "ValidNum",
       "args": [
-        "ptr"
+        "strong_ref_count(ptr, strong) > 0"
+      ]
+    },
+    {
+      "tag": "PtrFrom",
+      "args": [
+        "ptr",
+        "Arc"
       ]
     },
     {
@@ -6132,6 +6189,10 @@
       ]
     },
     {
+      "tag": "ValidNum",
+      "args": ["strong_ref_count(ptr, strong) > rc_owner_count(ptr, Arc)"]
+    },
+    {
       "tag": "Align",
       "args": [
         "ptr",
@@ -6139,9 +6200,10 @@
       ]
     },
     {
-      "tag": "RefCountShare",
+      "tag": "PtrFrom",
       "args": [
-        "ptr"
+        "ptr",
+        "Arc"
       ]
     },
     {
@@ -6162,9 +6224,16 @@
       ]
     },
     {
-      "tag": "RefCountShare",
+      "tag": "ValidNum",
       "args": [
-        "ptr"
+        "strong_ref_count(ptr, strong) > 0"
+      ]
+    },
+    {
+      "tag": "PtrFrom",
+      "args": [
+        "ptr",
+        "Arc"
       ]
     },
     {
@@ -6192,9 +6261,16 @@
       ]
     },
     {
-      "tag": "RefCountShare",
+      "tag": "ValidNum",
       "args": [
-        "ptr"
+        "strong_ref_count(ptr, strong) > 0"
+      ]
+    },
+    {
+      "tag": "PtrFrom",
+      "args": [
+        "ptr",
+        "Arc"
       ]
     },
     {

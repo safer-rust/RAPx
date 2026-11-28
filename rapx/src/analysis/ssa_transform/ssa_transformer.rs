@@ -2,6 +2,7 @@
 #![allow(unused_variables)]
 #![allow(dead_code)]
 
+use crate::compat::MirTerminatorExt as _;
 use rustc_data_structures::graph::dominators::Dominators;
 use rustc_data_structures::graph::{Predecessors, dominators};
 use rustc_driver::args;
@@ -98,8 +99,8 @@ impl<'tcx> SSATransformer<'tcx> {
                     }
                 }
             }
-            if let Some(terminator) = &block_data.terminator
-                && let TerminatorKind::Call { destination, .. } = &terminator.kind
+            let terminator = &block_data.rapx_terminator();
+            if let TerminatorKind::Call { destination, .. } = &terminator.kind
                     && let Some(local) = destination.as_local() {
                         if local.as_u32() == 0 {
                             continue; // Skip the return place

@@ -1,9 +1,6 @@
 //! Verification command options.
 
 use clap::Args;
-pub use crate::vm::constructor_policy::ConstructorMirMode;
-
-
 
 #[derive(Debug, Clone, Copy, clap::ValueEnum)]
 pub enum VerifyMode {
@@ -56,16 +53,6 @@ pub struct VerifyConfig {
     /// Verification mode: `scan` auto-detects unannotated unsafe targets (default), `targeted` verifies `#[rapx::verify]` functions.
     #[arg(long, default_value = "scan")]
     pub mode: VerifyMode,
-    /// Skip standalone struct and type invariant checks and verify
-    /// constructor-mutator-method sequences instead.
-    #[arg(long = "no-invariant-target")]
-    pub skip_invariant: bool,
-    /// Constructor MIR: true prioritizes available MIR over call models;
-    /// false skips MIR; default skips MIR if the direct result has an invariant,
-    /// otherwise tries call models before MIR. With `--no-invariant-target`,
-    /// default behaves as true.
-    #[arg(long = "expand-ctor", value_name = "MODE", default_value = "default")]
-    pub constructor_mir: ConstructorMirMode,
     /// Filter verification targets to only those within the specified crate
     /// (Rust crate name or Cargo package name, e.g. `std`, `core`, `my-crate`).
     /// Useful for standard-library workspaces and sub-workspaces.
@@ -109,14 +96,5 @@ impl VerifyConfig {
 
     pub(crate) fn array_length_limit(&self) -> usize {
         self.array_length_limit.unwrap_or(crate::limit::ARRAY_LENGTH_LIMIT)
-    }
-
-    /// Invariant-less runs expand constructor MIR under the default mode.
-    pub(crate) fn constructor_mir_mode(&self) -> ConstructorMirMode {
-        if self.skip_invariant && matches!(self.constructor_mir, ConstructorMirMode::Default) {
-            ConstructorMirMode::True
-        } else {
-            self.constructor_mir
-        }
     }
 }

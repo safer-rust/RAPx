@@ -9,6 +9,7 @@ mod rules;
 
 pub(crate) use relevance::bind_callsite_roots;
 
+use crate::compat::MirTerminatorExt as _;
 use std::{cell::RefCell, collections::{HashMap, HashSet}, rc::Rc};
 
 use rustc_hir::def_id::DefId;
@@ -319,7 +320,7 @@ impl<'tcx> BackwardSlicer<'tcx> {
                     visitor.visit_terminator(
                         def_id,
                         block,
-                        block_data.terminator(),
+                        &block_data.rapx_terminator(),
                         flow,
                         body,
                         &mut relevant,

@@ -5,12 +5,11 @@ extern crate rustc_session;
 
 use clap::Parser;
 use rapx::cli::{self, help};
-use rapx::{RAPX_DEFAULT_ARGS, RapCallback, rap_debug, rap_info, rap_trace, util::log::init_log};
+use rapx::{
+    ErrorOutputType, RAPX_DEFAULT_ARGS, RapCallback, rap_debug, rap_info, rap_trace,
+    util::log::init_log,
+};
 use rustc_session::EarlyDiagCtxt;
-#[cfg(not(rapx_error_output_in_output))]
-use rustc_session::config::ErrorOutputType;
-#[cfg(rapx_error_output_in_output)]
-use rustc_session::output::ErrorOutputType;
 use std::env;
 
 fn run_complier(callback: &mut RapCallback) {

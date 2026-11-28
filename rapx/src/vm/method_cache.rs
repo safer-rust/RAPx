@@ -1,3 +1,4 @@
+use crate::compat::MirTerminatorExt as _;
 use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::{
     mir::{Local, Operand, Place, ProjectionElem, Rvalue, StatementKind, TerminatorKind},
@@ -241,7 +242,7 @@ fn stable_query_body(tcx: TyCtxt<'_>, method: DefId) -> bool {
                 _ => return false,
             }
         }
-        match &block.terminator().kind {
+        match &block.rapx_terminator().kind {
             TerminatorKind::Goto { .. } | TerminatorKind::Return | TerminatorKind::Unreachable => {}
             TerminatorKind::SwitchInt { discr, .. } => {
                 if !stable_operand(discr) {

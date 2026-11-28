@@ -31,14 +31,8 @@ use rustc_middle::ty::TyCtxt;
 
 use crate::analysis::Analysis;
 use crate::compat::{FxHashMap, FxHashSet};
-use crate::util::{
-    fn_info::{get_cons, get_mutated_fields, get_muts},
-    name::short_fn_name,
-};
 use crate::contract::{
-    ContractExpr, ContractPlace, ContractProjection, PlaceBase, Property, PropertyArg,
-    annotation::get_contract_from_annotation, compound::register_compound_properties,
-    ensures::get_trait_method_ensures,
+    compound::register_compound_properties, ensures::get_trait_method_ensures,
 };
 use self::{
     config::{PostfixRepeat, VerifyConfig},
@@ -83,83 +77,6 @@ impl<'tcx> VerifyDriver<'tcx> {
         }
     }
 
-    /// With `--no-invariant-target`, generate verification sequences for each read method
-    /// that chain through constructors and mutators.
-    ///
-    /// Produces sequences like:
-    /// - `constructor → method`
-    /// - `constructor → mutator → method`
-    ///
-    /// Each sequence propagates the constructor's `#[rapx::requires]` through
-    /// the mutator chain to serve as entry assumptions for the read method.
-    /// TODO: This sequence analysis is incomplete; it currently considers at most one mutator.
-    fn run_invless_sequences(&self, targets: &[FunctionTarget<'tcx>]) {
-        for target in targets {
-            let read_def_id = target.def_id;
-            let cons = get_cons(self.tcx, read_def_id);
-            if cons.is_empty() {
-                continue;
-            }
-            let muts = get_muts(self.tcx, read_def_id);
-
-            for &con_id in &cons {
-                let con_target = self.build_virtual_target(target, read_def_id, con_id, &[]);
-                self.verify_and_emit_sequence(read_def_id, &con_target, con_id, &[]);
-
-                for &mut_id in &muts {
-                    let con_target = self.build_virtual_target(target, read_def_id, con_id, &[mut_id]);
-                    self.verify_and_emit_sequence(read_def_id, &con_target, con_id, &[mut_id]);
-                }
-            }
-        }
-    }
-
-    fn build_virtual_target(
-        &self,
-        read_target: &FunctionTarget<'tcx>,
-        read_def_id: DefId,
-        con_id: DefId,
-        mut_ids: &[DefId],
-    ) -> FunctionTarget<'tcx> {
-        let mut accumulated_requires: Vec<Property<'tcx>> = Vec::new();
-        // Start with the constructor's requires, remapped to refer to struct
-        // fields (self.field) instead of constructor parameters.
-        let con_contracts: Vec<Property<'tcx>> = get_contract_from_annotation(self.tcx, con_id)
-            .into_iter()
-            .map(|c| remap_constructor_contract(c))
-            .collect();
-        accumulated_requires.extend(con_contracts);
-
-        let mutated_fields: FxHashSet<_> = mut_ids.iter().flat_map(|&id| get_mutated_fields(self.tcx, id)).collect();
-        if !mutated_fields.is_empty() {
-            accumulated_requires.retain(|prop| {
-                let prop_fields = property_field_indices(prop);
-                !prop_fields.iter().any(|f| mutated_fields.contains(f))
-            });
-        }
-
-        // Also include the read method's own caller requires (which already
-        // contains struct invariants merged by build_function_target).
-        // This is broader than just `get_contract_from_annotation` because
-        // it propagates struct-level properties even when the method has no
-        // explicit `#[rapx::requires]`.
-        accumulated_requires.extend(read_target.caller_requires.clone());
-
-        FunctionTarget {
-            def_id: read_def_id,
-            body: read_target.body,
-            array_length_limited: read_target.array_length_limited,
-            callee_bodies: read_target.callee_bodies.clone(),
-            owner_struct_def_id: read_target.owner_struct_def_id,
-            checkpoints: read_target.checkpoints.clone(),
-            callee_requires: read_target.callee_requires.clone(),
-            caller_requires: accumulated_requires,
-            invariants: Vec::new(),
-            raw_ptr_deref_checks: read_target.raw_ptr_deref_checks.clone(),
-            static_mut_checks: read_target.static_mut_checks.clone(),
-        }
-    }
-
     /// Run `verify_checkpoints` at every repeat depth up to `max_repeat`.
     fn run_repeat_rounds(
         &self,
@@ -169,45 +86,12 @@ impl<'tcx> VerifyDriver<'tcx> {
         limits: &mut VerificationLimits,
     ) {
         let z3_ctx = new_z3_context();
-        let mut cache = VmCache::new(&z3_ctx, self.config.constructor_mir_mode());
+        let mut cache = VmCache::new(&z3_ctx);
         for repeat in 0..=max_repeat {
             let (results, round_limits) = FunctionVerifier::verify_checkpoints(self.tcx, target, repeat, Rc::clone(&self.config), &mut cache);
             limits.merge(round_limits);
             all_results.extend(results);
         }
-    }
-
-    fn verify_and_emit_sequence(
-        &self,
-        read_def_id: DefId,
-        con_target: &FunctionTarget<'tcx>,
-        con_id: DefId,
-        mut_ids: &[DefId],
-    ) {
-        let mut all_results: Vec<PropertyCheckResult<'_>> = Vec::new();
-        let mut limits = VerificationLimits::default();
-        let max_repeat = self.max_repeat_for_target(con_target);
-        self.run_repeat_rounds(con_target, max_repeat, &mut all_results, &mut limits);
-
-        let read_name = short_fn_name(self.tcx, read_def_id);
-        let con_name = short_fn_name(self.tcx, con_id);
-        let mut chain_parts: Vec<String> = vec![con_name];
-        for &mut_id in mut_ids {
-            chain_parts.push(short_fn_name(self.tcx, mut_id));
-        }
-        chain_parts.push(read_name);
-        let chain_label = chain_parts.join(" -> ");
-
-        rap_info!("============================================================");
-        rap_info!("[rapx::verify] sequence: {chain_label}");
-        rap_info!("============================================================");
-
-        if all_results.is_empty() && !limits.path_limited {
-            rap_info!("  result: SOUND (no unsafe checkpoints)");
-        } else {
-            emit_results_and_verdict(&all_results, limits);
-        }
-        rap_info!("");
     }
 }
 
@@ -236,7 +120,7 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
             self.run_repeat_rounds(target, max_repeat, &mut all_results, &mut limits);
 
             // Recheck collected invariants at function exits after checkpoint verification.
-            if !target.invariants.is_empty() && !self.config.skip_invariant {
+            if !target.invariants.is_empty() {
                 let verifier = FunctionVerifier::new(self.tcx, target, max_repeat, None, Rc::clone(&self.config));
                 limits.merge(verifier.limits());
                 all_results.extend(verifier.verify_invariants());
@@ -268,32 +152,13 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
                     rap_info!("============================================================");
                     rap_info!("[rapx::verify] function: {target_path}");
                     rap_info!("============================================================");
-                    if self.config.skip_invariant {
-                        let cons = get_cons(self.tcx, def_id);
-                        for con in &cons {
-                            rap_info!("  + constructor: {}", self.tcx.def_path_str(*con));
-                        }
-                    }
                     rap_info!("  result: SOUND (no properties to check)");
                     rap_info!("");
                 }
                 continue;
             }
 
-            // When --no-invariant-target is set, skip standalone emission for methods that
-            // have constructors — sequences will generate dedicated entries.
-            if self.config.skip_invariant && !get_cons(self.tcx, def_id).is_empty() {
-                continue;
-            }
-
-            emit_verify_summary(
-                self.tcx,
-                &target_path,
-                def_id,
-                &all_results,
-                self.config.skip_invariant,
-                limits,
-            );
+            emit_verify_summary(&target_path, &all_results, limits);
         }
 
         let marker_verifier = MarkerTraitVerifier::new(self.tcx);
@@ -360,67 +225,5 @@ impl<'tcx> Analysis for VerifyDriver<'tcx> {
             }
             rap_info!("");
         }
-
-        if self.config.skip_invariant {
-            self.run_invless_sequences(&collector.function_targets);
-        }
-    }
-}
-
-/// Collect struct field indices referenced by a property's contract places.
-///
-/// Used to determine which invariants are invalidated when a mutator writes
-/// to specific struct fields.
-fn property_field_indices(property: &Property<'_>) -> Vec<usize> {
-    let mut indices = Vec::new();
-    for arg in property.args() {
-        let place = match arg {
-            PropertyArg::Expr(ContractExpr::Place(p)) | PropertyArg::ForEach(ContractExpr::Place(p)) => Some(p),
-            _ => None,
-        };
-        if let Some(place) = place {
-            for proj in &place.projections {
-                match proj {
-                    ContractProjection::Field { index } => {
-                        let idx = *index;
-                        if !indices.contains(&idx) {
-                            indices.push(idx);
-                        }
-                    }
-                    ContractProjection::Downcast { .. } => {}
-                    ContractProjection::ForEach => {}
-                }
-            }
-        }
-    }
-    indices
-}
-
-/// Remap constructor parameter references in an atomic contract to fields of `self`.
-fn remap_constructor_contract<'tcx>(property: Property<'tcx>) -> Property<'tcx> {
-    fn remap_place_arg<'tcx>(arg: &PropertyArg<'tcx>) -> PropertyArg<'tcx> {
-        let place = match arg {
-            PropertyArg::Expr(ContractExpr::Place(p)) | PropertyArg::ForEach(ContractExpr::Place(p)) => p,
-            _ => return arg.clone(),
-        };
-        let PlaceBase::Arg(field_idx) = place.base else {
-            return arg.clone();
-        };
-        let projection = ContractProjection::Field { index: field_idx };
-        let mut new_place = ContractPlace { base: PlaceBase::Arg(0), projections: vec![projection] };
-        new_place.projections.extend(place.projections.iter().cloned());
-        match arg {
-            PropertyArg::ForEach(_) => PropertyArg::ForEach(ContractExpr::Place(new_place)),
-            _ => PropertyArg::Expr(ContractExpr::Place(new_place)),
-        }
-    }
-
-    match property {
-        Property::Atom(mut atom) => {
-            atom.args = atom.args.iter().map(remap_place_arg).collect();
-            Property::Atom(atom)
-        }
-        Property::And(and) => Property::And(and),
-        Property::Or(or) => Property::Or(or),
     }
 }

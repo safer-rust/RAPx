@@ -1,3 +1,4 @@
+use crate::compat::MirTerminatorExt as _;
 use rustc_hir::{Safety, def_id::DefId};
 use rustc_middle::{
     mir::{
@@ -59,8 +60,8 @@ pub fn get_rawptr_deref(tcx: TyCtxt<'_>, def_id: DefId) -> HashSet<Local> {
                         }
                 }
             }
-            if let Some(terminator) = &bb.terminator
-                && let rustc_middle::mir::TerminatorKind::Call { args, .. } = &terminator.kind {
+            let terminator = &bb.rapx_terminator();
+            if let rustc_middle::mir::TerminatorKind::Call { args, .. } = &terminator.kind {
                     for arg in args {
                         match arg.node {
                             Operand::Copy(place) | Operand::Move(place)
@@ -108,7 +109,7 @@ pub fn get_unsafe_callees(tcx: TyCtxt<'_>, def_id: DefId) -> HashSet<DefId> {
     if tcx.is_mir_available(def_id) {
         let body = tcx.optimized_mir(def_id);
         for bb in body.basic_blocks.iter() {
-            if let TerminatorKind::Call { func, .. } = &bb.terminator().kind
+            if let TerminatorKind::Call { func, .. } = &bb.rapx_terminator().kind
                 && let Some(callee_def_id) = dep_callee_def_id(func)
                     && get_fn_safety(tcx, callee_def_id) == Safety::Unsafe {
                         unsafe_callees.insert(callee_def_id);

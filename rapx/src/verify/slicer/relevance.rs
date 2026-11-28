@@ -124,7 +124,9 @@ impl RelevantPlaces {
                 self.collect_contract_expr(lhs);
                 self.collect_contract_expr(rhs);
             }
-            ContractExpr::Unary { expr, .. } => self.collect_contract_expr(expr),
+            ContractExpr::Unary { expr, .. }
+            | ContractExpr::StrongRefCount { ptr: expr, .. }
+            | ContractExpr::RcOwnerCount { ptr: expr, .. } => self.collect_contract_expr(expr),
             ContractExpr::MethodCall { receiver, args, .. } => {
                 self.collect_contract_expr(receiver);
                 for arg in args {

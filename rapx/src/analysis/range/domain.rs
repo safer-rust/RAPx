@@ -12,6 +12,7 @@ pub mod interproc;
 pub mod range;
 pub mod symbolic_expr;
 
+use crate::compat::MirTerminatorExt as _;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fmt::Debug,
@@ -248,10 +249,10 @@ where
                     let next_bb = window[1];
                     let current_bb_data = &body[current_bb];
 
-                    if let Some(Terminator {
+                    if let Terminator {
                         kind: TerminatorKind::SwitchInt { discr, .. },
                         ..
-                    }) = &current_bb_data.terminator
+                    } = &current_bb_data.rapx_terminator()
                     {
                         let Some((constraint_place_1_ref, constraint_place_2_ref)) =
                             self.switchbbs.get(&current_bb)

@@ -6,6 +6,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         effect: &CallEffect,
         args: &[VmValue<'z3, 'tcx>],
         dest: Local,
+        func: &Operand<'tcx>,
     ) {
         match effect {
             CallEffect::LoadMemory { pointer_arg } => {
@@ -36,6 +37,9 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 }
             }
             CallEffect::AtomicRmw { pointer_arg } => {
+                if self.apply_strong_count_atomic_update(args, *pointer_arg, dest, func) {
+                    return;
+                }
                 let Some(prov) = args
                     .get(*pointer_arg)
                     .and_then(|value| value.provenance.as_ref())
@@ -162,5 +166,44 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             }
             _ => unreachable!("non-memory call effect"),
         }
+    }
+
+    /// Preserve the `ArcInner.strong` field across an atomic add or subtract.
+    /// Other atomic operations retain the conservative memory invalidation.
+    fn apply_strong_count_atomic_update(
+        &mut self,
+        args: &[VmValue<'z3, 'tcx>],
+        pointer_arg: usize,
+        dest: Local,
+        func: &Operand<'tcx>,
+    ) -> bool {
+        let Some(callee) = mir_utils::dep_callee_def_id(func) else { return false; };
+        let Some(name) = crate::def_ids::intrinsic_api::intrinsic_name(self.tcx, Some(callee)) else { return false; };
+        let add = if name.as_str().starts_with("atomic_xadd") { true }
+            else if name.as_str().starts_with("atomic_xsub") { false }
+            else { return false; };
+        let Some(pointer) = args.get(pointer_arg) else { return false; };
+        let Some(delta) = args.get(pointer_arg + 1) else { return false; };
+        let Some(provenance) = pointer.provenance.as_ref() else { return false; };
+        let root = self.root_alloc(provenance.alloc_id);
+        let Some(offset) = provenance.offset.simplify().as_u64() else { return false; };
+        let mut matching = self.content(root).values.iter().filter_map(|((view_ty, path), value)| {
+            let TyKind::Adt(adt, _) = view_ty.kind() else { return None; };
+            if !type_ids::is_std_arc_inner(self.tcx, adt.did()) { return None; }
+            let field_index = adt.non_enum_variant().fields.iter()
+                .position(|field| field.name.as_str() == "strong")?;
+            if path != &[field_index] { return None; }
+            let layout = mir_utils::layout_of_ty(self.tcx, self.current_def_id(), *view_ty)?;
+            (layout.fields.offset(field_index).bytes() == offset).then(|| (*view_ty, path.clone(), value.clone()))
+        });
+        let Some((view_ty, path, old)) = matching.next() else { return false; };
+        if matching.next().is_some() { return false; }
+        let next = if add { &old.z3_term + &delta.z3_term } else { &old.z3_term - &delta.z3_term };
+        let mut updated = old.clone();
+        updated.z3_term = self.wrap_integer_term(delta.ty, &next);
+        self.store_value(root, view_ty, path, updated);
+        let result_ty = self.body().local_decls[dest].ty;
+        self.set_local(dest, VmValue::new(old.z3_term, result_ty));
+        true
     }
 }

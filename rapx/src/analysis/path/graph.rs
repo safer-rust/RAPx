@@ -1,3 +1,4 @@
+use crate::compat::MirTerminatorExt as _;
 use super::PathTree;
 use crate::compat::{FxHashMap, FxHashSet};
 use crate::graphs::{
@@ -502,10 +503,7 @@ impl<'tcx> PathGraph<'tcx> {
             let bb = &basicblocks[BasicBlock::from(i)];
             let mut cfg_block = CfgBlock::new(i, bb.is_cleanup);
 
-            let Some(terminator) = &bb.terminator else {
-                cfg_blocks.push(cfg_block);
-                continue;
-            };
+            let terminator = &bb.rapx_terminator();
 
             match terminator.kind.clone() {
                 TerminatorKind::Goto { ref target, .. } => {

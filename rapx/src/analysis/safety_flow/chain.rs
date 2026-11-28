@@ -1,3 +1,4 @@
+use crate::compat::MirTerminatorExt as _;
 use crate::util::mir_scan::get_fn_safety;
 use crate::util::mir_utils::dep_callee_def_id;
 use crate::util::name::get_cleaned_def_path_name;
@@ -55,8 +56,8 @@ fn find_unsafe_callees_in_function(tcx: TyCtxt, def_id: DefId) -> Vec<(DefId, St
 
     if let Some(body) = try_get_mir(tcx, def_id) {
         for bb in body.basic_blocks.iter() {
-            if let Some(terminator) = &bb.terminator
-                && let Some((callee_def_id, callee_name)) = extract_unsafe_callee(tcx, terminator) {
+            let terminator = &bb.rapx_terminator();
+            if let Some((callee_def_id, callee_name)) = extract_unsafe_callee(tcx, terminator) {
                     callees.push((callee_def_id, callee_name));
                 }
         }

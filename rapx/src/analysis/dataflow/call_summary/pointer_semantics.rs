@@ -1,5 +1,6 @@
 //! VM rules for pointer-preserving calls and owner lifetimes.
 
+use crate::compat::MirTerminatorExt as _;
 use rustc_hir::def_id::DefId;
 use rustc_middle::{
     mir::{Body, StatementKind, TerminatorKind},
@@ -47,7 +48,7 @@ pub(crate) fn single_block_without_effects(body: &Body<'_>) -> bool {
     let [block] = &body.basic_blocks[..] else {
         return false;
     };
-    matches!(block.terminator().kind, TerminatorKind::Return)
+    matches!(block.rapx_terminator().kind, TerminatorKind::Return)
         && block.statements.iter().all(|stmt| match &stmt.kind {
             StatementKind::Assign(assign) => !assign
                 .0

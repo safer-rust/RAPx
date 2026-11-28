@@ -5,6 +5,7 @@
 //! `collect_*` functions scan MIR and attach safety requirements; the rest of
 //! the verifier consumes the resulting records.
 
+use crate::compat::MirTerminatorExt as _;
 use crate::def_ids::intrinsic_api;
 use crate::util::{
     mir_scan::{get_fn_safety, place_has_raw_deref},
@@ -161,7 +162,7 @@ pub fn collect_unsafe_callsites<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Vec<C
             }
         }
 
-        let (func, args, destination) = match &data.terminator().kind {
+        let (func, args, destination) = match &data.rapx_terminator().kind {
             TerminatorKind::Call {
                 func,
                 args,
@@ -348,7 +349,7 @@ pub fn collect_raw_ptr_deref_checkpoints<'tcx>(
             }
         }
 
-        let terminator = data.terminator();
+        let terminator = &data.rapx_terminator();
         if !in_fn_file(terminator.source_info.span) {
             continue;
         }
@@ -447,8 +448,8 @@ pub fn collect_static_mut_checkpoints<'tcx>(
             }
         }
 
-        if let Some(terminator) = &data.terminator
-            && let TerminatorKind::Call { args, .. } | TerminatorKind::TailCall { args, .. } =
+        let terminator = &data.rapx_terminator();
+        if let TerminatorKind::Call { args, .. } | TerminatorKind::TailCall { args, .. } =
                 &terminator.kind
         {
             for arg in args {

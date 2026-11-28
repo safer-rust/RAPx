@@ -1,8 +1,5 @@
 use rustc_hir::{Safety, def::DefKind, def_id::DefId};
-use rustc_middle::{
-    mir::{ProjectionElem, StatementKind},
-    ty::{self, AssocKind, Mutability, TyCtxt, TyKind},
-};
+use rustc_middle::ty::{self, AssocKind, Mutability, TyCtxt, TyKind};
 use rustc_public::{CrateDef, rustc_internal};
 use rustc_span::{kw, sym};
 use std::{collections::HashSet, fmt::Debug, hash::Hash};
@@ -300,44 +297,6 @@ pub fn get_ptr_deref_dummy_def_id(tcx: TyCtxt<'_>) -> Option<DefId> {
 
         (name.as_str() == "__raw_ptr_deref_dummy").then_some(def_id)
     })
-}
-
-/// Return field indices that a `&mut self` method writes to.
-///
-/// Scans the MIR body for assignments to `(*self).field_n` and returns the
-/// set of field indices that are modified.  Used by --no-invariant-target mode to know which
-/// constructor-inherited invariants are invalidated by a mutator.
-pub fn get_mutated_fields(tcx: TyCtxt<'_>, def_id: DefId) -> Vec<usize> {
-    let body = tcx.optimized_mir(def_id);
-    let mut fields = Vec::new();
-
-    for data in body.basic_blocks.iter() {
-        for statement in &data.statements {
-            if let StatementKind::Assign(assign) = &statement.kind {
-                let (place, _) = &**assign;
-                if place.local.as_usize() != 1 {
-                    continue;
-                }
-                let mut saw_deref = false;
-                for proj in place.projection.iter() {
-                    match proj {
-                        ProjectionElem::Deref => {
-                            saw_deref = true;
-                        }
-                        ProjectionElem::Field(index, _) if saw_deref => {
-                            let idx = index.as_usize();
-                            if !fields.contains(&idx) {
-                                fields.push(idx);
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-    }
-
-    fields
 }
 
 pub fn is_externally_reachable(tcx: TyCtxt<'_>, def_id: DefId) -> bool {

@@ -1,3 +1,4 @@
+use crate::compat::MirTerminatorExt as _;
 use rustc_middle::mir::{BasicBlock, Body, VarDebugInfoContents};
 use rustc_span::{
     source_map::get_source_map,
@@ -62,15 +63,7 @@ pub fn get_basic_block_span<'tcx>(body: &Body<'tcx>, bb_index: usize) -> Span {
     let bb = BasicBlock::from_usize(bb_index);
     let block_data = &body.basic_blocks[bb];
 
-    if let Some(ref term) = block_data.terminator {
-        return term.source_info.span;
-    }
-
-    if let Some(stmt) = block_data.statements.first() {
-        return stmt.source_info.span;
-    }
-
-    body.span
+    block_data.rapx_terminator().source_info.span
 }
 
 #[inline]

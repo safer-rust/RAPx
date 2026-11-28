@@ -18,7 +18,7 @@ use rustc_middle::ty::TyCtxt;
 
 use super::compound::{CompoundArg, CompoundBody};
 use super::{ContractExpr, BinOp, NumericPredicate, UnaryOp, RelOp};
-use crate::util::name::match_ty_with_ident;
+use crate::util::name::{get_adt_self_ty, match_ty_with_ident};
 
 /// Parser derived from `grammar.pest`.
 #[derive(Parser)]
@@ -301,6 +301,23 @@ fn conv_call<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, pair: Pair<Rule>) -> Contra
         None => Vec::new(),
     };
     match builtin.as_str() {
+        "strong_ref_count" => {
+            let [ptr, field] = args.as_slice() else { return ContractExpr::Unknown };
+            let field_path: Vec<_> = field.as_str().split('.').map(|part| part.trim().to_string()).collect();
+            if field_path.iter().any(|part| part.is_empty() || !part.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_')) {
+                return ContractExpr::Unknown;
+            }
+            ContractExpr::StrongRefCount { ptr: Box::new(conv_arg_expr(tcx, def_id, ptr.clone())), field_path }
+        }
+        "rc_owner_count" => {
+            let [ptr, owner] = args.as_slice() else { return ContractExpr::Unknown };
+            let name = owner.as_str();
+            let owner_ty = get_adt_self_ty(tcx, def_id)
+                .filter(|ty| name == "Self" || ty.ty_adt_def().is_some_and(|adt| tcx.item_name(adt.did()).as_str() == name))
+                .or_else(|| match_ty_with_ident(tcx, def_id, name.to_string()));
+            let Some(owner) = owner_ty.and_then(|ty| ty.ty_adt_def()) else { return ContractExpr::Unknown };
+            ContractExpr::RcOwnerCount { ptr: Box::new(conv_arg_expr(tcx, def_id, ptr.clone())), owner: owner.did() }
+        }
         "size_of" | "align_of" => {
             let ty_name = args
                 .first()

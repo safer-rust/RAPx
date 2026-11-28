@@ -194,6 +194,10 @@
     {
       "tag": "Allocated",
       "args": ["$self.ptr", "u8"]
+    },
+    {
+      "tag": "ValidNum",
+      "args": ["strong_ref_count($self.ptr, strong.0.0) > 0"]
     }
   ],
   "alloc::sync::Arc": [
@@ -206,6 +210,10 @@
     {
       "tag": "Allocated",
       "args": ["$self.ptr", "u8"]
+    },
+    {
+      "tag": "ValidNum",
+      "args": ["strong_ref_count($self.ptr, strong) > 0"]
     }
   ],
   "[T]": [

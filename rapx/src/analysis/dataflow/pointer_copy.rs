@@ -1,5 +1,6 @@
 //! Source and destination arguments of pointer-copy calls.
 
+use crate::compat::MirTerminatorExt as _;
 use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::{
     mir::{Body, Operand, StatementKind, TerminatorKind},
@@ -63,7 +64,7 @@ fn mir_copy_flow(tcx: TyCtxt<'_>, callee: DefId) -> Option<CopyFlow> {
             }
         }
         if let TerminatorKind::Call { func, args, .. } | TerminatorKind::TailCall { func, args, .. } =
-            &block.terminator().kind
+            &block.rapx_terminator().kind
             && let Some(id) = dep_callee_def_id(func)
             && direct_copy_flow(tcx, id).is_some()
             && let [src, dst, count] = &args[..]

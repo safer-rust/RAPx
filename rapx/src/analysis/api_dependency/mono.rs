@@ -12,7 +12,6 @@ use rand::seq::SliceRandom;
 
 use crate::def_ids::lang_api::{self, LangItem};
 use rustc_hir::def_id::DefId;
-use rustc_infer::infer::DefineOpaqueTypes;
 use rustc_infer::infer::{InferCtxt, TyCtxtInferExt};
 use rustc_infer::traits::{ImplSource, Obligation, ObligationCause};
 use rustc_middle::ty::{
@@ -214,27 +213,18 @@ fn unify_ty<'tcx>(
 ) -> Option<Mono<'tcx>> {
     // rap_info!("check {} = {}", lhs, rhs);
     infcx.probe(|_| {
-        #[cfg(rapx_post_analysis_no_rigid_aliases)]
-        let unified = infcx.eq_raw(cause, param_env, DefineOpaqueTypes::Yes, lhs, rhs);
-        #[cfg(not(rapx_post_analysis_no_rigid_aliases))]
-        let unified = infcx.at(cause, param_env).eq(DefineOpaqueTypes::Yes, lhs, rhs);
-        match unified {
-            Ok(_infer_ok) => {
-                // rap_trace!("[infer_ok] {} = {} : {:?}", lhs, rhs, infer_ok);
-                let mono = identity
-                    .iter()
-                    .map(|arg| match arg.kind() {
-                        ty::GenericArgKind::Lifetime(region) => resolve_var(infcx, region).into(),
-                        ty::GenericArgKind::Type(ty) => resolve_var(infcx, ty).into(),
-                        ty::GenericArgKind::Const(ct) => resolve_var(infcx, ct).into(),
-                    })
-                    .collect();
-                Some(mono)
-            }
-            Err(_e) => {
-                // rap_trace!("[infer_err] {} = {} : {:?}", lhs, rhs, e);
-                None
-            }
+        if compat::infer_types_equal(infcx, cause, param_env, lhs, rhs) {
+            let mono = identity
+                .iter()
+                .map(|arg| match arg.kind() {
+                    ty::GenericArgKind::Lifetime(region) => resolve_var(infcx, region).into(),
+                    ty::GenericArgKind::Type(ty) => resolve_var(infcx, ty).into(),
+                    ty::GenericArgKind::Const(ct) => resolve_var(infcx, ct).into(),
+                })
+                .collect();
+            Some(mono)
+        } else {
+            None
         }
     })
 }

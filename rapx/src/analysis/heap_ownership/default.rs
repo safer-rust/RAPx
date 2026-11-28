@@ -1,3 +1,4 @@
+use crate::compat::MirTerminatorExt as _;
 use crate::util::mir_utils;
 use rustc_abi::VariantIdx;
 use rustc_middle::{
@@ -391,7 +392,7 @@ impl<'tcx> Visitor<'tcx> for HeapOwnershipAnalyzer<'tcx> {
     }
 
     fn visit_basic_block_data(&mut self, _block: BasicBlock, data: &BasicBlockData<'tcx>) {
-        let term = data.terminator();
+        let term = &data.rapx_terminator();
         if let TerminatorKind::Call { func, .. } = &term.kind && let Operand::Constant(constant) = func && let ty::FnDef(def_id, ..) = constant.ty().kind()
             && self.tcx.is_mir_available(*def_id) && self.fn_set_mut().insert(*def_id) {
                 let body = self.tcx.instance_mir(Item(*def_id));

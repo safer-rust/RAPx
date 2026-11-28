@@ -13,15 +13,72 @@
 /// 4. Update call-sites to `use crate::compat::Foo;`.
 pub use rustc_hash::FxHashMap;
 pub use rustc_hash::FxHashSet;
+#[cfg(not(rapx_error_output_in_output))]
+pub use rustc_session::config::ErrorOutputType;
+#[cfg(rapx_error_output_in_output)]
+pub use rustc_session::output::ErrorOutputType;
 
 pub type GenericArgsRef<'tcx> = rustc_middle::ty::GenericArgs<'tcx>;
+
+/// Access a MIR terminator across rustc versions that store it directly or in `Option`.
+pub(crate) trait MirTerminatorExt<'tcx> {
+    fn rapx_terminator(&self) -> &rustc_middle::mir::Terminator<'tcx>;
+    fn rapx_terminator_mut(&mut self) -> &mut rustc_middle::mir::Terminator<'tcx>;
+}
+
+impl<'tcx> MirTerminatorExt<'tcx> for rustc_middle::mir::BasicBlockData<'tcx> {
+    fn rapx_terminator(&self) -> &rustc_middle::mir::Terminator<'tcx> {
+        #[cfg(rapx_mir_terminator_required)]
+        { &self.terminator }
+        #[cfg(not(rapx_mir_terminator_required))]
+        { self.terminator.as_ref().expect("MIR basic block has no terminator") }
+    }
+
+    fn rapx_terminator_mut(&mut self) -> &mut rustc_middle::mir::Terminator<'tcx> {
+        #[cfg(rapx_mir_terminator_required)]
+        { &mut self.terminator }
+        #[cfg(not(rapx_mir_terminator_required))]
+        { self.terminator.as_mut().expect("MIR basic block has no terminator") }
+    }
+}
 
 /// `Spanned` was moved from `rustc_span::source_map` to `rustc_span` root
 /// in rustc 1.97.
 pub use rustc_span::Spanned;
 
 use rustc_hir::def_id::DefId;
-use rustc_middle::ty::{TyCtxt, TypingEnv};
+use rustc_infer::infer::{DefineOpaqueTypes, InferCtxt};
+use rustc_infer::traits::ObligationCause;
+#[cfg(rapx_intrinsic_enum)]
+use rustc_middle::ty::Intrinsic;
+use rustc_middle::ty::{self, Ty, TyCtxt, TypingEnv};
+use rustc_span::Symbol;
+
+/// Extract the name of an intrinsic across rustc's intrinsic representations.
+pub(crate) fn intrinsic_symbol(tcx: TyCtxt<'_>, callee: Option<DefId>) -> Option<Symbol> {
+    let intrinsic = tcx.intrinsic(callee?)?;
+    #[cfg(rapx_intrinsic_enum)]
+    let name = match intrinsic.name {
+        Intrinsic::Rustc(name) | Intrinsic::Backend { llvm: name } => name,
+    };
+    #[cfg(not(rapx_intrinsic_enum))]
+    let name = intrinsic.name;
+    Some(name)
+}
+
+/// Unify two types using the inference API available in this rustc version.
+pub(crate) fn infer_types_equal<'tcx>(
+    infcx: &InferCtxt<'tcx>,
+    cause: &ObligationCause<'tcx>,
+    param_env: ty::ParamEnv<'tcx>,
+    lhs: Ty<'tcx>,
+    rhs: Ty<'tcx>,
+) -> bool {
+    #[cfg(rapx_post_analysis_no_rigid_aliases)]
+    { infcx.eq_raw(cause, param_env, DefineOpaqueTypes::Yes, lhs, rhs).is_ok() }
+    #[cfg(not(rapx_post_analysis_no_rigid_aliases))]
+    { infcx.at(cause, param_env).eq(DefineOpaqueTypes::Yes, lhs, rhs).is_ok() }
+}
 
 /// Post-analysis typing environment across rustc nightly API versions.
 #[inline]

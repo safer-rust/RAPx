@@ -1,5 +1,6 @@
 //! ValidCStr property checking for the symbolic VM.
 
+use crate::compat::MirTerminatorExt as _;
 use rustc_middle::{
     mir::{Body, Local, Operand, Rvalue, StatementKind, TerminatorKind},
     ty::TyCtxt,
@@ -52,9 +53,7 @@ fn body_parents<'tcx>(tcx: TyCtxt<'tcx>, body: &Body<'tcx>) -> FxHashMap<Local, 
                 parents.entry(target.local).or_insert(source);
             }
         }
-        let Some(terminator) = &data.terminator else {
-            continue;
-        };
+        let terminator = &data.rapx_terminator();
         let TerminatorKind::Call {
             func,
             args,

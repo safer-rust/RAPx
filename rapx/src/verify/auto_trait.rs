@@ -14,6 +14,7 @@
 //! `std-trait.json` + `std-compound-properties.rs`; this module only
 //! implements the primitive type-level checks.
 
+use crate::compat::MirTerminatorExt as _;
 use std::collections::HashSet;
 
 use rustc_hir::{def::DefKind, def_id::DefId};
@@ -309,7 +310,7 @@ fn has_atomic_call(tcx: TyCtxt<'_>, def_id: DefId) -> bool {
     }
     let body = tcx.optimized_mir(def_id);
     body.basic_blocks.iter().any(|bb| {
-        let (TerminatorKind::Call { func, .. } | TerminatorKind::TailCall { func, .. }) = &bb.terminator().kind else {
+        let (TerminatorKind::Call { func, .. } | TerminatorKind::TailCall { func, .. }) = &bb.rapx_terminator().kind else {
             return false;
         };
         dep_callee_def_id(func).is_some_and(|callee| {

@@ -21,6 +21,53 @@ fn assert_result_counts(output: &str, expected: [usize; 3]) {
 }
 
 #[test]
+fn ptr_from_raw_pointer_argument() {
+    let output = run_with_args("verify_units/ptr_from_shared_owner_01", CMD_VERIFY_TARGETED);
+    assert_function_result(&output, "raw_pointer_argument", "UNSOUND");
+    let raw = extract_block_after(&output, "function: raw_pointer_argument");
+    assert_contain(raw, "PtrFrom | Failed");
+}
+
+#[test]
+fn shared_owner_strong_count_contracts() {
+    let output = run_with_args("verify_units/ptr_from_shared_owner_01", CMD_VERIFY_TARGETED);
+    for function in ["rc_new_roundtrip", "arc_new_roundtrip", "rc_count_roundtrip", "arc_count_roundtrip"] {
+        assert_function_result(&output, function, "SOUND");
+        let block = extract_block_after(&output, &format!("function: {function}"));
+        assert_contain(block, "ValidNum | Proved");
+    }
+    for function in ["rc_count_exhausted", "arc_count_exhausted"] {
+        assert_function_result(&output, function, "UNSOUND");
+        let block = extract_block_after(&output, &format!("function: {function}"));
+        assert_contain(block, "ValidNum | Failed");
+    }
+}
+
+#[test]
+fn ptr_from_rc_reference_argument() {
+    let output = run_with_args("verify_units/ptr_from_shared_owner_01", CMD_VERIFY_TARGETED);
+    let borrowed = extract_block_after(&output, "function: rc_reference_argument");
+    assert_contain(borrowed, "PtrFrom | Proved");
+    assert_not_contain(borrowed, "result: UNSOUND");
+}
+
+#[test]
+fn ptr_from_reused_raw_with_other_share() {
+    let output = run_with_args("verify_units/ptr_from_shared_owner_01", CMD_VERIFY_TARGETED);
+    assert_function_result(&output, "reused_raw_with_other_share", "UNSOUND");
+    let reused = extract_block_after(&output, "function: reused_raw_with_other_share");
+    assert_contain(reused, "PtrFrom | Failed");
+}
+
+#[test]
+fn custom_owner_count_contract() {
+    let output = run_with_args("verify_units/ptr_from_shared_owner_01", CMD_VERIFY_TARGETED);
+    assert_function_result(&output, "custom_owner_contract", "SOUND");
+    let block = extract_block_after(&output, "function: custom_owner_contract");
+    assert_contain(block, "ValidNum | Proved");
+}
+
+#[test]
 fn vm_state_precision_01() {
     let modes: [&[&str]; 2] = [
         CMD_VERIFY_TARGETED,
@@ -349,16 +396,6 @@ unsound_tests! {
     validptr_unsound_03: "verify_units/validptr_unsound_03" => "unsound_stack_array_len_too_large" => "ValidPtr",
     validptr_unsound_04: "verify_units/validptr_unsound_04" => "unsound_scc_branch_uses_one_past" => "ValidPtr",
     validptr_unsound_05: "verify_units/validptr_unsound_05" => "unsound_signed_suffix_missing_lower_bound" => "ValidPtr",
-}
-
-#[test]
-fn validptr_unsound_01_constructor_summary() {
-    let output = run_with_args(
-        "verify_units/validptr_unsound_01",
-        &["verify", "--mode", "targeted", "--expand-ctor=false"],
-    );
-    assert_function_result(&output, "unsound_non_zst_dangling_not_allocated", "UNSOUND");
-    assert_contain(&output, "ValidPtr | Failed");
 }
 
 // Regression for #337: keep the intended result while the cast bug is open.
@@ -1364,29 +1401,15 @@ fn struct_invariant() {
     assert_contain(&output, "function: Wrapper::<T>::read_unchecked");
 }
 
-// Skip Invariant Cases
 #[test]
-fn skip_invariant_struct_noinvariant_1() {
-    let output = run_with_args(
-        "verify_units/struct_noinvariant_01",
-        CMD_VERIFY_SKIP_INVARIANT,
-    );
+fn struct_noinvariant_01() {
+    let output = run_with_args("verify_units/struct_noinvariant_01", CMD_VERIFY_SCAN);
     assert_contain(&output, "result: UNSOUND");
 }
 
 #[test]
-fn skip_invariant_struct_noinvariant_2() {
-    let output = run_with_args(
-        "verify_units/struct_noinvariant_02",
-        CMD_VERIFY_SKIP_INVARIANT,
-    );
-    assert_contain(&output, "result: SOUND");
-}
-
-#[test]
-fn skip_invariant_sound_callee() {
-    let output = run_with_args("verify_units/align_sound_01", CMD_VERIFY_SKIP_INVARIANT);
-    assert_contain(&output, "function: sound_named_contract_binds_callsite_arg");
+fn struct_noinvariant_02() {
+    let output = run_with_args("verify_units/struct_noinvariant_02", CMD_VERIFY_SCAN);
     assert_contain(&output, "result: SOUND");
 }
 

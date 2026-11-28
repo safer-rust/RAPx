@@ -1,3 +1,4 @@
+use crate::compat::MirTerminatorExt as _;
 use crate::analysis::dataflow::closure;
 use crate::analysis::dataflow::call_summary::effects::has_registered_effect;
 use crate::compat::{FxHashMap, GenericArgsRef};
@@ -83,7 +84,7 @@ pub(crate) fn switch_targets_unreachable<'tcx>(
                 return false;
             }
             let bb = &body.basic_blocks[cur];
-            let term = bb.terminator();
+            let term = &bb.rapx_terminator();
             match &term.kind {
                 TerminatorKind::Unreachable => return true,
                 TerminatorKind::Call { func, .. } => {
@@ -261,7 +262,7 @@ pub(crate) fn has_generic_const_call_argument(tcx: TyCtxt<'_>, def_id: DefId) ->
         return false;
     }
     tcx.optimized_mir(def_id).basic_blocks.iter().any(|bb| {
-        let TerminatorKind::Call { args, .. } = &bb.terminator().kind else {
+        let TerminatorKind::Call { args, .. } = &bb.rapx_terminator().kind else {
             return false;
         };
         args.iter().any(|arg| {
@@ -287,7 +288,7 @@ pub(crate) fn has_direct_unmodeled_generic_call<'tcx>(tcx: TyCtxt<'tcx>, def_id:
     body.basic_blocks.iter().any(|bb| {
         let TerminatorKind::Call {
             func, destination, ..
-        } = &bb.terminator().kind
+        } = &bb.rapx_terminator().kind
         else {
             return false;
         };
@@ -314,9 +315,7 @@ fn has_unmodeled_generic_call_rec<'tcx>(
     }
     let body = tcx.optimized_mir(def_id);
     for bb in body.basic_blocks.iter() {
-        let Some(term) = &bb.terminator else {
-            continue;
-        };
+        let term = &bb.rapx_terminator();
         let TerminatorKind::Call {
             func, destination, ..
         } = &term.kind
@@ -363,7 +362,7 @@ pub fn collect_return_block_indices(tcx: TyCtxt<'_>, def_id: DefId) -> Vec<Basic
     }
     let body = tcx.optimized_mir(def_id);
     for (bb, data) in body.basic_blocks.iter_enumerated() {
-        if matches!(data.terminator().kind, TerminatorKind::Return) {
+        if matches!(data.rapx_terminator().kind, TerminatorKind::Return) {
             blocks.push(bb);
         }
     }
@@ -378,7 +377,7 @@ pub fn is_return_block(tcx: TyCtxt<'_>, def_id: DefId, block: BasicBlock) -> boo
     let body = tcx.optimized_mir(def_id);
     body.basic_blocks
         .get(block)
-        .is_some_and(|data| matches!(data.terminator().kind, TerminatorKind::Return))
+        .is_some_and(|data| matches!(data.rapx_terminator().kind, TerminatorKind::Return))
 }
 
 /// Return the callee argument index represented by a MIR local.
@@ -551,12 +550,12 @@ pub fn blocks_reachable_after_call(
 ) -> HashSet<BasicBlock> {
     let body = tcx.optimized_mir(caller);
     let mut starts = Vec::new();
-    if let TerminatorKind::Call { target, .. } = &body.basic_blocks[call_block].terminator().kind
+    if let TerminatorKind::Call { target, .. } = &body.basic_blocks[call_block].rapx_terminator().kind
         && let Some(target) = target
     {
         starts.push(*target);
     } else {
-        starts.extend(body.basic_blocks[call_block].terminator().successors());
+        starts.extend(body.basic_blocks[call_block].rapx_terminator().successors());
     }
 
     let mut seen = HashSet::new();
@@ -565,7 +564,7 @@ pub fn blocks_reachable_after_call(
         if !seen.insert(block) {
             continue;
         }
-        let terminator = body.basic_blocks[block].terminator();
+        let terminator = &body.basic_blocks[block].rapx_terminator();
         for successor in terminator.successors() {
             stack.push(successor);
         }
@@ -691,8 +690,8 @@ pub(crate) fn offset_of_container<'tcx>(
     }
     let body = tcx.mir_for_ctfe(uneval.def);
     for bb in body.basic_blocks.iter() {
-        if let Some(term) = &bb.terminator
-            && let TerminatorKind::Call { func, .. } = &term.kind
+        let term = &bb.rapx_terminator();
+        if let TerminatorKind::Call { func, .. } = &term.kind
             && let Some(ty) = offset_of_ty_from_func(tcx, func)
         {
             return Some(ty);
@@ -1321,8 +1320,8 @@ pub fn collect_all_const_bytes_worklist<'tcx>(
         }
 
         for data in body.basic_blocks.iter() {
-            if let Some(terminator) = &data.terminator
-                && let TerminatorKind::Call {
+            let terminator = &data.rapx_terminator();
+            if let TerminatorKind::Call {
                     destination,
                     func,
                     args,
@@ -1455,8 +1454,8 @@ fn aggregate_op_is_nonzero<'tcx>(
     match operand {
         Operand::Copy(p) | Operand::Move(p) if p.projection.is_empty() => {
             for data in body.basic_blocks.iter() {
-                if let Some(terminator) = &data.terminator
-                    && let TerminatorKind::Call {
+                let terminator = &data.rapx_terminator();
+                if let TerminatorKind::Call {
                         destination, func, ..
                     } = &terminator.kind
                     && destination.local == p.local
@@ -1487,8 +1486,8 @@ fn fn_always_returns_nonzero<'tcx>(tcx: TyCtxt<'tcx>, func: &Operand<'tcx>) -> b
 
     let mut has_return = false;
     for bb_data in callee_body.basic_blocks.iter() {
-        if let Some(terminator) = &bb_data.terminator
-            && matches!(terminator.kind, TerminatorKind::Return)
+        let terminator = &bb_data.rapx_terminator();
+        if matches!(terminator.kind, TerminatorKind::Return)
         {
             has_return = true;
         }

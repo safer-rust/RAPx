@@ -2,6 +2,7 @@ pub mod interproc;
 pub mod intraproc;
 pub mod transfer;
 
+use crate::compat::MirTerminatorExt as _;
 use crate::compat::{FxHashMap, FxHashSet};
 use rustc_hir::def_id::DefId;
 use rustc_middle::{mir::{Operand, TerminatorKind}, ty::{self, TyCtxt}};
@@ -115,8 +116,8 @@ impl<'tcx> MfpAliasAnalyzer<'tcx> {
         // Traverse all basic blocks in the MIR body
         let body = self.tcx.optimized_mir(def_id);
         for bb_data in body.basic_blocks.iter() {
-            if let Some(terminator) = &bb_data.terminator
-                && let TerminatorKind::Call { func, .. } = &terminator.kind
+            let terminator = &bb_data.rapx_terminator();
+            if let TerminatorKind::Call { func, .. } = &terminator.kind
                     && let Operand::Constant(c) = func
                         && let ty::FnDef(callee_def_id, _) = c.ty().kind() {
                             // Recursively collect called functions

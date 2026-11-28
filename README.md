@@ -44,41 +44,7 @@ Here `ostd` is the kernel crate from [asterinas/asterinas](https://github.com/as
 
 Make sure the target is installed first (`rustup target add x86_64-unknown-none`).
 
-Check out supported options with `-help`:
-
-```shell
-$ cargo rapx --help
-
-Usage: cargo rapx [OPTIONS] <COMMAND> [-- [CARGO_FLAGS]]
-
-Commands:
-  analyze  perform various analyses on the crate, e.g., alias analysis, callgraph generation
-  check    check potential vulnerabilities in the crate, e.g., use-after-free, memory leak
-  opt      detect code optimization opportunities
-  verify   verify annotated functions in the crate, e.g., identify #[rapx::verify] targets
-  help     Print this message or the help of the given subcommand(s)
-
-Options:
-      --timeout <TIMEOUT>        specify the timeout seconds in running rapx
-      --test-crate <TEST_CRATE>  specify the tested package in the workspace
-  -h, --help                     Print help
-  -V, --version                  Print version
-
-NOTE: multiple detections can be processed in single run by 
-appending the options to the arguments. Like `cargo rapx check -f -m`
-will perform two kinds of detection in a row.
-
-Examples:
-
-  1. detect use-after-free and memory leak:
-     cargo rapx check -f -m
-  2. detect optimization opportunities:
-     cargo rapx opt
-  3. perform alias analysis:
-     cargo rapx analyze alias
-  4. verify annotated functions:
-     cargo rapx verify --prepare-targets
-```
+Run `cargo rapx --help` for the command list and `cargo rapx <command> --help` for its options.
 
 ### `analyze` command
 
@@ -130,8 +96,6 @@ Options:
       --prepare-targets           list targets and resolved contracts without verification
       --postfix-repeat <N|auto>   extra SCC repetitions; auto estimates per target (default: auto)
       --mode <MODE>               scan or targeted (default: scan)
-      --no-invariant-target       verify constructor-mutator-method sequences instead of standalone invariants
-      --expand-ctor <MODE>        constructor MIR mode: true, false, or default (default: default)
       --crate <CRATE>             filter targets by Rust crate or Cargo package name
       --module <MODULE_PATH>      filter targets by module path
       --path-limit <N>            cap paths collected per checkpoint (0 selects the built-in default)
@@ -140,14 +104,7 @@ Options:
   -h, --help                     Print help
 ```
 
-Verification modes:
-- `scan` — auto-detect: verify all functions with unsafe callees or struct invariants
-- `targeted` — only verify functions annotated with `#[rapx::verify]`
-
-Options:
-- `--no-invariant-target` — works with both modes; skips struct invariant checks and instead derives safety requirements automatically from constructor-mutator-method chains
-- `--expand-ctor` — `true` prioritizes available constructor MIR over call models; `false` skips constructor MIR; `default` skips MIR when the direct result has an invariant, and otherwise tries call models before MIR. `--no-invariant-target` makes `default` behave like `true`.
-- `--path-limit` — lowering the cap can speed up verification, but paths omitted by the cap are currently treated as proved in the verdict.
+Lowering `--path-limit` can speed up verification; omitted paths are currently treated as proved in the verdict.
 
 **Filtering targets:** `--crate` and `--module` work in any mode and can be combined. When analyzing standard-library workspaces or sub-workspaces:
 

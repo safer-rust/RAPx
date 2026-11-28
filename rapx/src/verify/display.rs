@@ -11,7 +11,7 @@ use rustc_hir::def_id::DefId;
 use rustc_middle::ty::{self, ClauseKind, TyCtxt};
 use indexmap::IndexMap;
 
-use crate::{compat::FxHashMap, util::fn_info::get_cons};
+use crate::compat::FxHashMap;
 use crate::contract::{ContractExpr, ContractKind, Property, PropertyArg, PropertyKind, render::display_expr_user_friendly};
 
 use super::{
@@ -350,24 +350,15 @@ pub(crate) fn emit_results_counts_and_checkpoints<'tcx>(all_results: &[PropertyC
     (failed, unknown)
 }
 
-/// Print one function's heading, constructor context, and verification results.
+/// Print one function's heading and verification results.
 pub(crate) fn emit_verify_summary<'tcx>(
-    tcx: TyCtxt<'tcx>,
     target_path: &str,
-    def_id: DefId,
     all_results: &[PropertyCheckResult<'tcx>],
-    skip_invariant: bool,
     limits: VerificationLimits,
 ) {
     rap_info!("============================================================");
     rap_info!("[rapx::verify] function: {target_path}");
     rap_info!("============================================================");
-    if skip_invariant {
-        let cons = get_cons(tcx, def_id);
-        for con in &cons {
-            rap_info!("  + constructor: {}", tcx.def_path_str(*con));
-        }
-    }
     emit_results_and_verdict(all_results, limits);
     rap_info!("");
 }

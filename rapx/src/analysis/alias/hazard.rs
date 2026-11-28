@@ -1,5 +1,6 @@
 //! MIR-level alias hazard analysis independent of VM state and Z3 terms.
 
+use crate::compat::MirTerminatorExt as _;
 use crate::def_ids::type_ids;
 use crate::analysis::dataflow::{call_read, call_write, pointer_copy};
 use crate::analysis::dataflow::pointer_flow::{self, trace_source_arg};
@@ -73,9 +74,6 @@ pub(crate) fn alias_producer(tcx: TyCtxt<'_>, callee: DefId) -> Option<AliasProd
     if let Some(source_arg) = ownership_transfer_source_arg(tcx, callee) {
         return Some(AliasProducer::OwnershipTransfer(source_arg));
     }
-    if let Some(source_arg) = share_transfer_source_arg(tcx, callee) {
-        return Some(AliasProducer::OwnershipTransfer(source_arg));
-    }
     if let Some(flow) = pointer_copy::copy_flow(tcx, callee) {
         return Some(AliasProducer::CopyMemory(flow.source_arg));
     }
@@ -84,19 +82,6 @@ pub(crate) fn alias_producer(tcx: TyCtxt<'_>, callee: DefId) -> Option<AliasProd
     }
     raw_pointer_view_from_mir(tcx, callee)
         .map(|(kind, source_arg)| AliasProducer::View(kind, source_arg))
-}
-
-fn share_transfer_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Option<usize> {
-    if !matches!(tcx.def_kind(callee), DefKind::Fn | DefKind::AssocFn) {
-        return None;
-    }
-    let sig = tcx.fn_sig(callee).skip_binder();
-    if !matches!(sig.output().skip_binder().kind(), ty::Adt(..))
-        || !sig.inputs().skip_binder().iter().any(|ty| matches!(ty.kind(), ty::RawPtr(..)))
-    {
-        return None;
-    }
-    crate::contract::json::ref_count_share_arg_indices(tcx, callee).into_iter().next()
 }
 
 pub(crate) fn reconstructed_owner(tcx: TyCtxt<'_>, callee: DefId) -> Option<(usize, DefId)> {
@@ -158,7 +143,7 @@ pub(crate) fn pointer_result_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Optio
 
 fn ownership_transfer_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Option<usize> {
     let output = tcx.fn_sig(callee).skip_binder().output().skip_binder();
-    let ty::Adt(..) = output.kind() else {
+    let ty::Adt(adt, _) = output.kind() else {
         return None;
     };
     let invariants =
@@ -169,6 +154,9 @@ fn ownership_transfer_source_arg(tcx: TyCtxt<'_>, callee: DefId) -> Option<usize
         .filter_map(|invariant| invariant.target_place()?.plain_field_path())
         .collect();
     paths.extend(crate::contract::annotation::owning_field_paths_from_annotation(tcx, output));
+    if type_ids::is_std_rc(adt.did()) || type_ids::is_std_arc(adt.did()) {
+        paths.push(vec![0]);
+    }
     let opaque_source = if tcx.is_mir_available(callee) {
         None
     } else {
@@ -292,7 +280,7 @@ fn trace_owned_field<'tcx>(
             args,
             destination,
             ..
-        } = &data.terminator().kind
+        } = &data.rapx_terminator().kind
             && destination.local == local
             && destination.projection.is_empty()
         {
@@ -371,7 +359,7 @@ fn trace_returned_ref<'tcx>(
             source = Some(candidate);
         }
         if depth > 0
-            && let TerminatorKind::Call { func, args, destination, .. } = &data.terminator().kind
+            && let TerminatorKind::Call { func, args, destination, .. } = &data.rapx_terminator().kind
             && destination.local == local
             && destination.projection.is_empty()
         {
@@ -814,9 +802,7 @@ fn method_writes_self_field(
             }
         }
 
-        let Some(terminator) = &block.terminator else {
-            continue;
-        };
+        let terminator = &block.rapx_terminator();
         if terminator_writes_origin(tcx, &terminator.kind, &origin, &tree) {
             return true;
         }
@@ -1107,9 +1093,7 @@ fn local_hazard_violation_with(
         }
 
         if !hazard_locals.is_empty() {
-            let Some(terminator) = &block.terminator else {
-                continue;
-            };
+            let terminator = &block.rapx_terminator();
             if origins
                 .iter()
                 .any(|origin| terminator_writes_origin(tcx, &terminator.kind, origin, &tree))
@@ -1235,7 +1219,7 @@ pub(crate) fn live_locals_at(
         // A call that *moves* a local out (`Box::into_raw(value)`) consumes it,
         // even though its `StorageDead` may only appear at the end of the body.
         if track_moves
-            && let TerminatorKind::Call { args, .. } = &data.terminator().kind {
+            && let TerminatorKind::Call { args, .. } = &data.rapx_terminator().kind {
                 for arg in args {
                     if let Operand::Move(place) = &arg.node {
                         live.remove(&place.local);
@@ -1320,7 +1304,7 @@ fn hazard_used_after_statement(
             return true;
         }
     }
-    let terminator = data.terminator();
+    let terminator = &data.rapx_terminator();
     if terminator_uses_any_local(&terminator.kind, hazard_locals) {
         return true;
     }
@@ -1335,7 +1319,7 @@ fn hazard_used_after_block(
 ) -> bool {
     let body = tcx.optimized_mir(caller);
     let mut seen = HashSet::new();
-    let mut stack: Vec<_> = body.basic_blocks[start].terminator().successors().collect();
+    let mut stack: Vec<_> = body.basic_blocks[start].rapx_terminator().successors().collect();
 
     while let Some(block) = stack.pop() {
         if !seen.insert(block) {
@@ -1347,7 +1331,7 @@ fn hazard_used_after_block(
                 return true;
             }
         }
-        let terminator = data.terminator();
+        let terminator = &data.rapx_terminator();
         if terminator_uses_any_local(&terminator.kind, hazard_locals) {
             return true;
         }
@@ -1574,9 +1558,7 @@ fn find_as_ptr_receivers(
     let body = tcx.optimized_mir(caller);
     let mut result = Vec::new();
     for block in body.basic_blocks.iter() {
-        let Some(terminator) = &block.terminator else {
-            continue;
-        };
+        let terminator = &block.rapx_terminator();
         let TerminatorKind::Call {
             func,
             args,
@@ -1636,7 +1618,7 @@ fn is_ptr_add_offset_eq(
             args,
             destination,
             ..
-        } = &data.terminator().kind
+        } = &data.rapx_terminator().kind
         {
             let ptr_key = PlaceKey::from_mir_place(destination);
             if ptr_key != *ptr_place {
@@ -1662,7 +1644,7 @@ fn is_ptr_from_ptr_add(tcx: TyCtxt<'_>, caller: DefId, ptr_place: &PlaceKey) -> 
     for (_bb, data) in body.basic_blocks.iter_enumerated() {
         if let TerminatorKind::Call {
             func, destination, ..
-        } = &data.terminator().kind
+        } = &data.rapx_terminator().kind
         {
             let ptr_key = PlaceKey::from_mir_place(destination);
             if ptr_key != *ptr_place {
@@ -1697,7 +1679,7 @@ pub(crate) fn ownership_transfer_violation(
         return Some(reason);
     }
 
-    let start = match &body.basic_blocks[call_block].terminator().kind {
+    let start = match &body.basic_blocks[call_block].rapx_terminator().kind {
         TerminatorKind::Call {
             target: Some(target),
             ..
@@ -1796,9 +1778,7 @@ pub(crate) fn ownership_transfer_violation(
             }
         }
 
-        let Some(terminator) = &block.terminator else {
-            continue;
-        };
+        let terminator = &block.rapx_terminator();
         if terminator_uses_live_origin(&terminator.kind, &live_origins) {
             return Some(
                 "raw pointer passed to another call after ownership was transferred".into(),
@@ -1910,7 +1890,7 @@ fn places_holding_transferred_pointer(
             break;
         }
         block_index = predecessors[0];
-        let terminator = body.basic_blocks[block_index].terminator();
+        let terminator = &body.basic_blocks[block_index].rapx_terminator();
         if let TerminatorKind::Call {
             func,
             args,
@@ -2054,7 +2034,7 @@ fn pre_existing_view_on_origin(
         if reachable_after.contains(&bb) || bb == call_block {
             continue;
         }
-        let terminator = data.terminator();
+        let terminator = &data.rapx_terminator();
         if let TerminatorKind::Call { func, args, .. } = &terminator.kind {
             let callee_name = mir_utils::call_name(tcx, func);
             if mir_utils::dep_callee_def_id(func)
@@ -2195,9 +2175,7 @@ fn local_callsites(tcx: TyCtxt<'_>, callee: DefId) -> Vec<LocalCallsite<'_>> {
         }
         let body = tcx.optimized_mir(def_id);
         for (block, data) in body.basic_blocks.iter_enumerated() {
-            let Some(terminator) = &data.terminator else {
-                continue;
-            };
+            let terminator = &data.rapx_terminator();
             let TerminatorKind::Call {
                 func,
                 args,

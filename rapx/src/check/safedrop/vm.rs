@@ -1,3 +1,4 @@
+use crate::compat::MirTerminatorExt as _;
 use crate::analysis::path::PathTree;
 use crate::check::safedrop::bug_records::{BugRecords, BugType, LocalSpot, TyBug};
 use crate::compat::FxHashMap;
@@ -49,7 +50,7 @@ fn execute_item<'z3, 'tcx>(states: Vec<VmExecutor<'z3, 'tcx>>, item: &RelevantIt
     let mut next = Vec::new();
     for state in states {
         let recovery = if let RelevantItem::Terminator { def_id, block, .. } = item {
-            let terminator = state.body_for(*def_id).basic_blocks[*block].terminator();
+            let terminator = &state.body_for(*def_id).basic_blocks[*block].rapx_terminator();
             if let TerminatorKind::Call { args, destination, .. } = &terminator.kind {
                 let scalar_args = args.iter().all(|arg| {
                     let value = state.value_of_operand(&arg.node);
@@ -67,7 +68,7 @@ fn execute_item<'z3, 'tcx>(states: Vec<VmExecutor<'z3, 'tcx>>, item: &RelevantIt
                 recover_opaque_call(&mut state, before, *destination, *scalar_args);
             }
             if let RelevantItem::Terminator { def_id, block, .. } = item
-                && matches!(state.body_for(*def_id).basic_blocks[*block].terminator().kind, TerminatorKind::SwitchInt { .. })
+                && matches!(state.body_for(*def_id).basic_blocks[*block].rapx_terminator().kind, TerminatorKind::SwitchInt { .. })
             {
                 let solver = Solver::new(state.z3_ctx);
                 let mut params = Params::new(state.z3_ctx);
@@ -152,7 +153,7 @@ fn record_dangling_exit<'z3, 'tcx>(
 ) {
     let data = &body.basic_blocks[BasicBlock::from_usize(last)];
     let is_cleanup = data.is_cleanup;
-    let is_return = matches!(data.terminator().kind, TerminatorKind::Return);
+    let is_return = matches!(data.rapx_terminator().kind, TerminatorKind::Return);
     if !is_cleanup && !is_return {
         return;
     }
@@ -177,7 +178,7 @@ fn record_dangling_exit<'z3, 'tcx>(
                 block: Some(last),
                 local: local_idx,
                 span: if local_idx == 0 {
-                    data.terminator().source_info.span
+                    data.rapx_terminator().source_info.span
                 } else {
                     body.span
                 },

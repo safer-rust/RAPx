@@ -8,6 +8,7 @@
 pub mod replacer;
 pub mod ssa_transformer;
 
+use crate::compat::MirTerminatorExt as _;
 use crate::{rap_info, rap_warn};
 use rustc_hir::{
     def::DefKind,
@@ -167,12 +168,9 @@ fn mir_to_dot<'tcx>(tcx: TyCtxt<'tcx>, body: &Body<'tcx>) -> String {
             .collect::<Vec<_>>()
             .join("\\l");
 
-        let terminator_str = match &bb_data.terminator {
-            Some(term) => match term.kind {
-                TerminatorKind::Assert { .. } => String::new(),
-                _ => format!("{:?}", term.kind).replace("->", "-->"),
-            },
-            None => "NoTerminator".to_string(),
+        let terminator_str = match bb_data.rapx_terminator().kind {
+            TerminatorKind::Assert { .. } => String::new(),
+            ref kind => format!("{kind:?}").replace("->", "-->"),
         };
 
         let label = format!("{}\\l{}\\l", statements_str, terminator_str);
@@ -184,7 +182,9 @@ fn mir_to_dot<'tcx>(tcx: TyCtxt<'tcx>, body: &Body<'tcx>) -> String {
             label
         ));
 
-        if let Some(terminator) = &bb_data.terminator {
+        {
+
+            let terminator = &bb_data.rapx_terminator();
             for successor in terminator.successors() {
                 dot.push_str(&format!("  {} -> {};\n", bb.index(), successor.index()));
             }

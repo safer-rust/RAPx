@@ -1,6 +1,7 @@
 //! VM-backed leak checks for allocations whose ownership is intentionally
 //! converted to a raw pointer or reference.
 
+use crate::compat::MirTerminatorExt as _;
 use crate::analysis::path::default::PathAnalyzer;
 use crate::compat::{FxHashMap, FxHashSet};
 use crate::def_ids::{diagnostic_api, type_ids};
@@ -42,7 +43,7 @@ pub(super) fn detect(tcx: TyCtxt<'_>) -> FxHashMap<DefId, Vec<Span>> {
             let body = tcx.optimized_mir(def_id);
             body.basic_blocks
                 .iter()
-                .any(|block| is_ownership_release_call(tcx, body, &block.terminator().kind))
+                .any(|block| is_ownership_release_call(tcx, body, &block.rapx_terminator().kind))
         })
         .collect();
     if functions.is_empty() {
@@ -70,7 +71,7 @@ pub(super) fn detect(tcx: TyCtxt<'_>) -> FxHashMap<DefId, Vec<Span>> {
             let Some(&last) = path.last() else { continue };
             if !matches!(
                 body.basic_blocks[BasicBlock::from_usize(last)]
-                    .terminator()
+                    .rapx_terminator()
                     .kind,
                 TerminatorKind::Return
             ) {
@@ -214,7 +215,7 @@ fn execute<'z3, 'tcx>(
             ..
         } = item
         {
-            let terminator = vm.body_for(def_id).basic_blocks[block].terminator();
+            let terminator = &vm.body_for(def_id).basic_blocks[block].rapx_terminator();
             if let TerminatorKind::Call {
                 args, destination, ..
             } = &terminator.kind
@@ -277,7 +278,7 @@ fn execute<'z3, 'tcx>(
             RelevantItem::Terminator { def_id, block, .. } => {
                 if let TerminatorKind::Call {
                     func, destination, ..
-                } = &vm.body_for(def_id).basic_blocks[block].terminator().kind
+                } = &vm.body_for(def_id).basic_blocks[block].rapx_terminator().kind
                 {
                     constant_format_args.remove(&destination.local);
                     if is_constant_format_constructor(tcx, def_id, func) {

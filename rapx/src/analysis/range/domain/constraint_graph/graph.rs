@@ -1,3 +1,4 @@
+use crate::compat::MirTerminatorExt as _;
 use crate::analysis::range::domain::core::*;
 use crate::analysis::range::{Range, RangeType};
 
@@ -205,7 +206,7 @@ where
             for statement in block_data.statements.iter() {
                 self.build_operations(statement, block, body);
             }
-            self.build_terminator(block, block_data.terminator.as_ref().unwrap());
+            self.build_terminator(block, &block_data.rapx_terminator());
         }
         self.resolve_all_symexpr();
         self.print_vars();
@@ -217,8 +218,8 @@ where
     pub fn build_value_maps(&mut self, body: &'tcx Body<'tcx>) {
         for bb in body.basic_blocks.indices() {
             let block_data = &body[bb];
-            if let Some(terminator) = &block_data.terminator
-                && let TerminatorKind::SwitchInt { discr, targets } = &terminator.kind
+            let terminator = &block_data.rapx_terminator();
+            if let TerminatorKind::SwitchInt { discr, targets } = &terminator.kind
                     && targets.iter().count() == 1 {
                         self.build_value_branch_map(body, discr, targets, bb, block_data);
                     }

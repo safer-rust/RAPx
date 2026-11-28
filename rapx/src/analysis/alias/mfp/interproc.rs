@@ -1,4 +1,5 @@
 /// Interprocedural analysis utilities
+use crate::compat::MirTerminatorExt as _;
 use rustc_middle::mir::{Body, TerminatorKind};
 use rustc_mir_dataflow::ResultsCursor;
 use std::collections::HashSet;
@@ -75,8 +76,8 @@ pub fn extract_summary<'tcx>(
 
     // Find all Return terminators and extract aliases at those points
     for (block_id, block_data) in body.basic_blocks.iter_enumerated() {
-        if let Some(terminator) = &block_data.terminator
-            && matches!(terminator.kind, TerminatorKind::Return) {
+        let terminator = &block_data.rapx_terminator();
+        if matches!(terminator.kind, TerminatorKind::Return) {
                 // Seek to the end of this block (before the terminator)
                 results.seek_to_block_end(block_id);
 

@@ -1,5 +1,6 @@
 //! Execute retained path items in the symbolic VM.
 
+use crate::compat::MirTerminatorExt as _;
 use rustc_hir::def_id::DefId;
 use rustc_middle::mir::{Local, TerminatorKind, UnwindAction};
 use rustc_middle::ty::TyKind;
@@ -79,7 +80,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
                 ..
             } => {
                 let body = self.body_for(*def_id);
-                let terminator = body.basic_blocks[*block].terminator();
+                let terminator = &body.basic_blocks[*block].rapx_terminator();
                 self.path_state.diagnostics.active_mir = Some(ActiveMirLocation {
                     def_id: *def_id,
                     block: block.as_usize(),
@@ -357,7 +358,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
 
     /// A `ManuallyDrop<Owner>` retained at return keeps its strong share alive.
     pub(super) fn recover_leaked_owner_shares(&mut self, callee: DefId) {
-        let raw_args: Vec<_> = crate::contract::json::ref_count_share_arg_indices(self.tcx, callee)
+        let raw_args: Vec<_> = crate::def_ids::other_api::shared_owner_raw_arg(self.tcx, callee)
             .into_iter()
             .map(|index| Local::from_usize(index + 1))
             .filter_map(|local| self.local_value(local).cloned())

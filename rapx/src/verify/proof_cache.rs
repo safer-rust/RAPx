@@ -45,7 +45,6 @@ struct PrefixEdge<'tcx> {
 /// Symbolic states shared by properties that retain the same MIR and entry facts.
 pub(crate) struct VmCache<'z3, 'tcx> {
     context: &'z3 z3::Context,
-    constructor_mir_mode: ConstructorMirMode,
     /// Shared prefixes with node IDs and VM states, keyed by parent node and next MIR chunk.
     prefixes: FxHashMap<PrefixEdge<'tcx>, (usize, Rc<Vec<VmExecutor<'z3, 'tcx>>>)>,
     /// Complete proof goals and their final VM states and reachability results.
@@ -58,10 +57,9 @@ pub(crate) struct CachedGoal<'z3, 'tcx> {
 }
 
 impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
-    pub(crate) fn new(context: &'z3 z3::Context, constructor_mir_mode: ConstructorMirMode) -> Self {
+    pub(crate) fn new(context: &'z3 z3::Context) -> Self {
         Self {
             context,
-            constructor_mir_mode,
             prefixes: FxHashMap::default(),
             states: FxHashMap::default(),
         }
@@ -106,7 +104,7 @@ impl<'z3, 'tcx> VmCache<'z3, 'tcx> {
                 tcx,
                 caller_def_id,
                 instance_body,
-                self.constructor_mir_mode,
+                ConstructorMirMode::Default,
             ).execute_items(&[]);
             for state in &mut states {
                 for property in &goal.entry_facts {

@@ -1,3 +1,4 @@
+use crate::compat::MirTerminatorExt as _;
 use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::{
     mir::{
@@ -146,7 +147,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             for statement in &data.statements {
                 crate::vm::mir_rules::exec_contract_method_statement(&mut state, statement);
             }
-            let terminator = data.terminator();
+            let terminator = &data.rapx_terminator();
             match &terminator.kind {
                 TerminatorKind::Return => {
                     if state.path_state.diagnostics.is_unsupported() || state.path_state.diagnostics.has_incomplete_inline_branch() {
@@ -372,7 +373,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             .filter(|id| before_inline.allocation_needs_write(*id))
             .collect();
         let may_recurse = self.body().basic_blocks.iter().any(|block| {
-            let TerminatorKind::Call { func, .. } = &block.terminator().kind else {
+            let TerminatorKind::Call { func, .. } = &block.rapx_terminator().kind else {
                 return false;
             };
             resolve::resolve_callee_def_id(self.tcx, callee_def_id, func)
@@ -553,7 +554,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             for stmt in &bb_data.statements {
                 crate::vm::mir_rules::exec_statement(self, stmt);
             }
-            let terminator = bb_data.terminator();
+            let terminator = &bb_data.rapx_terminator();
             match &terminator.kind {
                 TerminatorKind::Goto { target, .. } => queue.push(*target),
                 TerminatorKind::Return => returned = true,
@@ -669,7 +670,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             for stmt in &bb_data.statements {
                 crate::vm::mir_rules::exec_statement(&mut state, stmt);
             }
-            let terminator = bb_data.terminator();
+            let terminator = &bb_data.rapx_terminator();
             match &terminator.kind {
                 TerminatorKind::Goto { target, .. } => pending.push((state, *target, visited)),
                 TerminatorKind::Return => {
@@ -792,7 +793,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             for statement in &data.statements {
                 crate::vm::mir_rules::exec_statement(&mut state, statement);
             }
-            let terminator = data.terminator();
+            let terminator = &data.rapx_terminator();
             match &terminator.kind {
                 TerminatorKind::Return => {
                     let solver = Solver::new(state.z3_ctx);

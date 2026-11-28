@@ -1,5 +1,6 @@
 //! Trace writes through call arguments in MIR, including wrapper calls.
 
+use crate::compat::MirTerminatorExt as _;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use rustc_hir::def_id::DefId;
@@ -109,9 +110,7 @@ fn trace_local_to_callee_args<'tcx>(
                     }
                 }
             }
-            let Some(terminator) = &bb.terminator else {
-                continue;
-            };
+            let terminator = &bb.rapx_terminator();
             let (func, args, destination) = match &terminator.kind {
                 TerminatorKind::Call {
                     func,
@@ -272,7 +271,7 @@ fn path_ends_in_return(body: &Body<'_>, path: &[usize]) -> bool {
     path.last().is_some_and(|block| {
         body.basic_blocks
             .get(BasicBlock::from_usize(*block))
-            .and_then(|data| data.terminator.as_ref())
+            .map(|data| data.rapx_terminator())
             .is_some_and(|terminator| {
                 matches!(
                     terminator.kind,
@@ -316,9 +315,7 @@ fn write_args_on_path<'tcx>(
             }
         }
 
-        let Some(terminator) = data.terminator.as_ref() else {
-            continue;
-        };
+        let terminator = &data.rapx_terminator();
         let (func, args) = match &terminator.kind {
             TerminatorKind::Call { func, args, .. } => (func, args),
             TerminatorKind::TailCall { func, args, .. } => (func, args),

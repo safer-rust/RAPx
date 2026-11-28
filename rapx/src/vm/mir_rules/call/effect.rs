@@ -163,7 +163,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
             | CallEffect::CopyMemory { .. }
             | CallEffect::SwapMemory { .. }
             | CallEffect::FillBytes { .. }) => {
-                self.apply_memory_effect(effect, args, dest);
+                self.apply_memory_effect(effect, args, dest, func);
             }
             effect @ (CallEffect::SimdCompare { .. }
             | CallEffect::SimdArithmetic { .. }

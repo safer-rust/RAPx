@@ -19,18 +19,17 @@ pub(crate) fn shared_raw_owner_type(tcx: TyCtxt<'_>, callee: DefId) -> Option<De
     let TyKind::Adt(adt, _) = ty.kind() else {
         return None;
     };
-    if !has_ref_count_share_reconstruction(tcx, adt.did()) {
+    if !has_raw_owner_reconstruction(tcx, adt.did()) {
         return None;
     }
     ty.needs_drop(tcx, TypingEnv::non_body_analysis(tcx, callee))
         .then_some(adt.did())
 }
 
-pub(crate) fn has_ref_count_share_reconstruction(tcx: TyCtxt<'_>, owner: DefId) -> bool {
+pub(crate) fn has_raw_owner_reconstruction(tcx: TyCtxt<'_>, owner: DefId) -> bool {
     tcx.inherent_impls(owner).iter().any(|impl_id| {
         tcx.associated_item_def_ids(*impl_id).iter().any(|item| {
             matches!(tcx.def_kind(*item), DefKind::Fn | DefKind::AssocFn)
-                && !crate::contract::json::ref_count_share_arg_indices(tcx, *item).is_empty()
                 && crate::analysis::alias::hazard::reconstructed_owner(tcx, *item)
                     .is_some_and(|(_, reconstructed)| reconstructed == owner)
         })

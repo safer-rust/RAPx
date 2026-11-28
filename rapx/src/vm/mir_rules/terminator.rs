@@ -1,3 +1,4 @@
+use crate::compat::MirTerminatorExt as _;
 use rustc_middle::mir::{
     BasicBlock, Body, Operand, Place, Rvalue, StatementKind, SwitchTargets, TerminatorKind,
 };
@@ -75,7 +76,7 @@ fn inline_switch_discr_const<'z3, 'tcx>(
                 folded = Some(0);
             }
         }
-        let terminator = block.terminator();
+        let terminator = &block.rapx_terminator();
         if let TerminatorKind::Call {
             func, destination, ..
         } = &terminator.kind
@@ -242,6 +243,7 @@ pub(crate) fn exec_drop<'z3, 'tcx>(state: &mut VmExecutor<'z3, 'tcx>, place: &Pl
                     if let Some(path) = ptr_path
                         && let Some(mut field) = state.load_value(header, ty, &path).cloned()
                     {
+                        state.decrement_strong_ref_count(&field, ty);
                         field.provenance = None;
                         state.store_value(header, ty, path, field);
                     }
@@ -285,7 +287,7 @@ fn is_trivial_raw_pointer_wrapper<'tcx>(tcx: TyCtxt<'tcx>, ty: Ty<'tcx>) -> bool
                     && matches!(value, Rvalue::Use(Operand::Constant(constant), _) if constant.const_.ty().is_unit())
             }
             _ => false,
-        }) && matches!(block.terminator().kind, TerminatorKind::Return | TerminatorKind::Goto { .. })
+        }) && matches!(block.rapx_terminator().kind, TerminatorKind::Return | TerminatorKind::Goto { .. })
     })
 }
 

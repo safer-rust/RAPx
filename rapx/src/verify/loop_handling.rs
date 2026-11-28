@@ -33,6 +33,7 @@
 //! Constant `Range` bounds can also supply an exact repeat count; variable
 //! bounds fall back to the general hints.
 
+use crate::compat::MirTerminatorExt as _;
 use crate::analysis::path::graph::PathGraph;
 use crate::compat::{FxHashMap, FxHashSet};
 use crate::contract::{ContractExpr, NumericPredicate, Property, PropertyArg, PropertyKind, RelOp};
@@ -378,7 +379,7 @@ fn inclusive_range_repeat<'tcx>(
     for block in body.basic_blocks.iter() {
         let TerminatorKind::Call {
             destination, args, ..
-        } = &block.terminator().kind
+        } = &block.rapx_terminator().kind
         else {
             continue;
         };
@@ -676,7 +677,7 @@ fn exact_range_repeat<'tcx>(
     let mut iterator_roots = FxHashSet::default();
     for block in &component.blocks {
         let TerminatorKind::Call { func, args, .. } = &body.basic_blocks[BasicBlock::from(*block)]
-            .terminator()
+            .rapx_terminator()
             .kind
         else {
             continue;
@@ -766,7 +767,7 @@ fn collect_assigned_locals(data: &rustc_middle::mir::BasicBlockData<'_>) -> FxHa
             locals.insert(place.local);
         }
     }
-    if let TerminatorKind::Call { destination, .. } = &data.terminator().kind {
+    if let TerminatorKind::Call { destination, .. } = &data.rapx_terminator().kind {
         locals.insert(destination.local);
     }
     locals
@@ -1368,7 +1369,7 @@ impl LocalDependencyIndex {
 
             if let TerminatorKind::Call {
                 args, destination, ..
-            } = &data.terminator().kind
+            } = &data.rapx_terminator().kind
             {
                 let mut sources = FxHashSet::default();
                 for arg in args {

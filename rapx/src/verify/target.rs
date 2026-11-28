@@ -4,6 +4,7 @@
 //! It collects function checkpoints, their required contracts, invariants, and
 //! obligations from unsafe trait implementations.
 
+use crate::compat::MirTerminatorExt as _;
 use crate::analysis::Analysis;
 use crate::analysis::safety_flow::root::{
     function_has_trait_ensurance, hir_contains_unsafe,
@@ -198,7 +199,7 @@ fn call_arg_to_outer_param(
                     _ => return None,
                 };
             }
-            if let rustc_middle::mir::TerminatorKind::Call { destination, .. } = &bb.terminator().kind
+            if let rustc_middle::mir::TerminatorKind::Call { destination, .. } = &bb.rapx_terminator().kind
                 && destination.local == current
             {
                 return None;
@@ -419,9 +420,7 @@ fn resolve_chain_contracts<'tcx>(
     let mut contracts = Vec::new();
 
     for bb in body.basic_blocks.iter() {
-        let Some(terminator) = &bb.terminator else {
-            continue;
-        };
+        let terminator = &bb.rapx_terminator();
         if let rustc_middle::mir::TerminatorKind::Call { func, args, .. } = &terminator.kind
             && let rustc_middle::mir::Operand::Constant(c) = func
         {
@@ -621,7 +620,7 @@ impl<'tcx> VerifyTargetCollector<'tcx> {
             let mut instances = FxHashMap::default();
             let mut conflicting = HashSet::new();
             for block in root_body.basic_blocks.iter() {
-                let TerminatorKind::Call { func, .. } = &block.terminator().kind else {
+                let TerminatorKind::Call { func, .. } = &block.rapx_terminator().kind else {
                     continue;
                 };
                 let Some(callee) = resolve::resolve_callee_def_id(
@@ -1018,11 +1017,7 @@ impl<'tcx> Visitor<'tcx> for VerifyTargetCollector<'tcx> {
                     && first.raw_ptr_deref_checks.is_empty()
                     && first.static_mut_checks.is_empty()
                 {
-                    if !first.invariants.is_empty() {
-                        if self.config.skip_invariant {
-                            return;
-                        }
-                    } else {
+                    if first.invariants.is_empty() {
                         let root = crate::analysis::safety_flow::root::scan_mir(self.tcx, def_id);
                         if root.is_none() {
                             return;

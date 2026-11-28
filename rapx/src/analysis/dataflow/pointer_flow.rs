@@ -1,10 +1,11 @@
 //! Trace pointer-preserving return values to a callee argument.
 
+use crate::compat::MirTerminatorExt as _;
 use std::collections::HashSet;
 
 use rustc_hir::{def::DefKind, def_id::DefId};
 use rustc_middle::{
-    mir::{Body, CastKind, Local, Rvalue, StatementKind, TerminatorKind},
+    mir::{BinOp, Body, CastKind, Local, Rvalue, StatementKind, TerminatorKind},
     ty::{TyCtxt, TyKind},
 };
 
@@ -168,6 +169,8 @@ pub(crate) fn trace_source_arg<'tcx>(
                     .and_then(|place| {
                         trace_source_arg(tcx, body, place.local, &mut seen.clone(), depth)
                     }),
+                Rvalue::BinaryOp(BinOp::Offset, operands) => mir_utils::operand_mir_place(&operands.0)
+                    .and_then(|place| trace_source_arg(tcx, body, place.local, &mut seen.clone(), depth)),
                 Rvalue::RawPtr(_, place) | Rvalue::Ref(_, _, place) => {
                     trace_source_arg(tcx, body, place.local, &mut seen.clone(), depth)
                 }
@@ -197,7 +200,7 @@ pub(crate) fn trace_source_arg<'tcx>(
                 args,
                 destination,
                 ..
-            } = &data.terminator().kind
+            } = &data.rapx_terminator().kind
             else {
                 continue;
             };

@@ -1,6 +1,7 @@
+use crate::compat::MirTerminatorExt as _;
 use super::CalleeBodies;
 use crate::analysis::path::{CallArg, CallBinding, PathTree};
-use crate::verify::config::ConstructorMirMode;
+use crate::vm::constructor_policy::ConstructorMirMode;
 use crate::compat::{FxHashMap, FxHashSet};
 use crate::def_ids::lang_api::{self, LangItem};
 use crate::util::fn_info::{self, FnKind};
@@ -145,7 +146,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
         self.body(block)
             .basic_blocks
             .get(BasicBlock::from(local))
-            .and_then(|data| data.terminator.as_ref())
+            .map(|data| data.rapx_terminator())
     }
 
     pub(crate) fn normal_successor(&self, block: usize) -> Option<usize> {
@@ -224,7 +225,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                 };
                 if fn_info::get_type(self.tcx, callee) == FnKind::Constructor
                     && matches!(
-                        effective_constructor_mir_mode(self.tcx, callee, self.config.constructor_mir_mode()),
+                        effective_constructor_mir_mode(self.tcx, callee, ConstructorMirMode::Default),
                         ConstructorMirMode::False
                     )
                 {
@@ -356,7 +357,7 @@ impl<'tcx> CallSiteIndex<'tcx> {
                     });
                 let ctor_mode =
                     (fn_info::get_type(self.tcx, callee) == FnKind::Constructor)
-                        .then(|| effective_constructor_mir_mode(self.tcx, callee, self.config.constructor_mir_mode()));
+                        .then(|| effective_constructor_mir_mode(self.tcx, callee, ConstructorMirMode::Default));
                 if crate::def_ids::intrinsic_api::is_intrinsic(self.tcx, callee)
                     || !self.tcx.is_mir_available(callee)
                     || expanded.contains(&callee)

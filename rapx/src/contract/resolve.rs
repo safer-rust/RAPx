@@ -8,7 +8,7 @@
 use crate::util::{
     fn_info::parse_expr_into_number,
     mir_utils,
-    name::{access_ident_recursive, match_ty_with_ident},
+    name::{access_ident_recursive, get_adt_self_ty, match_ty_with_ident},
 };
 use quote::ToTokens;
 use rustc_hir::{def::DefKind, def_id::DefId};
@@ -322,7 +322,11 @@ fn resolve_ty_ident<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId, name: &str) -> Optio
     if name == "Self" {
         resolve_type_name(tcx, def_id, name)
     } else {
-        match_ty_with_ident(tcx, def_id, name.to_string())
+        match_ty_with_ident(tcx, def_id, name.to_string()).or_else(|| {
+            let self_ty = get_adt_self_ty(tcx, def_id)?;
+            let adt = self_ty.ty_adt_def()?;
+            (tcx.opt_item_name(adt.did())?.as_str() == name).then_some(self_ty)
+        })
     }
 }
 
