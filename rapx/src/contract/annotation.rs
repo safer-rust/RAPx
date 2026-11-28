@@ -161,9 +161,9 @@ pub(crate) fn owning_field_paths_from_annotation<'tcx>(
     }
     crate::compat::get_all_attrs(tcx, adt.did())
         .into_iter()
-        .filter(|attr| is_rapx_named_attr(tcx, attr, "invariant"))
+        .filter(|attr| is_rapx_named_attr(attr, "invariant"))
         .filter_map(|attr| {
-            let text = crate::compat::attribute_to_string(tcx, attr);
+            let text = crate::compat::attribute_to_string(attr);
             parse_rapx_attr(&text, "invariant").ok().flatten()
         })
         .filter(|property| property.tag == "Owning")

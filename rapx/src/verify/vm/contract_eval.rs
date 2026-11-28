@@ -95,7 +95,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let TyKind::FnDef(_, args) = func_constant.const_.ty().kind() else {
             return ty;
         };
-        let Some(arg) = crate::compat::args_get(args, param.index as usize) else {
+        let Some(arg) = args.skip_binder().get(param.index as usize) else {
             return ty;
         };
         match arg.kind() {
@@ -120,7 +120,7 @@ impl<'z3, 'tcx> VmExecutor<'z3, 'tcx> {
         let TyKind::FnDef(callee_def_id, args) = func_constant.const_.ty().kind() else {
             return None;
         };
-        let arg = crate::compat::args_get(args, index as usize)?;
+        let arg = args.skip_binder().get(index as usize)?;
         match arg.kind() {
             GenericArgKind::Const(actual_const) => {
                 let value = actual_const

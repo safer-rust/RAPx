@@ -75,7 +75,7 @@ impl PropertyChecker {
             return CheckResult::ProvedByRule;
         }
 
-        let predicates = crate::compat::predicates_of(tcx, checkpoint.caller);
+        let predicates = tcx.clauses_of(checkpoint.caller);
         let pred_iter = predicates.clauses.iter();
         for (predicate, _span) in pred_iter {
             if let rustc_middle::ty::ClauseKind::Trait(trait_ref) = predicate.kind().skip_binder()

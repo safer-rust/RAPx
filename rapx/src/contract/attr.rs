@@ -264,10 +264,10 @@ fn strip_lifetime_ticks(s: &str) -> String {
     out
 }
 
-pub(crate) fn is_rapx_named_attr(tcx: TyCtxt<'_>, attr: &Attribute, name: &str) -> bool {
+pub(crate) fn is_rapx_named_attr(attr: &Attribute, name: &str) -> bool {
     let name = Symbol::intern(name);
-    crate::compat::attribute_path_matches(tcx, attr, &[Symbol::intern("rapx"), name])
-        || crate::compat::attribute_path_matches(tcx, attr, &[name])
+    crate::compat::attribute_path_matches(attr, &[Symbol::intern("rapx"), name])
+        || crate::compat::attribute_path_matches(attr, &[name])
 }
 
 pub(crate) fn collect_properties_from_named_attrs<'tcx>(
@@ -280,11 +280,11 @@ pub(crate) fn collect_properties_from_named_attrs<'tcx>(
     let mut results = Vec::new();
 
     for attr in attrs {
-        if !is_rapx_named_attr(tcx, attr, attr_name) {
+        if !is_rapx_named_attr(attr, attr_name) {
             continue;
         }
 
-        let attr_str = crate::compat::attribute_to_string(tcx, attr);
+        let attr_str = crate::compat::attribute_to_string(attr);
         let parsed = match parse_rapx_attr(attr_str.as_str(), attr_name) {
             Ok(parsed) => parsed,
             Err(err) => {

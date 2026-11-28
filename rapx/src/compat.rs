@@ -1,16 +1,5 @@
-/// Centralized compatibility shims for compiler API differences across nightly
-/// versions.
-///
-/// When a type or function moves between modules or changes interface across
-/// rustc versions, add a re-export here (gated by `#[cfg]`).  All other
-/// modules import from this crate instead of writing their own `#[cfg]` blocks.
-///
-/// # How to add a new compat item
-///
-/// 1. Add a cfg flag in `build.rs` (e.g. `rustc_foo_moved`).
-/// 2. Register it with `emit_check_cfg` in `build.rs`.
-/// 3. Add the re-export below.
-/// 4. Update call-sites to `use crate::compat::Foo;`.
+//! Shared rustc API compatibility helpers. Keep nightly-specific `cfg` branches here.
+//! Register new compiler API checks in `build.rs` and expose a stable helper here.
 pub use rustc_hash::FxHashMap;
 pub use rustc_hash::FxHashSet;
 #[cfg(not(rapx_error_output_in_output))]
@@ -42,8 +31,7 @@ impl<'tcx> MirTerminatorExt<'tcx> for rustc_middle::mir::BasicBlockData<'tcx> {
     }
 }
 
-/// `Spanned` was moved from `rustc_span::source_map` to `rustc_span` root
-/// in rustc 1.97.
+/// Re-export the span wrapper used by MIR call operands.
 pub use rustc_span::Spanned;
 
 use rustc_hir::def_id::DefId;
@@ -89,23 +77,7 @@ pub fn typing_env_post_analysis<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> Typin
     { TypingEnv::post_analysis(tcx, def_id) }
 }
 
-/// Type alias for the return type of `clauses_of`.
-pub type GenericPredicatesC<'tcx> = rustc_middle::ty::GenericClauses<'tcx>;
-
-/// Fetch generic clauses for a definition.
-#[inline]
-pub fn predicates_of<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> GenericPredicatesC<'tcx> {
-    tcx.clauses_of(def_id)
-}
-
-pub fn args_get<'tcx>(
-    args: &rustc_middle::ty::Binder<'tcx, rustc_middle::ty::GenericArgs<'tcx>>,
-    index: usize,
-) -> Option<rustc_middle::ty::GenericArg<'tcx>> {
-    args.skip_binder().get(index)
-}
-
-// ── get_all_attrs (deprecated but still the only way) ───────────────────
+// ── Attributes ────────────────────────────────────────────────────────
 
 use rustc_attr_ir::Attribute;
 
@@ -115,23 +87,17 @@ pub fn get_all_attrs<'tcx>(tcx: TyCtxt<'tcx>, def_id: DefId) -> &'tcx [Attribute
     tcx.get_all_attrs(def_id)
 }
 
-pub fn attribute_to_string(_tcx: TyCtxt<'_>, attr: &Attribute) -> String {
+pub fn attribute_to_string(attr: &Attribute) -> String {
     struct Ann;
     impl rustc_hir_pretty::PpAnn for Ann {}
     rustc_hir_pretty::attribute_to_string(&Ann, attr)
 }
 
-/// Match an attribute path through its pretty-printed syntax.  The rustc
-/// attribute representation changes across nightlies, while both versions
-/// expose `attribute_to_string`.
-pub fn attribute_path_matches(
-    tcx: TyCtxt<'_>,
-    attr: &Attribute,
-    path: &[rustc_span::Symbol],
-) -> bool {
+/// Match an attribute path by pretty-printing and parsing its syntax.
+pub fn attribute_path_matches(attr: &Attribute, path: &[rustc_span::Symbol]) -> bool {
     use syn::parse::Parser;
 
-    let text = attribute_to_string(tcx, attr);
+    let text = attribute_to_string(attr);
     let Ok(attrs) = syn::Attribute::parse_outer.parse_str(&text) else {
         return false;
     };

@@ -744,10 +744,10 @@ pub(crate) fn register_compound_properties(tcx: rustc_middle::ty::TyCtxt<'_>) ->
         fn visit_item(&mut self, item: &'tcx rustc_hir::Item<'tcx>) {
             let attrs = self.tcx.hir_attrs(item.hir_id());
             for attr in attrs {
-                if !is_def_property_attr(self.tcx, attr) {
+                if !is_def_property_attr(attr) {
                     continue;
                 }
-                let attr_str = crate::compat::attribute_to_string(self.tcx, attr);
+                let attr_str = crate::compat::attribute_to_string(attr);
                 if let Some(def_str) = extract_def_property_string(&attr_str) {
                     let n = register_compounds_from_source(LOCAL_CRATE, &def_str);
                     if n > 0 {
@@ -769,10 +769,10 @@ pub(crate) fn register_compound_properties(tcx: rustc_middle::ty::TyCtxt<'_>) ->
 
 /// Whether an attribute path is `rapx::def_property` (or the bare form with the
 /// tool prefix stripped).
-fn is_def_property_attr(tcx: rustc_middle::ty::TyCtxt<'_>, attr: &Attribute) -> bool {
+fn is_def_property_attr(attr: &Attribute) -> bool {
     let name = Symbol::intern("def_property");
-    crate::compat::attribute_path_matches(tcx, attr, &[Symbol::intern("rapx"), name])
-        || crate::compat::attribute_path_matches(tcx, attr, &[name])
+    crate::compat::attribute_path_matches(attr, &[Symbol::intern("rapx"), name])
+        || crate::compat::attribute_path_matches(attr, &[name])
 }
 
 /// Extract the string literal from a `#[rapx::def_property("compound ...")]`

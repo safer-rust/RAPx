@@ -46,7 +46,7 @@ pub(crate) fn fmt_fn_path_with_generics(tcx: TyCtxt<'_>, def_id: DefId) -> Strin
 /// Render a function path with trait bounds on its generic parameters.
 pub(crate) fn fmt_fn_path_with_bounds(tcx: TyCtxt<'_>, def_id: DefId) -> String {
     let path = tcx.def_path_str(def_id);
-    let predicates = crate::compat::predicates_of(tcx, def_id);
+    let predicates = tcx.clauses_of(def_id);
     let mut param_bounds: FxHashMap<String, Vec<String>> = FxHashMap::default();
     macro_rules! collect_bounds {
         ($iter:expr) => {
@@ -67,7 +67,7 @@ pub(crate) fn fmt_fn_path_with_bounds(tcx: TyCtxt<'_>, def_id: DefId) -> String 
 
     collect_bounds!(predicates.clauses.iter());
     if let Some(parent_def_id) = predicates.parent {
-        let parent_preds = crate::compat::predicates_of(tcx, parent_def_id);
+        let parent_preds = tcx.clauses_of(parent_def_id);
         collect_bounds!(parent_preds.clauses.iter());
     }
 

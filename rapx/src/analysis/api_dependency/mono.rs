@@ -243,7 +243,7 @@ fn is_args_fit_trait_bound<'tcx>(
     );
     let infcx = tcx.infer_ctxt().build(ty::TypingMode::PostAnalysis);
     let param_env = tcx.param_env(fn_did);
-    let pred = crate::compat::predicates_of(tcx, fn_did);
+    let pred = tcx.clauses_of(fn_did);
     let inst_pred = pred.instantiate(tcx, args);
     rap_trace!(
         "[trait bound] check {}",
@@ -280,7 +280,7 @@ fn is_args_fit_trait_bound<'tcx>(
 }
 
 fn is_fn_solvable<'tcx>(fn_did: DefId, tcx: TyCtxt<'tcx>) -> bool {
-    let predicates = crate::compat::predicates_of(tcx, fn_did);
+    let predicates = tcx.clauses_of(fn_did);
     let iter = predicates.instantiate_identity(tcx).clauses;
     for pred in iter {
         let pred = pred.skip_norm_wip();
@@ -408,7 +408,7 @@ fn solve_unbound_type_generics<'tcx>(
         return;
     }
     let args = tcx.mk_args(&mono.value);
-    let preds = crate::compat::predicates_of(tcx, did);
+    let preds = tcx.clauses_of(did);
     let preds = preds.instantiate(tcx, args);
     let mut mset = MonoSet::all(args.as_slice());
     rap_debug!("[solve_unbound] did = {did:?}, mset={mset:?}");
@@ -582,7 +582,7 @@ pub fn get_impls<'tcx>(
         args
     );
     let mut impls = HashSet::new();
-    let preds = crate::compat::predicates_of(tcx, fn_did);
+    let preds = tcx.clauses_of(fn_did);
     let preds = preds.instantiate(tcx, args);
     for (pred, _) in preds {
         let pred = pred.skip_norm_wip();

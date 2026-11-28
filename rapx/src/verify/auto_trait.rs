@@ -210,7 +210,7 @@ fn param_bound_is_satisfied(
     let Some(trait_did) = trait_did else {
         return false;
     };
-    let predicates = crate::compat::predicates_of(tcx, impl_def_id);
+    let predicates = tcx.clauses_of(impl_def_id);
     let iter = predicates.clauses.iter();
     for (pred, _) in iter {
         if let ClauseKind::Trait(trait_ref) = pred.kind().skip_binder()
